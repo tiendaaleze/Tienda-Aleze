@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Fondo degradado morado -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5B21B6"/>
+      <stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.15"/>
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Fondo redondeado -->
+  <rect width="512" height="512" rx="96" ry="96" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="96" ry="96" fill="url(#shine)"/>
+
+  <!-- Bolsa de compras estilizada -->
+  <g transform="translate(256,220)">
+    <!-- Asa izquierda -->
+    <path d="M-70,-80 Q-90,-130 -45,-130 Q-20,-130 -20,-100" 
+          fill="none" stroke="white" stroke-width="18" 
+          stroke-linecap="round" opacity="0.9"/>
+    <!-- Asa derecha -->
+    <path d="M70,-80 Q90,-130 45,-130 Q20,-130 20,-100" 
+          fill="none" stroke="white" stroke-width="18" 
+          stroke-linecap="round" opacity="0.9"/>
+    <!-- Cuerpo bolsa -->
+    <path d="M-95,-80 L-110,80 Q-110,110 -80,110 L80,110 Q110,110 110,80 L95,-80 Z" 
+          fill="white" opacity="0.95"/>
+    <!-- Detalle interior bolsa -->
+    <path d="M-95,-80 L95,-80" 
+          fill="none" stroke="#EDE9FE" stroke-width="4"/>
+    <!-- Estrella / chispa arriba derecha -->
+    <g transform="translate(72,-100)">
+      <circle r="10" fill="#10B981"/>
+      <text x="0" y="4" text-anchor="middle" font-size="12" fill="white" font-weight="bold">✓</text>
+    </g>
+  </g>
+
+  <!-- Texto ALEZE -->
+  <text x="256" y="385" 
+        text-anchor="middle" 
+        font-family="'Arial Black', 'Arial', sans-serif" 
+        font-size="72" 
+        font-weight="900" 
+        fill="white" 
+        letter-spacing="6"
+        opacity="1">ALEZE</text>
+
+  <!-- Texto SHOP pequeño -->
+  <text x="256" y="425" 
+        text-anchor="middle" 
+        font-family="'Arial', sans-serif" 
+        font-size="28" 
+        font-weight="400" 
+        fill="#C4B5FD" 
+        letter-spacing="12">SHOP</text>
+
+  <!-- Punto decorativo acento verde -->
+  <circle cx="390" cy="360" r="8" fill="#10B981"/>
+</svg>
