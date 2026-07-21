@@ -1252,7 +1252,7 @@ background: #F5F3FF;
       <img src="/Tienda-Aleze/logo.png"alt="Koalita Aleze"
            onerror="this.style.display='none';this.parentNode.innerHTML='🛒'"/>
     </div>
-    <h1>Minimarket Aleze</h1>
+    <h1 id="brand-nombre-1">Minimarket Aleze</h1>
     <p>Jr. Tigrillo Mz. Ll4 Lt. 5 – SJL</p>
     <button type="button" class="btn-compra" onclick="location.hash='#/tienda';initTienda()">
       🛍️ ¡Compra aquí!
@@ -1270,13 +1270,10 @@ background: #F5F3FF;
   <!-- PANEL 3: Login con contraseña (tras PIN correcto) -->
   <div id="login-form-panel" class="login-card" style="display:none">
     <div class="login-logo">🔒</div>
-    <h1>Minimarket Aleze</h1>
+    <h1 id="brand-nombre-2">Minimarket Aleze</h1>
     <p>Jr. Tigrillo Mz. Ll4 Lt. 5 – SJL</p>
     <select id="login-user" class="form-control" style="margin-bottom:0.75rem">
       <option value="">Seleccionar usuario...</option>
-      <option value="Jose Carlos|admin">Aleze Admin</option>
-      <option value="Shessira|cajero">Vendedor 1</option>
-      <option value="José Luis|cajero">Vendedor 2</option>
     </select>
     <input type="password" id="login-pass" autocomplete="current-password" class="form-control" placeholder="Contraseña" onkeydown="if(event.key==='Enter')doLogin()" />
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
@@ -1290,7 +1287,7 @@ background: #F5F3FF;
 <div id="app">
   <header>
     <button type="button" class="btn-hamburger" onclick="toggleMobSidebar()" title="Menú" id="mob-ham-btn">☰</button>
-    <div class="header-brand"><img id="header-logo-img" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> Minimarket Aleze</div>
+    <div class="header-brand"><img id="header-logo-img" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> <span id="header-nombre">Minimarket Aleze</span></div>
     <div class="header-spacer"></div>
     <div id="bday-banner" style="display:none;background:rgba(255,255,255,.2);border-radius:8px;padding:.3rem .7rem;font-size:.75rem;color:#fff;cursor:pointer;margin-right:.5rem" onclick="showAlerts()">🎂 <span id="bday-msg"></span></div>
     <div class="alert-badge" onclick="showAlerts()" id="alert-count" title="Alertas">0</div>
@@ -1945,13 +1942,26 @@ background: #F5F3FF;
             <div class="card-title">🔑 Gestión de contraseñas</div>
             <div class="form-group">
               <label>Usuario</label>
-              <select class="form-control" id="cfg-user-sel">
-                <option>Jose Carlos</option><option>Shessira</option><option>José Luis</option>
-              </select>
+              <select class="form-control" id="cfg-user-sel"></select>
             </div>
             <div class="form-group"><label>Nueva contraseña</label><input type="password" class="form-control" id="cfg-pass-nueva" /></div>
             <div class="form-group"><label>Confirmar contraseña</label><input type="password" class="form-control" id="cfg-pass-conf" /></div>
             <button type="button" class="btn btn-primary" onclick="cambiarPassword()">Actualizar contraseña</button>
+          </div>
+          <div class="card">
+            <div class="card-title">👥 Gestión de usuarios</div>
+            <div id="usuarios-staff-list" style="margin-bottom:.75rem"></div>
+            <div style="font-size:.72rem;color:var(--gray-400);margin-bottom:.5rem">Esto solo administra el nombre, rol y sede visibles en el sistema. La cuenta (correo + contraseña) se crea aparte, directamente en Firebase Authentication.</div>
+            <div class="form-group"><label>Nombre</label><input type="text" class="form-control" id="nuevo-usr-nombre" placeholder="Nombre completo" /></div>
+            <div class="form-group"><label>Correo (ya creado en Firebase Auth)</label><input type="email" class="form-control" id="nuevo-usr-email" placeholder="correo@gmail.com" /></div>
+            <div class="form-group"><label>Rol</label>
+              <select class="form-control" id="nuevo-usr-rol">
+                <option value="cajero">Cajero</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div class="form-group"><label>Sede</label><input type="text" class="form-control" id="nuevo-usr-sede" placeholder="principal" /></div>
+            <button type="button" class="btn btn-primary" onclick="agregarUsuarioStaff()">➕ Agregar usuario</button>
           </div>
           <div class="card">
             <div class="card-title">🎁 Niveles programa frecuentes</div>
@@ -3053,7 +3063,7 @@ let DB = {
   mermas: [],
   promociones: [],
   movimientos: [],
- config: { nombre: 'Minimarket Aleze', direccion: 'Jr. Tigrillo Mz. Ll4 Lt. 5 Asoc. Percin Deza SJL', telefono: '', ticketMsg: '¡Gracias por su compra!', diasVenc: 7, whatsappTienda: '980037284', montoAperturaAuto: 0, eslogan: 'Todo lo que necesitas, cerca de ti', bannerUrl: '', bannerLink: '', bannerVisible: true, tiendasExternas: [{id:'efe',nombre:'Tienda Efe',imagen:'',url:'',visible:true,waCatalogo:false},{id:'curacao',nombre:'Curacao',imagen:'',url:'',visible:true,waCatalogo:false},{id:'juntoz',nombre:'Juntoz',imagen:'',url:'',visible:true,waCatalogo:false},{id:'bata',nombre:'Bata',imagen:'',url:'',visible:true,waCatalogo:true}], serviciosWa: [{id:'impresiones',nombre:'Impresiones y copias',emoji:'🖨️',visible:true},{id:'recargas',nombre:'Recargas celular',emoji:'📱',visible:true},{id:'pagos',nombre:'Pago de servicios',emoji:'💡',visible:true},{id:'escaneos',nombre:'Escaneos',emoji:'📋',visible:true}], serviciosBannerUrl: '', tiendasTexto: '', alertasIgnoradas: {} },
+ config: { nombre: 'Minimarket Aleze', direccion: 'Jr. Tigrillo Mz. Ll4 Lt. 5 Asoc. Percin Deza SJL', telefono: '', ticketMsg: '¡Gracias por su compra!', diasVenc: 7, whatsappTienda: '980037284', montoAperturaAuto: 0, eslogan: 'Todo lo que necesitas, cerca de ti', bannerUrl: '', bannerLink: '', bannerVisible: true, usuariosStaff: [], tiendasExternas: [{id:'efe',nombre:'Tienda Efe',imagen:'',url:'',visible:true,waCatalogo:false},{id:'curacao',nombre:'Curacao',imagen:'',url:'',visible:true,waCatalogo:false},{id:'juntoz',nombre:'Juntoz',imagen:'',url:'',visible:true,waCatalogo:false},{id:'bata',nombre:'Bata',imagen:'',url:'',visible:true,waCatalogo:true}], serviciosWa: [{id:'impresiones',nombre:'Impresiones y copias',emoji:'🖨️',visible:true},{id:'recargas',nombre:'Recargas celular',emoji:'📱',visible:true},{id:'pagos',nombre:'Pago de servicios',emoji:'💡',visible:true},{id:'escaneos',nombre:'Escaneos',emoji:'📋',visible:true}], serviciosBannerUrl: '', tiendasTexto: '', alertasIgnoradas: {} },
   caja: { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' },
   historialVentas: [],
   pedidosOnline: []
@@ -3217,7 +3227,8 @@ async function doLogin() {
   }
 
   const [name, role] = sel.split('|');
-  const email = FIREBASE_USERS[name];
+  const _usuarioStaff = (DB.config.usuariosStaff || []).find(u => u.nombre === name);
+  const email = _usuarioStaff ? _usuarioStaff.email : null;
   if (!email) {
     if (errEl) { errEl.style.display='block'; errEl.style.color='var(--danger)'; errEl.textContent='Usuario no configurado'; }
     return;
@@ -3293,6 +3304,7 @@ async function doLogin() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      aplicarNombreNegocio();
 
       if (snapExt.exists) {
         const ext = snapExt.data();
@@ -3304,6 +3316,7 @@ async function doLogin() {
   }
 
   fbPatchDB();
+  renderLoginDropdown();
   // ── PASO 4: Estado de sesión — ahora que los datos están listos ──
   if (_loginIntervalo) { clearInterval(_loginIntervalo); _loginIntervalo = null; }
   if (errEl) errEl.style.display = 'none';
@@ -5611,7 +5624,7 @@ function compartirResumenFiadoCliente(cid) {
   if (tipo === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
   if (tipo === 'pagado')    fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
   const totalPend = Math.round(fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
-  let msg = `Hola ${nombre}, su resumen de fiados en *Minimarket Aleze*:\n`;
+  let msg = `Hola ${nombre}, su resumen de fiados en *${DB.config.nombre||'Minimarket Aleze'}*:\n`;
   if (desde || hasta) msg += `📅 Período: ${desde ? formatDate(desde) : 'inicio'} al ${hasta ? formatDate(hasta) : 'hoy'}\n`;
   msg += '\n';
   fiados.forEach(f => {
@@ -5767,7 +5780,7 @@ function compartirResumenFiado(cid) {
   if (estado === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
   if (estado === 'pagado') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
   const totalPend = Math.round(fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
-  let msg = `Hola ${nombre}, su resumen de fiados en *Minimarket Aleze*:\n`;
+  let msg = `Hola ${nombre}, su resumen de fiados en *${DB.config.nombre||'Minimarket Aleze'}*:\n`;
   if (desde || hasta) msg += `📅 Período: ${desde ? formatDate(desde) : 'inicio'} al ${hasta ? formatDate(hasta) : 'hoy'}\n`;
   msg += '\n';
   fiados.forEach(f => {
@@ -5858,7 +5871,7 @@ function compartirFiadoWhatsapp() {
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
   const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
   const itemsPend = f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join('\n');
-  const msg = `Hola ${nombre}, le recordamos su deuda en *Minimarket Aleze*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
+  const msg = `Hola ${nombre}, le recordamos su deuda en *${DB.config.nombre||'Minimarket Aleze'}*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
   const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   window.open(url, '_blank');
 }
@@ -5974,7 +5987,7 @@ function compartirHistorialWhatsapp() {
   if (desde) fiados = fiados.filter(f => f.fecha >= desde);
   if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
 
-  let msg = `Hola ${nombre}, aquí su resumen en *Minimarket Aleze*:\n`;
+  let msg = `Hola ${nombre}, aquí su resumen en *${DB.config.nombre||'Minimarket Aleze'}*:\n`;
   if (desde || hasta) msg += `📅 Período: ${desde ? formatDate(desde) : 'inicio'} al ${hasta ? formatDate(hasta) : 'hoy'}\n`;
   msg += '\n';
 
@@ -6743,6 +6756,8 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
       </div>
    </div>`).join('');
   renderConfigTienda();
+  renderUsuariosStaff();
+  renderCfgUserSelect();
 }
 
 function guardarConfig() {
@@ -6758,6 +6773,85 @@ function guardarConfig() {
   fbGuardar();
   try { renderDashboard(); } catch(e){}
   alert('✅ Configuración guardada');
+}
+
+// ── Gestión de usuarios (nombre/correo/rol/sede) — editable sin tocar código ──
+// Nota: esto NO crea la cuenta en Firebase Authentication. Esa cuenta (correo+contraseña)
+// se sigue creando manualmente en la consola de Firebase; aquí solo se administra
+// el nombre visible, a qué correo corresponde, su rol y su sede.
+function renderLoginDropdown() {
+  const sel = document.getElementById('login-user');
+  if (!sel) return;
+  const valorActual = sel.value;
+  sel.innerHTML = '<option value="">Seleccionar usuario...</option>' +
+    (DB.config.usuariosStaff || []).map(u => `<option value="${u.nombre}|${u.rol}">${u.nombre}</option>`).join('');
+  if (valorActual) sel.value = valorActual;
+}
+
+function renderCfgUserSelect() {
+  const sel = document.getElementById('cfg-user-sel');
+  if (!sel) return;
+  sel.innerHTML = (DB.config.usuariosStaff || []).map(u => `<option>${u.nombre}</option>`).join('');
+}
+
+function renderUsuariosStaff() {
+  const cont = document.getElementById('usuarios-staff-list');
+  if (!cont) return;
+  if (!DB.config.usuariosStaff || DB.config.usuariosStaff.length === 0) {
+    cont.innerHTML = '<p style="color:var(--gray-400);font-size:.8rem">Sin usuarios registrados.</p>';
+    return;
+  }
+  cont.innerHTML = DB.config.usuariosStaff.map((u, i) => `
+    <div style="display:flex;gap:.4rem;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--gray-100)">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:.82rem">${u.nombre}</div>
+        <div style="font-size:.72rem;color:var(--gray-400);overflow:hidden;text-overflow:ellipsis">${u.email}</div>
+      </div>
+      <select class="form-control" style="width:auto;font-size:.75rem" onchange="cambiarRolUsuarioStaff(${i}, this.value)">
+        <option value="admin" ${u.rol==='admin'?'selected':''}>Admin</option>
+        <option value="cajero" ${u.rol==='cajero'?'selected':''}>Cajero</option>
+      </select>
+      <input type="text" class="form-control" style="width:90px;font-size:.75rem" value="${u.sedeId||'principal'}" onchange="cambiarSedeUsuarioStaff(${i}, this.value)" title="Sede" />
+      <button type="button" class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarUsuarioStaff(${i})">🗑️</button>
+    </div>`).join('');
+}
+
+function agregarUsuarioStaff() {
+  const nombre = document.getElementById('nuevo-usr-nombre').value.trim();
+  const email  = document.getElementById('nuevo-usr-email').value.trim();
+  const rol    = document.getElementById('nuevo-usr-rol').value || 'cajero';
+  const sedeId = document.getElementById('nuevo-usr-sede').value.trim() || 'principal';
+  if (!nombre || !email) { alert('Nombre y correo son obligatorios'); return; }
+  if (!DB.config.usuariosStaff) DB.config.usuariosStaff = [];
+  if (DB.config.usuariosStaff.some(u => u.nombre === nombre)) { alert('Ya existe un usuario con ese nombre'); return; }
+  DB.config.usuariosStaff = [...DB.config.usuariosStaff, { nombre, email, rol, sedeId }];
+  document.getElementById('nuevo-usr-nombre').value = '';
+  document.getElementById('nuevo-usr-email').value = '';
+  document.getElementById('nuevo-usr-sede').value = '';
+  renderUsuariosStaff(); renderLoginDropdown(); renderCfgUserSelect();
+  fbGuardarProductos(); fbGuardar();
+  alert('✅ Usuario agregado. Recuerda crear su cuenta (correo + contraseña) directamente en Firebase Authentication — el sistema no la crea automáticamente.');
+}
+
+function cambiarRolUsuarioStaff(i, nuevoRol) {
+  DB.config.usuariosStaff[i].rol = nuevoRol;
+  DB.config.usuariosStaff = [...DB.config.usuariosStaff];
+  renderLoginDropdown();
+  fbGuardarProductos(); fbGuardar();
+}
+
+function cambiarSedeUsuarioStaff(i, nuevaSede) {
+  DB.config.usuariosStaff[i].sedeId = nuevaSede.trim() || 'principal';
+  DB.config.usuariosStaff = [...DB.config.usuariosStaff];
+  fbGuardarProductos(); fbGuardar();
+}
+
+function eliminarUsuarioStaff(i) {
+  const u = DB.config.usuariosStaff[i];
+  if (!confirm(`¿Quitar a ${u.nombre} del sistema? Esto no borra su cuenta de Firebase, solo su acceso desde aquí.`)) return;
+  DB.config.usuariosStaff = DB.config.usuariosStaff.filter((_, idx) => idx !== i);
+  renderUsuariosStaff(); renderLoginDropdown(); renderCfgUserSelect();
+  fbGuardarProductos(); fbGuardar();
 }
 
 function guardarSueldos() {
@@ -6797,7 +6891,8 @@ async function cambiarPassword() {
   }
 
   // Verificar que el admin esté cambiando su propia cuenta
-  const emailEsperado = FIREBASE_USERS[user];
+  const _usrCfg = (DB.config.usuariosStaff || []).find(u => u.nombre === user);
+  const emailEsperado = _usrCfg ? _usrCfg.email : null;
   if (fbAuth.currentUser.email !== emailEsperado) {
     alert('⚠️ Solo puedes cambiar tu propia contraseña. Pide al usuario que inicie sesión.'); return;
   }
@@ -7066,7 +7161,7 @@ async function compartirWhatsapp() {
     canvas.toBlob(blob => {
       const file = new File([blob], 'ticket-aleze.png', { type: 'image/png' });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        navigator.share({ title: 'Ticket Minimarket Aleze', files: [file] })
+        navigator.share({ title: 'Ticket ' + (DB.config.nombre||'Minimarket Aleze'), files: [file] })
           .catch(() => fallbackWA());
       } else {
         const url = URL.createObjectURL(blob);
@@ -8749,6 +8844,13 @@ function fbPatchDB() {
   // Ensure new fields exist for users upgrading from older versions
   if (!DB.config) DB.config = {};
   if (DB.config.montoAperturaAuto === undefined) DB.config.montoAperturaAuto = 0;
+  // Migración única: de FIREBASE_USERS (fijo en código) a DB.config.usuariosStaff (editable desde Configuración)
+  if (!DB.config.usuariosStaff || DB.config.usuariosStaff.length === 0) {
+    const _rolesLegado = { 'Jose Carlos': 'admin', 'Shessira': 'cajero', 'José Luis': 'cajero' };
+    DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
+      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: 'principal'
+    }));
+  }
   if (!DB.caja.fecha) DB.caja.fecha = '';
   if (!DB.historialVentas) DB.historialVentas = [];
   // Migrate DB.ventas into historialVentas if historialVentas is empty but ventas has data
@@ -8787,6 +8889,14 @@ function fbPatchDB() {
   });
 }
 
+function aplicarNombreNegocio() {
+  const nombre = (DB.config && DB.config.nombre) || 'Minimarket Aleze';
+  document.title = nombre;
+  const el1 = document.getElementById('brand-nombre-1'); if (el1) el1.textContent = nombre;
+  const el2 = document.getElementById('brand-nombre-2'); if (el2) el2.textContent = nombre;
+  const el3 = document.getElementById('header-nombre');  if (el3) el3.textContent = nombre;
+}
+
 // ===================== INIT =====================
 window.onload = async function() {
   const hoy = today();
@@ -8805,9 +8915,11 @@ window.onload = async function() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      aplicarNombreNegocio();
 
       _fbLastWriteTs = Date.now();
       fbPatchDB();
+      renderLoginDropdown();
       checkRoute();
       if (!window.location.pathname.includes('/tienda') && !window.location.hash.includes('/tienda')) {
         renderDashboard();
