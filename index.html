@@ -4240,7 +4240,8 @@ function cobrarFiado() {
         const prod = DB.productos.find(p => p.id === i.prodId);
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }),
-      total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc
+      total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc,
+      sedeId: currentUserSedeId || 'principal'
     };
   }
   _fiadoPendiente = { firma, fiado };
@@ -6069,10 +6070,10 @@ Escribe 1 para confirmar:`;
   if (!resp) return;
 
   if (resp.trim() === '1') {
-    // Restaurar stock
+    // Restaurar stock en la sede donde se hizo la venta original
     f.items.forEach(i => {
       const prod = DB.productos.find(p => p.id === i.prodId);
-      if (prod) prod.stock += i.cant;
+      if (prod) ajustarStockSede(prod, i.cant, f.sedeId);
     });
     DB.fiados = DB.fiados.filter(x => x.id !== id);
     const cli = DB.clientes.find(c => c.id === f.clienteId);
@@ -8991,7 +8992,8 @@ function mobCobrarFiado() {
     id: getId(), clienteId,
     items: itemsConPrecioReal,
     total, pagado: 0, fecha: today(),
-    descuentoCombo: comboInfo.total, descuentoManual: desc
+    descuentoCombo: comboInfo.total, descuentoManual: desc,
+    sedeId: currentUserSedeId || 'principal'
   };
 DB.fiados.push(fiado);
   if (!DB.historialVentas) DB.historialVentas = [];
@@ -10479,22 +10481,30 @@ function confirmarEntregaPedido(id) {
 
   // Si se marca como entregado: verificar stock y confirmar
   if (nuevoEstado === 'entregado' && p.estado !== 'entregado') {
-    // Revisar stock suficiente
+    // Sede que despacha: automática según el perfil de quien confirma; el admin puede anularla
+    let _sedeDespacho = currentUserSedeId || 'principal';
+    if (currentRole === 'admin') {
+      const _idxSede = prompt(`¿Desde qué sede se despacha este pedido?\n1. Principal${_sedeDespacho==='principal'?' (tu sede)':''}\n2. Tienda Aleze II${_sedeDespacho==='Tienda Aleze II'?' (tu sede)':''}`, _sedeDespacho === 'principal' ? '1' : '2');
+      if (_idxSede === '1') _sedeDespacho = 'principal';
+      else if (_idxSede === '2') _sedeDespacho = 'Tienda Aleze II';
+      // Cancelar o valor inválido → se queda con su propia sede por defecto
+    }
+    // Revisar stock suficiente en la sede que va a despachar
     const sinStock = (p.items||[]).filter(i => i.cant > 0 && !i.eliminado).filter(item => {
       const prod = DB.productos.find(x => x.id === item.prodId);
-      return prod && prod.stock < item.cant;
+      return prod && stockEnSede(prod, _sedeDespacho) < item.cant;
     });
 
-    let confirmMsg = `¿Confirmar entrega del pedido de ${p.clienteNombre||'cliente'}?\n\nProductos a descontar del inventario:\n`;
+    let confirmMsg = `¿Confirmar entrega del pedido de ${p.clienteNombre||'cliente'}?\n\nSe despacha desde: ${_sedeDespacho}\n\nProductos a descontar del inventario:\n`;
     (p.items||[]).filter(i=>i.cant>0&&!i.eliminado).forEach(i => {
       confirmMsg += `• ${i.nombre} x${i.cant} — ${sol(i.precio*i.cant)}\n`;
     });
     confirmMsg += `\nTotal: ${sol(p.total)}\nMétodo: ${p.metodo}`;
     if (sinStock.length > 0) {
-      confirmMsg += `\n\n⚠️ ALERTA: Los siguientes productos tienen stock insuficiente:\n`;
+      confirmMsg += `\n\n⚠️ ALERTA: Los siguientes productos tienen stock insuficiente en ${_sedeDespacho}:\n`;
       sinStock.forEach(item => {
         const prod = DB.productos.find(x => x.id === item.prodId);
-        confirmMsg += `• ${item.nombre}: necesitas ${item.cant}, disponible ${prod?.stock||0}\n`;
+        confirmMsg += `• ${item.nombre}: necesitas ${item.cant}, disponible ${prod?stockEnSede(prod,_sedeDespacho):0}\n`;
       });
       confirmMsg += '\n¿Continuar de todas formas?';
     }
@@ -10515,15 +10525,15 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         DB.clientes.push(cli);
       }
 
-      // ── Descontar stock (siempre) ──────────────────────────────────────────
+      // ── Descontar stock (siempre) — en la sede que despacha, definida arriba ──
       (p.items||[]).filter(i=>i.cant>0&&!i.eliminado).forEach(item => {
         const prod = DB.productos.find(x => x.id === item.prodId);
         if (prod) {
-          if (!prod.esCombo) prod.stock = Math.max(0, prod.stock - item.cant);
+          if (!prod.esCombo) ajustarStockSede(prod, -item.cant, _sedeDespacho);
           if (prod.esCombo && prod.componentes) {
             prod.componentes.forEach(comp => {
               const cp = DB.productos.find(x => x.id === comp.prodId);
-              if (cp) cp.stock = Math.max(0, cp.stock - comp.cant * item.cant);
+              if (cp) ajustarStockSede(cp, -(comp.cant * item.cant), _sedeDespacho);
             });
           }
         }
@@ -10541,7 +10551,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           subtotal: itemsFinales.reduce((s,i)=>s+i.precio*i.cant,0),
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'completado',
-          estadoStock: 'descontado', notaAdmin: p.notaAdmin || ''
+          estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
+          sedeId: _sedeDespacho
         };
         DB.historialVentas.push(_ventaOnline);
         fbSincronizarVenta(_ventaOnline);
@@ -10557,7 +10568,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             }),
             total: p.total, pagado: 0, fecha: p.fecha,
             descuentoCombo: p.descuento || 0, descuentoManual: 0,
-            origenOnline: true
+            origenOnline: true, sedeId: _sedeDespacho
           };
           if (!DB.fiados) DB.fiados = [];
           DB.fiados.push(fiadoOnline);
@@ -10572,7 +10583,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           subtotal: itemsFinales.reduce((s,i)=>s+i.precio*i.cant,0),
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'fiado',
-          estadoStock: 'descontado', notaAdmin: p.notaAdmin || ''
+          estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
+          sedeId: _sedeDespacho
         };
         DB.historialVentas.push(_ventaOnlineFiado);
         fbSincronizarVenta(_ventaOnlineFiado);
