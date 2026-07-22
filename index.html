@@ -4146,9 +4146,6 @@ function _firmaCarrito(items, metodo, clienteId) {
 
 function procesarVenta() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
-  const btn = document.getElementById('btn-cobrar-venta');
-  const txtOriginal = btn.textContent;
-  btn.disabled = true; btn.textContent = '⏳ Guardando...';
 
   const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
@@ -4172,90 +4169,56 @@ function procesarVenta() {
     };
   }
   _ventaPendiente = { firma, venta };
-  const cartSnapshot = cart.map(i => ({ ...i }));
-  const _movsAntesLen = (DB.movimientos||[]).length;
 
-  fbFS.runTransaction(async (tx) => {
-    const [dbSnap, prodSnap] = await Promise.all([tx.get(fbDocRef()), tx.get(fbProdDocRef())]);
-    const dbData   = dbSnap.data()   || {};
-    const prodData = prodSnap.data() || {};
-
-    const historialActual = dbData.historialVentas || [];
-    if (historialActual.some(v => v.id === venta.id)) {
-      return { duplicada: true };
-    }
-
-    const productos = JSON.parse(JSON.stringify(prodData.productos || []));
-    const _sedeVenta = currentUserSedeId || 'principal';
-    cartSnapshot.forEach(item => {
-      const prod = productos.find(p => p.id === item.prodId);
-      if (prod) {
-        if (!prod.esCombo) ajustarStockSede(prod, -item.cant, _sedeVenta);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = productos.find(x => x.id === comp.prodId);
-            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant), _sedeVenta);
-          });
-        }
-      }
-    });
-
-    const nuevoDb = JSON.parse(JSON.stringify(dbData));
-    nuevoDb.historialVentas = [...historialActual, { ...venta, origen: 'pos', estado: 'completado', estadoStock: 'descontado' }];
-
-    const fechaHoy = today();
-    let cajaFresca = JSON.parse(JSON.stringify(dbData.caja || {}));
-    let movimientosNuevos = [...(dbData.movimientos || [])];
-    if (!cajaFresca.abierta || cajaFresca.fecha !== fechaHoy) {
-      const montoAuto = parseFloat((dbData.config && dbData.config.montoAperturaAuto)) || 0;
-      let inicialNuevo = montoAuto;
-      if (cajaFresca.abierta && cajaFresca.fecha && cajaFresca.fecha !== fechaHoy) {
-        const saldoAnt = (cajaFresca.inicial||0) + (cajaFresca.ingresos||0) - (cajaFresca.egresos||0);
-        movimientosNuevos.push({ id:getId(), tipo:'cierre-auto', desc:'Cierre automático — '+cajaFresca.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaFresca.fecha });
-        inicialNuevo = saldoAnt;
-      } else if (typeof cajaFresca.saldoFinal === 'number') {
-        inicialNuevo = cajaFresca.saldoFinal;
-      }
-      cajaFresca = { abierta:true, inicial:inicialNuevo, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
-      movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
-    }
-    cajaFresca.ingresos = (cajaFresca.ingresos||0) + total;
-    if (metodo === 'Efectivo') cajaFresca.ingresosEfectivo = (cajaFresca.ingresosEfectivo||0) + total;
-    movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
-    nuevoDb.caja = cajaFresca;
-    nuevoDb.movimientos = movimientosNuevos;
-
-    if (clienteId) {
-      const cli = (nuevoDb.clientes || []).find(c => c.id === clienteId);
-      if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos=(cli.puntos||0)+Math.floor(total); }
-    }
-
-    tx.set(fbDocRef(), nuevoDb);
-    tx.set(fbProdDocRef(), { productos, categorias: prodData.categorias || [], config: prodData.config || {} });
-    return { duplicada: false, productos, nuevoDb };
-  }).then((resultado) => {
+  // ── Fase Offline: local-first, mismo patrón que POS móvil — la venta se completa en el
+  // dispositivo al instante, sin esperar red. La sincronización a Firestore pasa en segundo plano.
+  if (!DB.historialVentas) DB.historialVentas = [];
+  if (DB.historialVentas.some(v => v.id === venta.id)) {
+    // Ya se procesó (reintento con el mismo carrito) — no duplicar, solo repetir el ticket.
     _ventaPendiente = null;
-    if (resultado.nuevoDb) {
-      DB.productos = resultado.productos;
-      DB.historialVentas = resultado.nuevoDb.historialVentas;
-      DB.caja = resultado.nuevoDb.caja;
-      DB.movimientos = resultado.nuevoDb.movimientos;
-      DB.clientes = resultado.nuevoDb.clientes;
-      fbSincronizarVenta({ ...venta, origen: 'pos', estado: 'completado', estadoStock: 'descontado' });
-      DB.movimientos.slice(_movsAntesLen).forEach(fbSincronizarMovimiento);
-    }
-    try { renderDashboard(); } catch(e){}
-    try { renderCaja(); } catch(e){}
-    try { generarReporte(); } catch(e){}
-    btn.disabled = false; btn.textContent = txtOriginal;
     mostrarTicket(venta);
     clearCart();
     const _pc = document.getElementById('pos-cliente'); if (_pc) { _pc.value = ''; onClienteChange(); }
-    updateAlertCount();
-  }).catch((e) => {
-    btn.disabled = false; btn.textContent = txtOriginal;
-    alert('⚠️ No se pudo guardar la venta. El carrito NO se limpió — vuelve a presionar Cobrar para reintentar; el sistema no la duplicará aunque ya se haya guardado.\nCódigo: ' + (e.code || e.message || 'desconocido'));
+    return;
+  }
+
+  cart.forEach(item => {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (prod) {
+      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
+      if (prod.esCombo && prod.componentes) {
+        prod.componentes.forEach(comp => {
+          const cp = DB.productos.find(x => x.id === comp.prodId);
+          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
+        });
+      }
+    }
   });
+
+  if (clienteId) {
+    const cli = DB.clientes.find(c => c.id === clienteId);
+    if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos=(cli.puntos||0)+Math.floor(total); }
+  }
+
+  ensureCajaAbierta();
+  DB.caja.ingresos = (DB.caja.ingresos||0) + total;
+  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
+  _pushMovimiento({ tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
+
+  const _ventaFinal = { ...venta, origen: 'pos', estado: 'completado', estadoStock: 'descontado' };
+  DB.historialVentas.push(_ventaFinal);
+  fbSincronizarVenta(_ventaFinal);
+  fbGuardar();
+  fbGuardarProductos();
+
+  _ventaPendiente = null;
+  try { renderDashboard(); } catch(e){}
+  try { renderCaja(); } catch(e){}
+  try { generarReporte(); } catch(e){}
+  mostrarTicket(venta);
+  clearCart();
+  const _pc = document.getElementById('pos-cliente'); if (_pc) { _pc.value = ''; onClienteChange(); }
+  updateAlertCount();
 }
 
 let _fiadoPendiente = null; // recuerda un intento de fiado fallido para reintentar con el mismo id
@@ -4265,9 +4228,6 @@ function cobrarFiado() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   const clienteId = parseInt(document.getElementById('pos-cliente').value);
   if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
-  const btn = document.getElementById('btn-cobrar-fiado');
-  const txtOriginal = btn.textContent;
-  btn.disabled = true; btn.textContent = '⏳ Guardando...';
 
   const sub = Math.round(cart.reduce((s, i) => s + i.precio * i.cant, 0) * 100) / 100;
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
@@ -4292,93 +4252,57 @@ function cobrarFiado() {
     };
   }
   _fiadoPendiente = { firma, fiado };
-  const cartSnapshot = cart.map(i => ({ ...i }));
-  const _movsAntesLen = (DB.movimientos||[]).length;
 
-  fbFS.runTransaction(async (tx) => {
-    const [dbSnap, prodSnap] = await Promise.all([tx.get(fbDocRef()), tx.get(fbProdDocRef())]);
-    const dbData   = dbSnap.data()   || {};
-    const prodData = prodSnap.data() || {};
-
-    const historialActual = dbData.historialVentas || [];
-    if (historialActual.some(v => v.id === fiado.id)) {
-      return { duplicada: true };
-    }
-
-    const productos = JSON.parse(JSON.stringify(prodData.productos || []));
-    const _sedeVenta = currentUserSedeId || 'principal';
-    cartSnapshot.forEach(item => {
-      const prod = productos.find(p => p.id === item.prodId);
-      if (prod) {
-        if (!prod.esCombo) ajustarStockSede(prod, -item.cant, _sedeVenta);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = productos.find(x => x.id === comp.prodId);
-            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant), _sedeVenta);
-          });
-        }
-      }
-    });
-
-    const nuevoDb = JSON.parse(JSON.stringify(dbData));
-    nuevoDb.fiados = [...(nuevoDb.fiados || []), fiado];
-    nuevoDb.historialVentas = [...historialActual, { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' }];
-
-    const cli = (nuevoDb.clientes || []).find(c => c.id === clienteId);
-    if (cli) {
-      cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
-      cli.compras = (cli.compras||0) + 1;
-      cli.total = (cli.total||0) + total;
-      cli.puntos = (cli.puntos||0) + Math.floor(total);
-    }
-
-    const fechaHoy = today();
-    let cajaFresca = JSON.parse(JSON.stringify(dbData.caja || {}));
-    let movimientosNuevos = [...(dbData.movimientos || [])];
-    if (!cajaFresca.abierta || cajaFresca.fecha !== fechaHoy) {
-      const montoAuto = parseFloat((dbData.config && dbData.config.montoAperturaAuto)) || 0;
-      let inicialNuevo = montoAuto;
-      if (cajaFresca.abierta && cajaFresca.fecha && cajaFresca.fecha !== fechaHoy) {
-        const saldoAnt = (cajaFresca.inicial||0) + (cajaFresca.ingresos||0) - (cajaFresca.egresos||0);
-        movimientosNuevos.push({ id:getId(), tipo:'cierre-auto', desc:'Cierre automático — '+cajaFresca.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaFresca.fecha });
-        inicialNuevo = saldoAnt;
-      } else if (typeof cajaFresca.saldoFinal === 'number') {
-        inicialNuevo = cajaFresca.saldoFinal;
-      }
-      cajaFresca = { abierta:true, inicial:inicialNuevo, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
-      movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
-    }
-    movimientosNuevos.push({ id:getId(), tipo:'fiado', desc:'Fiado — ' + getClienteNombre(clienteId), monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
-    nuevoDb.caja = cajaFresca;
-    nuevoDb.movimientos = movimientosNuevos;
-
-    tx.set(fbDocRef(), nuevoDb);
-    tx.set(fbProdDocRef(), { productos, categorias: prodData.categorias || [], config: prodData.config || {} });
-    return { duplicada: false, productos, nuevoDb };
-  }).then((resultado) => {
+  // ── Fase Offline: local-first, mismo patrón que POS móvil ──
+  if (!DB.historialVentas) DB.historialVentas = [];
+  if (DB.historialVentas.some(v => v.id === fiado.id)) {
     _fiadoPendiente = null;
-    if (resultado.nuevoDb) {
-      DB.productos = resultado.productos;
-      DB.historialVentas = resultado.nuevoDb.historialVentas;
-      DB.fiados = resultado.nuevoDb.fiados;
-      DB.caja = resultado.nuevoDb.caja;
-      DB.movimientos = resultado.nuevoDb.movimientos;
-      DB.clientes = resultado.nuevoDb.clientes;
-      fbSincronizarVenta({ ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' });
-      fbSincronizarFiado(fiado);
-      DB.movimientos.slice(_movsAntesLen).forEach(fbSincronizarMovimiento);
-    }
-    try { renderDashboard(); } catch(e){}
-    try { renderCaja(); } catch(e){}
-    btn.disabled = false; btn.textContent = txtOriginal;
     alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
     clearCart();
     const _pc2 = document.getElementById('pos-cliente'); if (_pc2) { _pc2.value = ''; onClienteChange(); }
-    updateAlertCount();
-  }).catch((e) => {
-    btn.disabled = false; btn.textContent = txtOriginal;
-    alert('⚠️ No se pudo registrar el fiado. El carrito NO se limpió — vuelve a presionar el botón para reintentar; el sistema no lo duplicará aunque ya se haya guardado.\nCódigo: ' + (e.code || e.message || 'desconocido'));
+    return;
+  }
+
+  cart.forEach(item => {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (prod) {
+      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
+      if (prod.esCombo && prod.componentes) {
+        prod.componentes.forEach(comp => {
+          const cp = DB.productos.find(x => x.id === comp.prodId);
+          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
+        });
+      }
+    }
   });
+
+  DB.fiados.push(fiado);
+  fbSincronizarFiado(fiado);
+
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  if (cli) {
+    cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
+    cli.compras = (cli.compras||0) + 1;
+    cli.total = (cli.total||0) + total;
+    cli.puntos = (cli.puntos||0) + Math.floor(total);
+  }
+
+  ensureCajaAbierta();
+  _pushMovimiento({ tipo:'fiado', desc:'Fiado — ' + getClienteNombre(clienteId), monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
+
+  const _ventaFiado = { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
+  DB.historialVentas.push(_ventaFiado);
+  fbSincronizarVenta(_ventaFiado);
+  fbGuardar();
+  fbGuardarProductos();
+
+  _fiadoPendiente = null;
+  try { renderDashboard(); } catch(e){}
+  try { renderCaja(); } catch(e){}
+  alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
+  clearCart();
+  const _pc2 = document.getElementById('pos-cliente'); if (_pc2) { _pc2.value = ''; onClienteChange(); }
+  updateAlertCount();
 }
 
 // ===================== TICKET =====================
