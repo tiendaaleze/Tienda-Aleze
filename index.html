@@ -2650,6 +2650,18 @@ background: #F5F3FF;
     <div class="form-group"><label>Descripción</label><input type="text" class="form-control" id="g-desc" /></div>
     <div class="form-group"><label>Monto (S/) *</label><input type="number" class="form-control" id="g-monto" step="0.01" /></div>
     <div class="form-group"><label>Fecha</label><input type="date" class="form-control" id="g-fecha" /></div>
+    <div class="form-group"><label>Método de pago</label>
+      <select class="form-control" id="g-metodo">
+        <option value="Efectivo">💵 Efectivo</option>
+        <option value="Yape">💜 Yape</option>
+        <option value="Plin">💚 Plin</option>
+        <option value="QR">📱 QR</option>
+        <option value="Link de pago">🔗 Link de pago</option>
+        <option value="Tarjeta POS">💳 Tarjeta POS</option>
+        <option value="Tarjeta POS Móvil">📲 Tarjeta POS Móvil</option>
+        <option value="Transferencia">🏦 Transferencia</option>
+      </select>
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem">
       <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-gasto')">Cancelar</button>
       <button type="button" class="btn btn-primary" id="g-btn-guardar" onclick="guardarGasto()">Registrar</button>
@@ -5149,15 +5161,18 @@ function renderProveedores() {
   let provs = DB.proveedores;
   if (qNombre) provs = provs.filter(p => _norm(p.nombre).includes(_norm(qNombre)));
   if (qBoleta) provs = provs.filter(p => (p.boletas||[]).some(b => _norm(b.num).includes(_norm(qBoleta))));
-  document.getElementById('prov-tbody').innerHTML = provs.map(p => `<tr>
+  document.getElementById('prov-tbody').innerHTML = provs.map(p => {
+    const debe = (p.boletas||[]).reduce((s,b) => s + Math.max(0, (b.monto||0) - (b.pagado||0)), 0);
+    return `<tr>
     <td><strong>${p.nombre}</strong></td><td>${p.contacto}</td><td>${p.tel}</td>
     <td style="font-size:0.8rem">${p.productos}</td>
-    <td><button class="btn btn-xs btn-outline" onclick="verBoletas(${p.id})">📄 ${(p.boletas||[]).length} boleta(s)</button></td>
+    <td><button class="btn btn-xs btn-outline" onclick="verBoletas(${p.id})">📄 ${(p.boletas||[]).length} boleta(s)</button>${debe > 0 ? `<div style="font-size:.72rem;color:var(--danger);font-weight:700">Debe ${sol(debe)}</div>` : ''}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-outline btn-xs" onclick="editarProveedor(${p.id})">✏️ Editar</button>
       <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarProveedor(${p.id})">🗑️</button>
     </td>
-  </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin proveedores</td></tr>';
+  </tr>`;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin proveedores</td></tr>';
 }
 function limpiarFiltrosProveedores() {
   const el1 = document.getElementById('prov-buscar');
@@ -5253,14 +5268,20 @@ function filtrarBoletas() {
   if (desde) filtradas = filtradas.filter(b => b.fecha >= desde);
   if (hasta) filtradas = filtradas.filter(b => b.fecha <= hasta);
   const total = filtradas.reduce((s, b) => s + (b.monto||0), 0);
- document.getElementById('boletas-tbody').innerHTML = filtradas.map((b, idx) => `<tr>
+ document.getElementById('boletas-tbody').innerHTML = filtradas.map((b, idx) => {
+   const pendiente = Math.round(((b.monto||0) - (b.pagado||0)) * 100) / 100;
+   return `<tr>
     <td>${b.num}</td><td>${formatDate(b.fecha)}</td><td>${b.desc||'-'}</td>
-    <td>${sol(b.monto||0)}</td>
+    <td>${sol(b.monto||0)}${pendiente > 0 ? `<div style="font-size:.7rem;color:var(--danger)">Pendiente: ${sol(pendiente)}</div>` : '<div style="font-size:.7rem;color:var(--accent)">✅ Pagada</div>'}</td>
     <td>${b.url?`<a href="${b.url}" target="_blank" style="color:var(--primary)">🔗 Ver</a>`:'-'}</td>
-    <td><button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarBoleta(${boletas.indexOf(b)})">🗑️</button></td>
-  </tr>`).join('') +
-  (filtradas.length > 0 ? `<tr style="background:var(--gray-50);font-weight:700"><td colspan="3">Total: ${filtradas.length} boleta(s)</td><td>${sol(total)}</td><td></td></tr>` : '') ||
-  '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:1rem">Sin boletas registradas</td></tr>';
+    <td style="white-space:nowrap">
+      ${pendiente > 0 ? `<button class="btn btn-xs btn-outline" onclick="abrirPagoBoleta(${editingBoletaProvId}, ${boletas.indexOf(b)})">💰 Pagar</button>` : ''}
+      <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarBoleta(${boletas.indexOf(b)})">🗑️</button>
+    </td>
+  </tr>`;
+  }).join('') +
+  (filtradas.length > 0 ? `<tr style="background:var(--gray-50);font-weight:700"><td colspan="3">Total: ${filtradas.length} boleta(s)</td><td>${sol(total)}</td><td colspan="2"></td></tr>` : '') ||
+  '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:1rem">Sin boletas registradas</td></tr>';
 }
 function eliminarBoleta(idx) {
   if (currentRole !== 'admin') return;
@@ -5290,7 +5311,12 @@ function eliminarBoleta(idx) {
   } else {
     if (!confirm(`¿Eliminar la boleta N° ${boleta.num}?`)) return;
   }
+  const _boletaIdEliminada = boleta.id;
   prov.boletas.splice(idx, 1);
+  if (fbFS && _boletaIdEliminada != null) {
+    fbFS.collection('boletas').doc(String(_boletaIdEliminada)).delete()
+      .catch(e => console.warn('eliminarBoleta: no se pudo borrar boletas/' + _boletaIdEliminada, e));
+  }
   fbGuardar();
   renderProveedores();
   filtrarBoletas();
@@ -5418,19 +5444,60 @@ function guardarBoleta() {
     fbGuardarProductos();
   }
 
-  // ── Guardar boleta ──
+  // ── Guardar boleta ── (Fase 5: id + sedeId + pagado/pagos, escritura doble a boletas/{id})
   if (!prov.boletas) prov.boletas = [];
-  prov.boletas.push({
-    num, fecha,
+  const _nuevaBoleta = {
+    id: getId(), num, fecha,
     monto:    parseFloat(document.getElementById('bol-monto').value) || 0,
     desc:     document.getElementById('bol-desc').value,
     url:      document.getElementById('bol-url').value.trim(),
-    productos: _boletaProductos.map(p => ({ prodId: p.prodId, nombre: p.nombre, cantidad: p.cantidad, esBonif: p.esBonif }))
-  });
+    productos: _boletaProductos.map(p => ({ prodId: p.prodId, nombre: p.nombre, cantidad: p.cantidad, esBonif: p.esBonif })),
+    pagado: 0, pagos: []
+  };
+  prov.boletas.push(_nuevaBoleta);
+  fbSincronizarBoleta(_nuevaBoleta, prov.id);
   fbGuardar();
   cerrarAgregarBoleta();
   renderProveedores();
   filtrarBoletas();
+}
+
+// ── Fase 5 arquitectura multi-sede: escritura doble en colección boletas/{id} ──
+// No bloqueante, mismo criterio que fbSincronizarVenta/fbSincronizarMovimiento.
+function fbSincronizarBoleta(boleta, proveedorId) {
+  if (!fbFS || !boleta || boleta.id == null) return;
+  const data = { ...boleta, proveedorId, sedeId: boleta.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('boletas').doc(String(boleta.id)).set(data)
+    .catch(e => console.warn('fbSincronizarBoleta: no se pudo escribir boletas/' + boleta.id, e));
+}
+
+// ── Pago a proveedor (cuentas por pagar) — mismo patrón que confirmarPagoFiado, del otro lado del libro ──
+function abrirPagoBoleta(provId, idx) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar pagos a proveedores.'); return; }
+  const prov = DB.proveedores.find(x => x.id === provId);
+  if (!prov || !prov.boletas || !prov.boletas[idx]) return;
+  const b = prov.boletas[idx];
+  const pendiente = Math.round(((b.monto||0) - (b.pagado||0)) * 100) / 100;
+  if (pendiente <= 0) { alert('Esta boleta ya está pagada.'); return; }
+  const monto = parseFloat(prompt(`Boleta N° ${b.num} — ${getProveedorNombre(provId)}\nPendiente: ${sol(pendiente)}\n\n¿Cuánto vas a pagar?`));
+  if (!monto || isNaN(monto) || monto <= 0) return;
+  if (monto > pendiente) { alert('El monto supera lo pendiente: ' + sol(pendiente)); return; }
+  const _metodosPago = ['Efectivo','Yape','Plin','QR','Link de pago','Tarjeta POS','Tarjeta POS Móvil','Transferencia'];
+  const idxM = parseInt(prompt('Método de pago:\n' + _metodosPago.map((m,i)=>`${i+1}. ${m}`).join('\n'), '1'));
+  const metodo = (idxM >= 1 && idxM <= _metodosPago.length) ? _metodosPago[idxM-1] : 'Efectivo';
+  if (!b.pagos) b.pagos = [];
+  b.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
+  b.pagado = Math.round(((b.pagado||0) + monto) * 100) / 100;
+  ensureCajaAbierta();
+  DB.caja.egresos = (DB.caja.egresos||0) + monto;
+  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  _pushMovimiento({ tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${b.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser });
+  fbSincronizarBoleta(b, provId);
+  fbGuardar();
+  filtrarBoletas();
+  renderProveedores();
+  try { renderCaja(); } catch(e){}
+  alert(`✅ Pago registrado: ${sol(monto)}. Pendiente restante: ${sol(Math.max(0,pendiente-monto))}`);
 }
 
 // ===================== CLIENTES =====================
@@ -6148,7 +6215,7 @@ function guardarMontoAperturaDefault() {
 // ── Arqueo de caja (Fase 4): compara efectivo físico contra el teórico SOLO en efectivo — ──
 // Yape/tarjeta/transferencia nunca pasan por el cajón, no se cuentan acá. No bloquea el cierre.
 function _saldoEfectivoTeorico() {
-  return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
+  return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresosEfectivo||0) - (DB.caja.retiros||0);
 }
 function abrirRetiroEfectivo() {
   const disponible = _saldoEfectivoTeorico();
@@ -6282,7 +6349,7 @@ function registrarMovimiento() {
   const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
   const desc = document.getElementById('mov-desc').value;
   if (monto <= 0) { alert('Ingresa un monto válido'); return; }
-  if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; } else DB.caja.egresos += monto;
+  if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; } else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
   _pushMovimiento({ tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today() });
   fbGuardar();
   document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
@@ -7624,34 +7691,38 @@ function guardarGasto() {
   const tipo  = document.getElementById('g-tipo').value;
   const desc  = document.getElementById('g-desc').value;
   const fecha = document.getElementById('g-fecha').value;
+  const metodo = document.getElementById('g-metodo')?.value || 'Efectivo';
 
   if (_editingGastoId) {
     // EDITAR — ajustar diferencia en caja
     const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
     if (old) {
       const diff = monto - old.monto;
-      old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha;
+      old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
       if (diff !== 0) {
         ensureCajaAbierta();
         if (diff > 0) {
           // Aumento — egreso adicional
           DB.caja.egresos = (DB.caja.egresos||0) + diff;
-          _pushMovimiento({ tipo:'egreso', desc:`Ajuste gasto (aumento): ${desc} (${tipo})`, monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser });
+          if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
+          _pushMovimiento({ tipo:'egreso', desc:`Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`, monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser });
         } else {
           // Reducción — ingreso por corrección
           DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
+          if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + diff);
           DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
           DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
-          _pushMovimiento({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
+          _pushMovimiento({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
         }
       }
     }
   } else {
     // NUEVO
-    DB_EXT.gastos.push({ id: getId(), tipo, desc, monto, fecha });
+    DB_EXT.gastos.push({ id: getId(), tipo, desc, monto, fecha, metodo });
     ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
-    _pushMovimiento({ tipo:'egreso', desc:`Gasto: ${desc} (${tipo})`, monto, hora: nowTime(), fecha, usuario: currentUser });
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+    _pushMovimiento({ tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora: nowTime(), fecha, usuario: currentUser });
   }
 
   fbGuardar();
@@ -7939,9 +8010,10 @@ function confirmarPagoCuota() {
   DB_EXT.capital.prestamoPagado = (DB_EXT.capital.prestamoPagado||0) + monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) - monto;
   DB_EXT.capital.hist.push({ tipo:'pago_prestamo', fecha, desc, monto: -monto, acum });
-  // Registrar egreso en caja
+  // Registrar egreso en caja (efectivo por defecto — cuota de préstamo no tiene selector de método hoy)
   ensureCajaAbierta();
   DB.caja.egresos = (DB.caja.egresos||0) + monto;
+  DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
   _pushMovimiento({ tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser });
   fbGuardar();
   fbGuardarExt();
@@ -9608,6 +9680,7 @@ function guardarActualizarVenta() {
     // Registrar egreso en caja — si estaba cerrada, se reabre encadenando el saldo real antes de aplicar el reembolso
     ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
     _pushMovimiento({
       tipo: 'egreso',
       desc: `Reembolso anulación venta — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
@@ -9700,6 +9773,7 @@ function guardarActualizarVenta() {
   // Registrar egreso en caja — si estaba cerrada, se reabre encadenando el saldo real antes de aplicar el reembolso
   ensureCajaAbierta();
   DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
+  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
   _pushMovimiento({
     tipo: 'egreso',
     desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
