@@ -7570,7 +7570,27 @@ function renderCapital() {
   updateCapStats();
 }
 
-function updateCapStats() {
+// ── Trae ventas del rango una sola vez (Cobrado, caja real) — usado por Capital y Cierre de mes ──
+async function _cargarCobradoRango(desde, hasta) {
+  const lista = await _fetchVentasRango(desde, hasta);
+  return lista.filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado'));
+}
+// Costo de una venta cobrada: si tiene items, directo; si es pago de fiado (sin items), busca el fiado
+// original en DB.fiados y prorratea el costo según cuánto se cobró de esta vez — mismo criterio que ya usa Dashboard.
+function _costoDeVenta(v) {
+  if (v.items && v.items.length) {
+    return v.items.reduce((s,i) => { const p = DB.productos.find(x=>x.id===i.prodId); return s + (p?p.costo*i.cant:0); }, 0);
+  }
+  if (v.origen === 'pago_fiado') {
+    const fiado = (v.fiadoId ? DB.fiados.find(f => f.id === v.fiadoId) : null) || DB.fiados.find(f => f.clienteId === v.clienteId && f.total > 0);
+    if (!fiado || !fiado.total) return 0;
+    const prop = Math.min(1, v.total / fiado.total);
+    return (fiado.items||[]).reduce((s,i) => s + ((i.costoUnitario||0) * i.cant * prop), 0);
+  }
+  return 0;
+}
+
+async function updateCapStats() {
   const prestamo      = DB_EXT.capital.prestamo     || 0;
   const prestamoPagado= DB_EXT.capital.prestamoPagado|| 0;
   const prestamoPend  = Math.max(0, prestamo - prestamoPagado);
@@ -7592,15 +7612,21 @@ function updateCapStats() {
     ? `Pagado: ${sol(prestamoPagado)} / ${sol(prestamo)}`
     : 'Préstamo: S/ 0.00';
 
-  // Panel rentabilidad mes actual
+  // Panel rentabilidad — mes y año, una sola consulta (el año contiene al mes)
   const mes = getMesActual();
-  const ventasMes = DB.historialVentas.filter(v => v.fecha && v.fecha.startsWith(mes) &&
-    ((v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado')))
-    .reduce((s,v) => s+v.total, 0);
-  const costoMes = DB.historialVentas.filter(v => v.fecha && v.fecha.startsWith(mes) &&
-    v.items && v.items.length &&
-    ((v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')))
-    .reduce((s,v) => s+v.items.reduce((ss,i) => { const p=DB.productos.find(x=>x.id===i.prodId); return ss+(p?p.costo*i.cant:0); },0), 0);
+  const anio = today().substring(0,4);
+  let cobradoAnio;
+  try {
+    cobradoAnio = await _cargarCobradoRango(anio + '-01-01', today());
+  } catch (e) {
+    console.warn('updateCapStats: error consultando ventas/{id}', e);
+    document.getElementById('rent-real-detalle').innerHTML = '<div style="padding:1rem;text-align:center;color:var(--danger)">⚠️ Error cargando rentabilidad. Intenta de nuevo.</div>';
+    return;
+  }
+  const cobradoMes = cobradoAnio.filter(v => v.fecha && v.fecha.startsWith(mes));
+
+  const ventasMes = cobradoMes.reduce((s,v) => s+v.total, 0);
+  const costoMes  = cobradoMes.reduce((s,v) => s+_costoDeVenta(v), 0);
   const gastosMes  = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(mes)).reduce((s,g) => s+g.monto, 0);
   const gastosRec  = DB_EXT.gastosRec.reduce((s,g) => s+g.monto, 0);
   const sueldosMes = Object.values(DB_EXT.sueldos).reduce((s,v) => s+v, 0);
@@ -7612,15 +7638,8 @@ function updateCapStats() {
   const deficit     = rentReal - DB_EXT.capital.meta;
   const reinvertir  = Math.max(0, DB_EXT.capital.total * 0.1);
 
-  // Panel rentabilidad acumulado año
-  const anio = today().substring(0,4);
-  const ventasAnio = DB.historialVentas.filter(v => v.fecha && v.fecha.startsWith(anio) &&
-    ((v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado')))
-    .reduce((s,v) => s+v.total, 0);
-  const costoAnio = DB.historialVentas.filter(v => v.fecha && v.fecha.startsWith(anio) &&
-    v.items && v.items.length &&
-    ((v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')))
-    .reduce((s,v) => s+v.items.reduce((ss,i) => { const p=DB.productos.find(x=>x.id===i.prodId); return ss+(p?p.costo*i.cant:0); },0), 0);
+  const ventasAnio = cobradoAnio.reduce((s,v) => s+v.total, 0);
+  const costoAnio  = cobradoAnio.reduce((s,v) => s+_costoDeVenta(v), 0);
   const gastosAnio = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(anio)).reduce((s,g) => s+g.monto, 0);
   const mermasAnio = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(anio))
     .reduce((s,m) => { const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0); }, 0);
@@ -7714,17 +7733,22 @@ function confirmarAddCapital() {
   try { renderDashboard(); } catch(e){}
 }
 
-function abrirCerrarMes() {
+async function abrirCerrarMes() {
   const mes = getMesActual();
   document.getElementById('cm-mes').value = mes;
-  // Calcular ganancia neta del mes automáticamente
-  const ventasMes = DB.historialVentas.filter(v => v.fecha && v.fecha.startsWith(mes) &&
-    ((v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado')))
-    .reduce((s,v) => s+v.total, 0);
-  const costoMes = DB.historialVentas.filter(v => v.fecha && v.fecha.startsWith(mes) &&
-    v.items && v.items.length &&
-    ((v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')))
-    .reduce((s,v) => s+v.items.reduce((ss,i) => { const p=DB.productos.find(x=>x.id===i.prodId); return ss+(p?p.costo*i.cant:0); },0), 0);
+  document.getElementById('cm-monto').value = '';
+  document.getElementById('cm-detalle').textContent = '⏳ Calculando...';
+  abrirModal('modal-cerrar-mes');
+
+  let cobradoMes;
+  try {
+    cobradoMes = await _cargarCobradoRango(mes + '-01', today());
+  } catch (e) {
+    document.getElementById('cm-detalle').textContent = '⚠️ Error cargando datos. Cierra y vuelve a intentar.';
+    return;
+  }
+  const ventasMes = cobradoMes.reduce((s,v) => s+v.total, 0);
+  const costoMes  = cobradoMes.reduce((s,v) => s+_costoDeVenta(v), 0);
   const gastosMes  = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(mes)).reduce((s,g) => s+g.monto, 0);
   const gastosRec  = DB_EXT.gastosRec.reduce((s,g) => s+g.monto, 0);
   const sueldosMes = Object.values(DB_EXT.sueldos).reduce((s,v) => s+v, 0);
@@ -7734,7 +7758,6 @@ function abrirCerrarMes() {
   document.getElementById('cm-monto').value = ganancia.toFixed(2);
   document.getElementById('cm-detalle').textContent =
     `Ventas ${sol(ventasMes)} − Costos ${sol(costoMes)} − Gastos ${sol(gastosMes+gastosRec+sueldosMes)} − Mermas ${sol(mermasMes)}`;
-  abrirModal('modal-cerrar-mes');
 }
 
 function confirmarCerrarMes() {
