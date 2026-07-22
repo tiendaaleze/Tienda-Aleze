@@ -3011,6 +3011,7 @@ const FIREBASE_USERS = {
 // Las contraseñas guardadas en Firestore se cargan en fbEscuchar/onload y sobreescriben estas
 let currentUser = null;
 let currentRole = null;
+let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del cajero logueado
 
 // Extended DB with new modules
 const DB_EXT = {
@@ -3077,6 +3078,7 @@ let cart = [];
 function resetAppState() {
   currentUser = null;
   currentRole = null;
+  currentUserSedeId = null;
   cart = [];
   _fbProdCacheTs = 0;
 
@@ -3324,6 +3326,8 @@ async function doLogin() {
 
   currentUser = name;
 currentRole = role;
+  const _staffLogin = (DB.config.usuariosStaff || []).find(u => u.nombre === name);
+  currentUserSedeId = (_staffLogin && _staffLogin.sedeId) || 'principal';
   localStorage.setItem('aleze_last_user', sel);
 
   // ── PASO 5: Mostrar UI — solo después de tener datos ──
@@ -4090,6 +4094,7 @@ function procesarVenta() {
       DB.caja = resultado.nuevoDb.caja;
       DB.movimientos = resultado.nuevoDb.movimientos;
       DB.clientes = resultado.nuevoDb.clientes;
+      fbSincronizarVenta({ ...venta, origen: 'pos', estado: 'completado', estadoStock: 'descontado' });
     }
     try { renderDashboard(); } catch(e){}
     try { renderCaja(); } catch(e){}
@@ -4208,6 +4213,7 @@ function cobrarFiado() {
       DB.caja = resultado.nuevoDb.caja;
       DB.movimientos = resultado.nuevoDb.movimientos;
       DB.clientes = resultado.nuevoDb.clientes;
+      fbSincronizarVenta({ ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' });
     }
     try { renderDashboard(); } catch(e){}
     try { renderCaja(); } catch(e){}
@@ -5706,7 +5712,7 @@ function ejecutarPagoGlobal(cid, montoTotal) {
   DB.caja.ingresos += montoTotal;
   DB.movimientos.push({ tipo:'ingreso', desc:'Pago global fiado: ' + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today() });
   if (!DB.historialVentas) DB.historialVentas = [];
-  _hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
+  _hvPagosGlobal.forEach(entry => { DB.historialVentas.push(entry); fbSincronizarVenta(entry); });
   fbGuardar();
   renderFiados();
   updateAlertCount();
@@ -5864,7 +5870,9 @@ f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto });
   DB.caja.ingresos += monto;
   DB.movimientos.push({ tipo:'ingreso', desc:'Pago fiado: ' + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today() });
   if (!DB.historialVentas) DB.historialVentas = [];
- DB.historialVentas.push({ id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, cajero: currentUser });
+  const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, cajero: currentUser };
+  DB.historialVentas.push(_pagoFiado);
+  fbSincronizarVenta(_pagoFiado);
   fbGuardar();
   cerrarModal('modal-pago-fiado');
   renderFiados();
@@ -8491,7 +8499,9 @@ function mobCobrarFiado() {
   };
 DB.fiados.push(fiado);
   if (!DB.historialVentas) DB.historialVentas = [];
-  DB.historialVentas.push({ ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' });
+  const _hvFiadoMob = { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
+  DB.historialVentas.push(_hvFiadoMob);
+  fbSincronizarVenta(_hvFiadoMob);
 
   // Descontar stock
   _fbLastWriteProdTs = Date.now();
@@ -8585,7 +8595,9 @@ function mobProcesarVenta(){
   DB.movimientos.push({ tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
 
   if (!DB.historialVentas) DB.historialVentas = [];
-  DB.historialVentas.push({ ...venta, origen:'pos', estado:'completado', estadoStock:'descontado' });
+  const _ventaMob = { ...venta, origen:'pos', estado:'completado', estadoStock:'descontado' };
+  DB.historialVentas.push(_ventaMob);
+  fbSincronizarVenta(_ventaMob);
   fbGuardar();
   fbGuardarProductos();
   try { renderDashboard(); } catch(e){}
@@ -8757,6 +8769,16 @@ function fbGuardarProductos() {
       })
       .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; alert('⚠️ Error al guardar stock. Avisa al administrador.\nCódigo://' + (e.code || e.message || 'desconocido')); });
   }, 1200);
+}
+
+// ── Fase 1 arquitectura multi-sede: escritura doble en colección ventas/{id} ──
+// No bloqueante — un fallo acá nunca debe afectar el guardado de historialVentas.
+// sedeId por defecto 'principal' si no hay currentUserSedeId (ver Sección 3 hoja de ruta).
+function fbSincronizarVenta(venta) {
+  if (!fbFS || !venta || venta.id == null) return;
+  const data = { ...venta, sedeId: venta.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('ventas').doc(String(venta.id)).set(data)
+    .catch(e => console.warn('fbSincronizarVenta: no se pudo escribir ventas/' + venta.id, e));
 }
 
 // ── Escuchar cambios de OTROS dispositivos ──
@@ -9240,6 +9262,7 @@ function guardarActualizarVenta() {
     vDB.total         = 0;
     vDB.fechaAnulacion = today() + ' ' + nowTime();
 
+    fbSincronizarVenta(vDB);
     fbGuardar();
     fbGuardarProductos();
     cerrarModal('modal-actualizar-venta');
@@ -9321,6 +9344,7 @@ function guardarActualizarVenta() {
     items: itemsDevueltos
   });
 
+  fbSincronizarVenta(vDB);
   fbGuardar();
   fbGuardarProductos();
   cerrarModal('modal-actualizar-venta');
@@ -9865,7 +9889,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
 
       if (_esPagado) {
         // ── COBRADO ──────────────────────────────────────────────────────────
-        DB.historialVentas.push({
+        const _ventaOnline = {
           id: p.id, fecha: p.fecha, hora: p.hora,
           cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
           clienteNombre: p.clienteNombre, items: itemsFinales,
@@ -9873,7 +9897,9 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'completado',
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || ''
-        });
+        };
+        DB.historialVentas.push(_ventaOnline);
+        fbSincronizarVenta(_ventaOnline);
         if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; }
       } else {
         // ── FIADO ─────────────────────────────────────────────────────────────
@@ -9894,7 +9920,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           cli.compras = (cli.compras||0) + 1;
           cli.total   = (cli.total||0)   + p.total;
         }
-        DB.historialVentas.push({
+        const _ventaOnlineFiado = {
           id: p.id, fecha: p.fecha, hora: p.hora,
           cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
           clienteNombre: p.clienteNombre, items: itemsFinales,
@@ -9902,7 +9928,9 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'fiado',
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || ''
-        });
+        };
+        DB.historialVentas.push(_ventaOnlineFiado);
+        fbSincronizarVenta(_ventaOnlineFiado);
       }
 
       // ── Actualizar estado pedido + caja ────────────────────────────────────
