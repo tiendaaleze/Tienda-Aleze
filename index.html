@@ -2386,34 +2386,6 @@ background: #F5F3FF;
         <option value="">— Selecciona un proveedor —</option>
       </select>
     </div>
-    <div id="bol-form" style="display:none;background:var(--gray-50);border-radius:8px;padding:.75rem;margin-bottom:.75rem">
-      <div class="grid-2">
-        <div class="form-group"><label>N° Boleta *</label><input type="text" class="form-control" id="bol-num" /></div>
-        <div class="form-group"><label>Fecha de compra *</label><input type="date" class="form-control" id="bol-fecha" /></div>
-      </div>
-      <div class="grid-2">
-        <div class="form-group"><label>Importe total (S/)</label><input type="number" class="form-control" id="bol-monto" step="0.01" oninput="_boletaActualizarTotal()" /></div>
-        <div class="form-group"><label>URL Drive (acceso directo)</label><input type="text" class="form-control" id="bol-url" placeholder="Link Google Drive..." /></div>
-      </div>
-     <div class="form-group"><label>Descripción</label><input type="text" class="form-control" id="bol-desc" /></div>
-      <!-- Sección productos recibidos -->
-      <div style="border-top:1px solid var(--gray-200);margin-top:.75rem;padding-top:.75rem">
-        <div style="font-weight:700;font-size:.82rem;margin-bottom:.5rem">📦 Productos recibidos <span style="font-weight:400;color:var(--gray-500)">(opcional)</span></div>
-        <div style="display:flex;gap:.4rem;margin-bottom:.5rem">
-          <input type="text" class="form-control" id="bol-prod-buscar" placeholder="🔍 Buscar producto del inventario..." oninput="_boletaBuscar()" style="flex:1" />
-        </div>
-        <div id="bol-prod-sugerencias" style="display:none;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:140px;overflow-y:auto;margin-bottom:.5rem;font-size:.82rem"></div>
-        <div id="bol-prod-nuevo" style="display:none;background:#fff;border:1px solid var(--primary);border-radius:6px;padding:.6rem;margin-bottom:.5rem"></div>
-        <div id="bol-prod-lista" style="font-size:.82rem">
-          <div style="color:var(--gray-400);text-align:center;padding:.5rem">Sin productos agregados aún</div>
-        </div>
-        <div id="bol-prod-total" style="font-size:.8rem;font-weight:600;text-align:right;margin-top:.5rem;padding-top:.4rem;border-top:1px dashed var(--gray-300)"></div>
-      </div>
-      <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
-        <button type="button" class="btn btn-outline btn-sm" onclick="cerrarAgregarBoleta()">Cancelar</button>
-        <button type="button" class="btn btn-primary btn-sm" onclick="guardarBoleta()">Guardar boleta</button>
-      </div>
-    </div>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">
       <div style="flex:1;min-width:100px">
         <label style="font-size:.75rem;font-weight:600">Desde</label>
@@ -2424,11 +2396,47 @@ background: #F5F3FF;
         <input type="date" class="form-control" id="bol-filtro-hasta" onchange="filtrarBoletas()" />
       </div>
       <div style="flex:0 0 auto;display:flex;gap:.4rem;align-items:flex-end">
-        <button type="button" class="btn btn-outline btn-sm" style="background:var(--gray-100);border-color:var(--gray-400)" onclick="limpiarFiltrosBoletas()">✕</button>
-        <button type="button" class="btn btn-primary btn-sm" onclick="abrirAgregarBoleta()">+ Agregar</button>
+        <button type="button" class="btn btn-outline btn-sm" style="background:var(--gray-100);border-color:var(--gray-400)" onclick="limpiarFiltrosBoletas()">✕ Limpiar</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="abrirAgregarBoleta()">+ Agregar boleta</button>
       </div>
     </div>
     <div class="table-wrap"><table><thead><tr><th>N° Boleta</th><th>Fecha</th><th>Descripción</th><th>Importe</th><th>URL</th><th></th></tr></thead><tbody id="boletas-tbody"></tbody></table></div>
+  </div>
+</div>
+
+<!-- Modal Nueva Boleta — SOLO creación, sin filtros ni buscadores, foco único -->
+<div class="modal-overlay" id="modal-nueva-boleta">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <h3>📄 Nueva boleta — <span id="nb-proveedor-nombre" style="color:var(--primary)"></span></h3>
+      <button type="button" class="modal-close" onclick="cerrarAgregarBoleta()">✕</button>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label>N° Boleta *</label><input type="text" class="form-control" id="bol-num" /></div>
+      <div class="form-group"><label>Fecha de compra *</label><input type="date" class="form-control" id="bol-fecha" /></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label>Importe total (S/)</label><input type="number" class="form-control" id="bol-monto" step="0.01" oninput="_boletaActualizarTotal()" /></div>
+      <div class="form-group"><label>URL Drive (acceso directo)</label><input type="text" class="form-control" id="bol-url" placeholder="Link Google Drive..." /></div>
+    </div>
+   <div class="form-group"><label>Descripción</label><input type="text" class="form-control" id="bol-desc" /></div>
+    <!-- Sección productos recibidos -->
+    <div style="border-top:1px solid var(--gray-200);margin-top:.75rem;padding-top:.75rem">
+      <div style="font-weight:700;font-size:.82rem;margin-bottom:.5rem">📦 Productos recibidos <span style="font-weight:400;color:var(--gray-500)">(opcional)</span></div>
+      <div style="display:flex;gap:.4rem;margin-bottom:.5rem">
+        <input type="text" class="form-control" id="bol-prod-buscar" placeholder="🔍 Buscar producto del inventario..." oninput="_boletaBuscar()" style="flex:1" />
+      </div>
+      <div id="bol-prod-sugerencias" style="display:none;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:140px;overflow-y:auto;margin-bottom:.5rem;font-size:.82rem"></div>
+      <div id="bol-prod-nuevo" style="display:none;background:#fff;border:1px solid var(--primary);border-radius:6px;padding:.6rem;margin-bottom:.5rem"></div>
+      <div id="bol-prod-lista" style="font-size:.82rem">
+        <div style="color:var(--gray-400);text-align:center;padding:.5rem">Sin productos agregados aún</div>
+      </div>
+      <div id="bol-prod-total" style="font-size:.8rem;font-weight:600;text-align:right;margin-top:.5rem;padding-top:.4rem;border-top:1px dashed var(--gray-300)"></div>
+    </div>
+    <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
+      <button type="button" class="btn btn-outline btn-sm" onclick="cerrarAgregarBoleta()">Cancelar</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="guardarBoleta()">Guardar boleta</button>
+    </div>
   </div>
 </div>
 
@@ -5252,7 +5260,8 @@ let _boletaProductos = []; // Productos recibidos en la boleta actual (temporal)
 function abrirAgregarBoleta() {
   if (currentRole !== 'admin') return;
   if (!editingBoletaProvId) { alert('Selecciona un proveedor primero.'); return; }
-  document.getElementById('bol-form').style.display = 'block';
+  const prov = DB.proveedores.find(x => x.id === editingBoletaProvId);
+  document.getElementById('nb-proveedor-nombre').textContent = prov ? prov.nombre : '';
   document.getElementById('bol-num').value = '';
   document.getElementById('bol-fecha').value = today();
   document.getElementById('bol-monto').value = '';
@@ -5261,15 +5270,17 @@ function abrirAgregarBoleta() {
   document.getElementById('bol-prod-nuevo').style.display = 'none';
   _boletaProductos = [];
   _boletaRenderLista();
+  cerrarModal('modal-boletas-proveedor');
+  abrirModal('modal-nueva-boleta');
 }
 function cerrarAgregarBoleta() {
-  document.getElementById('bol-form').style.display = 'none';
   _boletaProductos = [];
   const buscar = document.getElementById('bol-prod-buscar');
   if (buscar) buscar.value = '';
   const sug = document.getElementById('bol-prod-sugerencias');
   if (sug) sug.style.display = 'none';
-  _boletaRenderLista();
+  cerrarModal('modal-nueva-boleta');
+  abrirModal('modal-boletas-proveedor');
 }
 // ── Puebla el selector de proveedor del modal de boletas (usado en ambas entradas: directa y desde un proveedor) ──
 function _boletaPoblarSelector() {
@@ -5284,7 +5295,6 @@ function abrirNuevaBoletaDirecta() {
   editingBoletaProvId = null;
   _boletaPoblarSelector();
   document.getElementById('bolprov-selector').value = '';
-  document.getElementById('bol-form').style.display = 'none';
   limpiarFiltrosBoletas();
   abrirModal('modal-boletas-proveedor');
 }
@@ -5293,7 +5303,6 @@ function abrirNuevaBoletaDirecta() {
 function _boletaSeleccionarProveedor() {
   const val = document.getElementById('bolprov-selector').value;
   editingBoletaProvId = val ? parseInt(val) : null;
-  document.getElementById('bol-form').style.display = 'none';
   limpiarFiltrosBoletas();
 }
 
@@ -5301,7 +5310,6 @@ function verBoletas(provId) {
   editingBoletaProvId = provId;
   _boletaPoblarSelector();
   document.getElementById('bolprov-selector').value = provId;
-  document.getElementById('bol-form').style.display = 'none';
   limpiarFiltrosBoletas();
   cerrarModal('modal-proveedor');
   abrirModal('modal-boletas-proveedor');
@@ -5478,6 +5486,7 @@ function _boletaRenderLista() {
     _boletaActualizarTotal();
     return;
   }
+const _unidadNombre = { und:'unidades', kg:'kg', g:'g', L:'L', ml:'ml' };
 el.innerHTML = _boletaProductos.map((p, i) => {
     const prod = DB.productos.find(x => x.id === p.prodId);
     const stockActual = prod ? prod.stock : 0;
@@ -5488,25 +5497,35 @@ el.innerHTML = _boletaProductos.map((p, i) => {
     const costoPromedio = _boletaCostoPromedio(stockActual, costoActual, cantNueva, costoNuevo);
     const costoCambia = Math.abs(costoPromedio - costoActual) > 0.005;
     const precio = prod ? prod.precio : 0;
+    const unidad = _unidadNombre[prod?.unidad] || 'unidades';
     const margenActual = precio > 0 ? ((precio - costoActual) / precio * 100).toFixed(1) : '—';
     const margenNuevo  = precio > 0 ? ((precio - costoPromedio) / precio * 100).toFixed(1) : '—';
     const margenColor  = margenNuevo !== '—' && margenActual !== '—' && parseFloat(margenNuevo) < parseFloat(margenActual) ? 'var(--danger)' : 'var(--accent)';
     return `
-    <div style="background:var(--gray-50);border-radius:6px;padding:.4rem .6rem;margin-bottom:.4rem">
-      <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
-        <span style="flex:1;font-size:.82rem;font-weight:600;min-width:120px">${p.nombre}</span>
-        <input type="number" min="0.01" step="0.01" value="${p.cantidad}" style="width:58px;padding:2px 4px;border:1px solid var(--gray-200);border-radius:4px;font-size:.8rem"
-          onchange="_boletaProductos[${i}].cantidad=parseFloat(this.value)||1;_boletaRenderLista()" title="Cantidad" />
-        <input type="number" min="0" step="0.01" value="${p.costo}" ${p.esBonif ? 'disabled style="width:58px;padding:2px 4px;border:1px solid var(--gray-200);border-radius:4px;font-size:.8rem;opacity:.45"' : 'style="width:58px;padding:2px 4px;border:1px solid var(--gray-200);border-radius:4px;font-size:.8rem"'}
-          onchange="_boletaProductos[${i}].costo=parseFloat(this.value)||0;_boletaRenderLista()" title="Costo unitario S/" />
-        <label style="font-size:.72rem;white-space:nowrap;display:flex;align-items:center;gap:2px">
+    <div style="background:var(--gray-50);border-radius:6px;padding:.5rem .6rem;margin-bottom:.4rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+        <span style="font-size:.82rem;font-weight:600">${p.nombre}</span>
+        <button onclick="_boletaQuitarProd(${p.prodId})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:0 2px">✕ quitar</button>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:.6rem;flex-wrap:wrap">
+        <div>
+          <label style="font-size:.68rem;color:var(--gray-500);display:block;margin-bottom:1px">Cantidad (${unidad})</label>
+          <input type="number" min="0.01" step="0.01" value="${p.cantidad}" style="width:72px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:.8rem"
+            onchange="_boletaProductos[${i}].cantidad=parseFloat(this.value)||1;_boletaRenderLista()" />
+        </div>
+        <div>
+          <label style="font-size:.68rem;color:var(--gray-500);display:block;margin-bottom:1px">Costo unitario (S/)</label>
+          <input type="number" min="0" step="0.01" value="${p.costo}" ${p.esBonif ? 'disabled style="width:72px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:.8rem;opacity:.45"' : 'style="width:72px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:.8rem"'}
+            onchange="_boletaProductos[${i}].costo=parseFloat(this.value)||0;_boletaRenderLista()" />
+        </div>
+        <label style="font-size:.72rem;white-space:nowrap;display:flex;align-items:center;gap:2px;padding-bottom:4px">
           <input type="checkbox" ${p.esBonif?'checked':''} onchange="_boletaProductos[${i}].esBonif=this.checked;_boletaRenderLista()"> Bonif.
         </label>
-        <button onclick="_boletaQuitarProd(${p.prodId})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:0 2px">✕</button>
       </div>
-      <div style="display:flex;align-items:center;gap:.7rem;margin-top:.3rem;flex-wrap:wrap;font-size:.72rem;color:var(--gray-500)">
+      <div style="display:flex;align-items:center;gap:.7rem;margin-top:.4rem;flex-wrap:wrap;font-size:.72rem;color:var(--gray-500)">
         <span>📦 Stock: <b style="color:var(--gray-700)">${stockActual}</b> → <b style="color:var(--accent)">${stockFinal}</b></span>
         <span>💰 Costo: <b style="color:var(--gray-700)">${sol(costoActual)}</b>${costoCambia ? ` → <b style="color:var(--warning)">${sol(costoPromedio)}</b> (promedio ponderado)` : ' (sin cambio)'}</span>
+        <span>🏷️ Venta: <b style="color:var(--gray-700)">${sol(precio)}</b></span>
       </div>
       <div style="display:flex;align-items:center;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
         <label style="font-size:.72rem;color:var(--gray-500)">Vence:</label>
