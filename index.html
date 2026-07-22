@@ -2139,8 +2139,13 @@ background: #F5F3FF;
               <option value="pos">POS (tienda)</option>
               <option value="online">Online (tienda web)</option>
             </select>
+            <select class="form-control" id="hv-sede" style="width:150px" onchange="renderHistorialVentas()">
+              <option value="">Todas las sedes</option>
+              <option value="principal">Principal</option>
+              <option value="Tienda Aleze II">Tienda Aleze II</option>
+            </select>
             <input type="text" class="form-control" id="hv-buscar" placeholder="Buscar cajero, producto..." style="width:200px" oninput="renderHistorialVentas()" />
-            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('hv-desde').value='';document.getElementById('hv-hasta').value='';document.getElementById('hv-estado').value='';document.getElementById('hv-origen').value='';document.getElementById('hv-buscar').value='';renderHistorialVentas()">🔄 Limpiar filtros</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('hv-desde').value='';document.getElementById('hv-hasta').value='';document.getElementById('hv-estado').value='';document.getElementById('hv-origen').value='';document.getElementById('hv-sede').value='';document.getElementById('hv-buscar').value='';renderHistorialVentas()">🔄 Limpiar filtros</button>
           </div>
         </div>
         <div class="grid-4" id="hv-stats" style="margin-bottom:1rem"></div>
@@ -2148,7 +2153,7 @@ background: #F5F3FF;
           <div class="table-wrap">
             <table id="hv-table">
               <thead>
-                <tr><th>Fecha</th><th>Hora</th><th>Origen</th><th>Cajero/Cliente</th><th>Productos</th><th>Total S/</th><th>Método</th><th>Estado</th><th>Acciones</th></tr>
+                <tr><th>Fecha</th><th>Hora</th><th>Origen</th><th>Sede</th><th>Cajero/Cliente</th><th>Productos</th><th>Total S/</th><th>Método</th><th>Estado</th><th>Acciones</th></tr>
               </thead>
               <tbody id="hv-tbody"></tbody>
             </table>
@@ -8970,23 +8975,66 @@ window.onload = async function() {
 
 
 // ===================== HISTORIAL DE VENTAS =====================
-function renderHistorialVentas() {
-  if (!DB.historialVentas) DB.historialVentas = [];
-  const desde  = document.getElementById('hv-desde')?.value  || '';
-  const hasta  = document.getElementById('hv-hasta')?.value  || '';
-  const estado = document.getElementById('hv-estado')?.value || '';
-  const origen = document.getElementById('hv-origen')?.value || '';
-  const buscar = (document.getElementById('hv-buscar')?.value || '').toLowerCase();
+// ── Fase 2: consulta a ventas/{id} por rango de fecha (colección nueva, sin listener — Sección 9) ──
+async function _fetchVentasRango(desde, hasta) {
+  if (!fbFS) return [];
+  const snap = await fbFS.collection('ventas').where('fecha', '>=', desde).where('fecha', '<=', hasta).get();
+  return snap.docs.map(d => d.data());
+}
 
-  // Unir historial propio + ventas normales que no estén ya en historial
-  const hvIds = new Set((DB.historialVentas || []).map(v => v.id));
-  const ventasExtra = (DB.ventas || []).filter(v => !hvIds.has(v.id)).map(v => ({
-    ...v, origen: 'pos', estado: 'completado', estadoStock: 'descontado'
-  }));
-  let lista = [...(DB.historialVentas || []), ...ventasExtra];
+// ── Rango por defecto + advertencia si es amplio — compartido entre Historial y Reportes ──
+// Devuelve null si el usuario cancela la advertencia (el llamador debe abortar sin consultar).
+function _resolverRangoConAviso(desdeInput, hastaInput, diasDefault) {
+  let desde = desdeInput, hasta = hastaInput;
+  if (!desde && !hasta) {
+    const d = new Date(); d.setDate(d.getDate() - diasDefault);
+    desde = d.toISOString().split('T')[0];
+    hasta = today();
+  } else {
+    if (!desde) desde = '2000-01-01';
+    if (!hasta) hasta = today();
+  }
+  const diasRango = Math.round((new Date(hasta) - new Date(desde)) / 86400000);
+  if (diasRango > 30) {
+    if (!confirm(`El rango elegido es de ${diasRango} días — trae más datos de lo normal (más tráfico/lecturas). ¿Continuar?`)) return null;
+  }
+  return { desde, hasta };
+}
 
-  if (desde) lista = lista.filter(v => v.fecha >= desde);
-  if (hasta) lista = lista.filter(v => v.fecha <= hasta);
+async function renderHistorialVentas() {
+  const inDesde = document.getElementById('hv-desde');
+  const inHasta = document.getElementById('hv-hasta');
+  const inEstado = document.getElementById('hv-estado');
+  const inOrigen = document.getElementById('hv-origen');
+  const inSede   = document.getElementById('hv-sede');
+  const inBuscar = document.getElementById('hv-buscar');
+  const estado = inEstado?.value || '';
+  const origen = inOrigen?.value || '';
+  const sede   = inSede?.value   || '';
+  const buscar = (inBuscar?.value || '').toLowerCase();
+
+  const rango = _resolverRangoConAviso(inDesde?.value || '', inHasta?.value || '', 7);
+  if (!rango) return; // advertencia de rango amplio cancelada por el usuario
+  if (inDesde) inDesde.value = rango.desde;
+  if (inHasta) inHasta.value = rango.hasta;
+
+  const tbody = document.getElementById('hv-tbody');
+  const controles = [inDesde, inHasta, inEstado, inOrigen, inSede, inBuscar];
+  if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--gray-400)">⏳ Cargando...</td></tr>';
+  controles.forEach(el => { if (el) el.disabled = true; });
+
+  let lista;
+  try {
+    lista = await _fetchVentasRango(rango.desde, rango.hasta);
+  } catch (e) {
+    console.warn('renderHistorialVentas: error consultando ventas/{id}', e);
+    controles.forEach(el => { if (el) el.disabled = false; });
+    if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--danger)">⚠️ Error cargando historial. Intenta de nuevo.</td></tr>';
+    return;
+  }
+  controles.forEach(el => { if (el) el.disabled = false; });
+
+  if (sede)   lista = lista.filter(v => (v.sedeId||'principal') === sede);
   if (estado) lista = lista.filter(v => v.estado === estado);
   if (origen) lista = lista.filter(v => v.origen === origen);
   if (buscar) lista = lista.filter(v =>
@@ -9011,10 +9059,9 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
   const badgeColor = { completado:'badge-green', parcial:'badge-orange', anulado:'badge-red' };
   const origenIcon = { pos:'🏪', online:'🌐' };
 
-  const tbody = document.getElementById('hv-tbody');
   if (!tbody) return;
   if (lista.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--gray-400)">Sin ventas en el período seleccionado</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--gray-400)">Sin ventas en el período seleccionado</td></tr>';
     return;
   }
   tbody.innerHTML = lista.map(v => {
@@ -9028,6 +9075,7 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
       <td>${formatDate(v.fecha)}</td>
       <td>${v.hora||'-'}</td>
       <td>${origenIcon[v.origen]||'🏪'} ${v.origen==='online'?'Online':'POS'}</td>
+      <td><span class="badge badge-gray">${v.sedeId||'principal'}</span></td>
       <td>${nombre||'-'}</td>
       <td style="font-size:.78rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${prods}">${prods}</td>
       <td style="font-weight:700">
@@ -9046,16 +9094,26 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
   }).join('');
 }
 
-function exportHistorialVentas() {
-  if (!DB.historialVentas) { alert('Sin datos'); return; }
-  const hvIds = new Set((DB.historialVentas||[]).map(v=>v.id));
-  const ventasExtra = (DB.ventas||[]).filter(v=>!hvIds.has(v.id)).map(v=>({...v,origen:'pos',estado:'completado'}));
-  const lista = [...(DB.historialVentas||[]),...ventasExtra];
-  let csv = 'Fecha,Hora,Origen,Cajero/Cliente,Productos,Total,Método,Estado\n';
+async function exportHistorialVentas() {
+  const desde = document.getElementById('hv-desde')?.value || '';
+  const hasta = document.getElementById('hv-hasta')?.value || '';
+  const sede  = document.getElementById('hv-sede')?.value   || '';
+  const rango = _resolverRangoConAviso(desde, hasta, 7);
+  if (!rango) return;
+  let lista;
+  try {
+    lista = await _fetchVentasRango(rango.desde, rango.hasta);
+  } catch (e) {
+    alert('⚠️ No se pudo exportar. Intenta de nuevo.');
+    return;
+  }
+  if (sede) lista = lista.filter(v => (v.sedeId||'principal') === sede);
+  if (lista.length === 0) { alert('Sin datos en ese rango'); return; }
+  let csv = 'Fecha,Hora,Sede,Origen,Cajero/Cliente,Productos,Total,Método,Estado\n';
   lista.forEach(v => {
     const nombre = v.clienteNombre||(v.clienteId?getClienteNombre(v.clienteId):v.cajero);
     const prods = (v.items||[]).map(i=>`${i.nombre}x${i.cant}`).join('|');
-    csv += `"${v.fecha}","${v.hora||''}","${v.origen||'pos'}","${nombre||''}","${prods}","${v.total}","${v.metodo||''}","${v.estado||'completado'}"\n`;
+    csv += `"${v.fecha}","${v.hora||''}","${v.sedeId||'principal'}","${v.origen||'pos'}","${nombre||''}","${prods}","${v.total}","${v.metodo||''}","${v.estado||'completado'}"\n`;
   });
   const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
