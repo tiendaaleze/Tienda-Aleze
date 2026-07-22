@@ -6852,9 +6852,9 @@ async function generarReporte() {
     if (chartReporte) { chartReporte.destroy(); chartReporte = null; }
     return;
   }
-  if (tipo === 'mermas') { reporteMermas(desde, hasta); return; }
-  if (tipo === 'fiados') { reporteFiados(); return; }
-  if (tipo === 'gastos') { reporteGastos(desde, hasta); return; }
+  if (tipo === 'mermas') { reporteMermas(desde, hasta, sede); return; }
+  if (tipo === 'fiados') { reporteFiados(sede); return; }
+  if (tipo === 'gastos') { reporteGastos(desde, hasta, sede); return; }
 
   // Solo ventas/productos/rentabilidad consultan ventas/{id}
   const diasRango = Math.round((new Date(hasta) - new Date(desde)) / 86400000);
@@ -7016,8 +7016,8 @@ function reporteRentabilidad(datos, desde, hasta) {
     </table>`;
 }
 
-function reporteMermas(desde, hasta) {
-  const mermas = DB.mermas.filter(m => m.fecha >= desde && m.fecha <= hasta);
+function reporteMermas(desde, hasta, sede) {
+  const mermas = DB.mermas.filter(m => m.fecha >= desde && m.fecha <= hasta && (!sede || (m.sedeId||'principal') === sede));
   const total = mermas.reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0);
   document.getElementById('rep-stats').innerHTML = `
     <div class="stat-card red"><div class="stat-label">Pérdida total período</div><div class="stat-value">${sol(total)}</div></div>
@@ -7039,9 +7039,9 @@ function reporteMermas(desde, hasta) {
   });
 }
 
-function reporteFiados() {
+function reporteFiados(sede) {
  const data = DB.clientes.map(c => {
-    const deudaReal = DB.fiados.filter(f => f.clienteId === c.id).reduce((s,f) => s + Math.max(0, f.total - f.pagado), 0);
+    const deudaReal = DB.fiados.filter(f => f.clienteId === c.id && (!sede || (f.sedeId||'principal') === sede)).reduce((s,f) => s + Math.max(0, f.total - f.pagado), 0);
     return { nombre: c.alias||c.nombre, deuda: deudaReal };
   }).filter(d => d.deuda > 0).sort((a,b) => b.deuda - a.deuda);
   const total = data.reduce((s,d)=>s+d.deuda,0);
@@ -7062,8 +7062,8 @@ function reporteFiados() {
     </table>`;
 }
 
-function reporteGastos(desde, hasta) {
-  const gastos = DB_EXT.gastos.filter(g=>g.fecha&&g.fecha>=desde&&g.fecha<=hasta);
+function reporteGastos(desde, hasta, sede) {
+  const gastos = DB_EXT.gastos.filter(g=>g.fecha&&g.fecha>=desde&&g.fecha<=hasta&&(!sede||(g.sedeId||'principal')===sede));
   const total = gastos.reduce((s,g)=>s+g.monto,0);
   const porTipo = {};
   gastos.forEach(g => porTipo[g.tipo] = (porTipo[g.tipo]||0)+g.monto);
