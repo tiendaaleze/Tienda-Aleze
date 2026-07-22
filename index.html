@@ -1795,7 +1795,7 @@ background: #F5F3FF;
             <div class="stat-card"><div class="stat-label">Saldo Actual</div><div class="stat-value" id="caja-saldo">S/ 0.00</div></div>
           </div>
           <div style="text-align:right;margin-bottom:1rem">
-            <button type="button" class="btn btn-danger" onclick="cerrarCaja()">Cerrar Caja del Turno</button>
+            <button type="button" class="btn btn-danger" onclick="abrirModalCerrarCaja()">Cerrar Caja del Turno</button>
           </div>
           <div class="grid-2">
             <div class="card">
@@ -2673,6 +2673,35 @@ background: #F5F3FF;
     <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem">
       <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-cerrar-mes')">Cancelar</button>
       <button type="button" class="btn btn-accent" onclick="confirmarCerrarMes()">✅ Registrar ganancia</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Cerrar Caja (Arqueo) -->
+<div class="modal-overlay" id="modal-cerrar-caja">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3>🔒 Cerrar caja — Arqueo</h3>
+      <button type="button" class="modal-close" onclick="cerrarModal('modal-cerrar-caja')">✕</button>
+    </div>
+    <p style="font-size:.85rem;color:var(--gray-600);margin-bottom:1rem">Cuenta el efectivo físico. Yape, tarjeta y transferencias no se cuentan acá — ya están confirmados por su propio medio.</p>
+    <div class="form-group">
+      <label>Efectivo esperado (S/)</label>
+      <div id="cc-teorico" style="font-size:1.3rem;font-weight:700;color:var(--gray-700)">S/ 0.00</div>
+    </div>
+    <div class="form-group">
+      <label>Efectivo contado (S/)</label>
+      <input type="number" class="form-control" id="cc-contado" step="0.01" oninput="actualizarDiferenciaCierre()" />
+      <div style="font-size:.85rem;font-weight:700;margin-top:.3rem" id="cc-diferencia"></div>
+    </div>
+    <div class="form-group" id="cc-nota-wrap" style="display:none">
+      <label>Nota (opcional)</label>
+      <textarea class="form-control" id="cc-nota" rows="2" placeholder="Ej: la diferencia puede estar en Yape/tarjeta mal seleccionado, o vuelto"></textarea>
+    </div>
+    <div style="font-size:.72rem;color:var(--gray-500);margin-top:.3rem">El cierre no se bloquea por una diferencia — solo queda registrada para revisar.</div>
+    <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem">
+      <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-cerrar-caja')">Cancelar</button>
+      <button type="button" class="btn btn-accent" onclick="confirmarCierreCaja()">✅ Cerrar caja</button>
     </div>
   </div>
 </div>
@@ -3921,15 +3950,19 @@ function ensureCajaAbierta() {
   const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
   if (DB.caja.abierta && DB.caja.fecha === fechaHoy) return; // already open today
   let inicialNuevo = montoAuto; // fallback: solo si nunca hubo caja previa (primer uso del sistema)
+  let inicialEfectivoNuevo = montoAuto;
   if (DB.caja.abierta && DB.caja.fecha && DB.caja.fecha !== fechaHoy) {
     const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
+    const saldoEfectivoAnt = ((DB.caja.inicialEfectivo ?? DB.caja.inicial) || 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
     _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
     inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer es el punto de partida de hoy
+    inicialEfectivoNuevo = saldoEfectivoAnt; // mismo encadenado, pero solo con lo que es efectivo físico
     try { fbGuardar(); } catch(e) {}
   } else if (typeof DB.caja.saldoFinal === 'number') {
     inicialNuevo = DB.caja.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
+    inicialEfectivoNuevo = (typeof DB.caja.saldoFinalEfectivo === 'number') ? DB.caja.saldoFinalEfectivo : DB.caja.saldoFinal;
   }
-  DB.caja = { abierta:true, inicial:inicialNuevo, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
+  DB.caja = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
   if (!DB.movimientos) DB.movimientos = [];
   _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
 }
@@ -4085,6 +4118,7 @@ function procesarVenta() {
       movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
     }
     cajaFresca.ingresos = (cajaFresca.ingresos||0) + total;
+    if (metodo === 'Efectivo') cajaFresca.ingresosEfectivo = (cajaFresca.ingresosEfectivo||0) + total;
     movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
     nuevoDb.caja = cajaFresca;
     nuevoDb.movimientos = movimientosNuevos;
@@ -6074,7 +6108,7 @@ function renderCaja() {
 
 function abrirCaja() {
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
- DB.caja = { abierta:true, inicial:monto, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
+ DB.caja = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
   if (!DB.movimientos) DB.movimientos = [];
   _pushMovimiento({ tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today() });
   fbGuardar(); renderCaja();
@@ -6089,11 +6123,49 @@ function guardarMontoAperturaDefault() {
   setTimeout(() => { try { renderConfiguracion(); } catch(e){} }, 300);
 }
 
-function cerrarCaja() {
+// ── Arqueo de caja (Fase 4): compara efectivo físico contra el teórico SOLO en efectivo — ──
+// Yape/tarjeta/transferencia nunca pasan por el cajón, no se cuentan acá. No bloquea el cierre.
+function _saldoEfectivoTeorico() {
+  return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
+}
+function abrirModalCerrarCaja() {
+  document.getElementById('cc-teorico').textContent = sol(_saldoEfectivoTeorico());
+  document.getElementById('cc-contado').value = '';
+  document.getElementById('cc-diferencia').textContent = '';
+  document.getElementById('cc-nota-wrap').style.display = 'none';
+  document.getElementById('cc-nota').value = '';
+  abrirModal('modal-cerrar-caja');
+}
+function actualizarDiferenciaCierre() {
+  const contado = parseFloat(document.getElementById('cc-contado').value);
+  const diffEl = document.getElementById('cc-diferencia');
+  const notaWrap = document.getElementById('cc-nota-wrap');
+  if (isNaN(contado)) { diffEl.textContent = ''; notaWrap.style.display = 'none'; return; }
+  const diff = Math.round((contado - _saldoEfectivoTeorico()) * 100) / 100;
+  diffEl.textContent = diff === 0 ? '✅ Cuadra exacto' : (diff > 0 ? `Sobrante: +${sol(diff)}` : `Faltante: ${sol(diff)}`);
+  diffEl.style.color = diff === 0 ? 'var(--accent)' : 'var(--danger)';
+  notaWrap.style.display = Math.abs(diff) > 5 ? 'block' : 'none';
+}
+function confirmarCierreCaja() {
   const saldo = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
-  if (!confirm(`Cerrar caja. Saldo final: ${sol(saldo)}\n¿Confirmar cierre de turno?`)) return;
-  _pushMovimiento({ tipo:'cierre', desc:`Cierre de caja — Saldo: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today() });
-  DB.caja.abierta = false; DB.caja.fechaCierre = today(); DB.caja.saldoFinal = saldo;
+  const saldoEfectivo = _saldoEfectivoTeorico();
+  const contado = parseFloat(document.getElementById('cc-contado').value);
+  if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
+  const diff = Math.round((contado - saldoEfectivo) * 100) / 100;
+  const nota = document.getElementById('cc-nota').value.trim();
+  _pushMovimiento({ tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today() });
+  if (diff !== 0) {
+    _pushMovimiento({
+      tipo: 'arqueo',
+      desc: `Arqueo — esperado ${sol(saldoEfectivo)}, contado ${sol(contado)} (${diff>0?'sobrante':'faltante'} ${sol(Math.abs(diff))})${nota?' — '+nota:''}`,
+      monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser
+    });
+  }
+  DB.caja.abierta = false;
+  DB.caja.fechaCierre = today();
+  DB.caja.saldoFinal = saldo;
+  DB.caja.saldoFinalEfectivo = contado; // lo real, no lo teórico — mañana arranca del conteo verificado
+  cerrarModal('modal-cerrar-caja');
   fbGuardar(); renderCaja();
 }
 
@@ -6148,7 +6220,7 @@ function registrarMovimiento() {
   const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
   const desc = document.getElementById('mov-desc').value;
   if (monto <= 0) { alert('Ingresa un monto válido'); return; }
-  if (tipo === 'ingreso') DB.caja.ingresos += monto; else DB.caja.egresos += monto;
+  if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; } else DB.caja.egresos += monto;
   _pushMovimiento({ tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today() });
   fbGuardar();
   document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
@@ -7507,6 +7579,7 @@ function guardarGasto() {
           // Reducción — ingreso por corrección
           DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
           DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
+          DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
           _pushMovimiento({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
         }
       }
@@ -7535,6 +7608,7 @@ function eliminarGasto(id) {
   if (gasto && gasto.monto > 0) {
     ensureCajaAbierta();
     DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
+    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
     _pushMovimiento({ tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser });
     fbGuardar();
   }
@@ -7728,6 +7802,7 @@ function confirmarAddCapital() {
   // Reinyección real: esta plata entra físicamente al negocio, suma al efectivo disponible
   ensureCajaAbierta();
   DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
+  DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   _pushMovimiento({ tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser });
   fbGuardar();
   fbGuardarExt();
@@ -8678,6 +8753,7 @@ function mobProcesarVenta(){
   // Register caja movement always
   ensureCajaAbierta();
   DB.caja.ingresos += total;
+  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
   _pushMovimiento({ tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
 
   if (!DB.historialVentas) DB.historialVentas = [];
@@ -10127,6 +10203,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       ensureCajaAbierta();
       if (_esPagado) {
         DB.caja.ingresos += p.total;
+        if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
         _pushMovimiento({ tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
       } else {
         _pushMovimiento({ tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
