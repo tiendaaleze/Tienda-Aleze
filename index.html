@@ -5401,7 +5401,7 @@ function eliminarBoleta(idx) {
       // Revertir stock
       boleta.productos.forEach(p => {
         const prod = DB.productos.find(x => x.id === p.prodId);
-        if (prod) prod.stock = Math.round(((prod.stock || 0) - p.cantidad) * 1000) / 1000;
+        if (prod) ajustarStockSede(prod, -p.cantidad, boleta.sedeId);
       });
       fbGuardarProductos();
     }
@@ -5439,7 +5439,7 @@ _norm(p.nombre).includes(_norm(q)) || _norm(p.codigo||'').includes(_norm(q))
   } else {
     sug.innerHTML = matches.map(p =>
       `<div onclick="_boletaAgregarProd(${p.id})" style="padding:.4rem .75rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
-        <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock: ${p.stock} | S/${p.costo}</span>
+        <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock aquí: ${stockEnSede(p)} | S/${p.costo}</span>
        </div>`
     ).join('') + crearLink;
   }
@@ -5527,12 +5527,14 @@ function _boletaRenderLista() {
 const _unidadNombre = { und:'unidades', kg:'kg', g:'g', L:'L', ml:'ml' };
 el.innerHTML = _boletaProductos.map((p, i) => {
     const prod = DB.productos.find(x => x.id === p.prodId);
-    const stockActual = prod ? prod.stock : 0;
+    const stockActual = prod ? stockEnSede(prod) : 0;
+    const stockGlobalAntes = prod ? stockTotal(prod) : 0;
     const costoActual = prod ? prod.costo : 0;
     const cantNueva = p.cantidad || 0;
     const stockFinal = Math.round((stockActual + cantNueva) * 1000) / 1000;
     const costoNuevo = p.esBonif ? 0 : (p.costo || 0);
-    const costoPromedio = _boletaCostoPromedio(stockActual, costoActual, cantNueva, costoNuevo);
+    // Costo es compartido entre sedes — el promedio se pondera contra el stock GLOBAL, no solo el de esta sede
+    const costoPromedio = _boletaCostoPromedio(stockGlobalAntes, costoActual, cantNueva, costoNuevo);
     const costoCambia = Math.abs(costoPromedio - costoActual) > 0.005;
     const precio = prod ? prod.precio : 0;
     const unidad = _unidadNombre[prod?.unidad] || 'unidades';
@@ -5561,8 +5563,8 @@ el.innerHTML = _boletaProductos.map((p, i) => {
         </label>
       </div>
       <div style="display:flex;align-items:center;gap:.7rem;margin-top:.4rem;flex-wrap:wrap;font-size:.72rem;color:var(--gray-500)">
-        <span>📦 Stock: <b style="color:var(--gray-700)">${stockActual}</b> → <b style="color:var(--accent)">${stockFinal}</b></span>
-        <span>💰 Costo: <b style="color:var(--gray-700)">${sol(costoActual)}</b>${costoCambia ? ` → <b style="color:var(--warning)">${sol(costoPromedio)}</b> (promedio ponderado)` : ' (sin cambio)'}</span>
+        <span>📦 Stock aquí: <b style="color:var(--gray-700)">${stockActual}</b> → <b style="color:var(--accent)">${stockFinal}</b></span>
+        <span>💰 Costo (compartido entre sedes): <b style="color:var(--gray-700)">${sol(costoActual)}</b>${costoCambia ? ` → <b style="color:var(--warning)">${sol(costoPromedio)}</b> (promedio ponderado)` : ' (sin cambio)'}</span>
         <span>🏷️ Venta: <b style="color:var(--gray-700)">${sol(precio)}</b></span>
       </div>
       <div style="display:flex;align-items:center;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
@@ -5627,10 +5629,10 @@ function guardarBoleta() {
     _boletaProductos.forEach(p => {
       const prod = DB.productos.find(x => x.id === p.prodId);
       if (!prod) return;
-      const stockAntes = prod.stock || 0;
+      const stockGlobalAntes = stockTotal(prod);
       const costoNuevo = p.esBonif ? 0 : (p.costo || 0);
-      const costoPromedio = _boletaCostoPromedio(stockAntes, prod.costo || 0, p.cantidad, costoNuevo);
-      prod.stock = Math.round((stockAntes + p.cantidad) * 1000) / 1000;
+      const costoPromedio = _boletaCostoPromedio(stockGlobalAntes, prod.costo || 0, p.cantidad, costoNuevo);
+      ajustarStockSede(prod, p.cantidad);
       prod.costo = Math.round(costoPromedio * 10000) / 10000;
       if (p.venc) prod.venc = p.venc;
     });
@@ -6612,7 +6614,7 @@ function renderMermas() {
 function abrirModalMerma() {
   editingMermaId = null;
   const sel = document.getElementById('merma-prod');
-  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${p.stock} ${p.unidad})</option>`).join('');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
   document.getElementById('merma-cant').value = '';
   document.getElementById('merma-obs').value = '';
   abrirModal('modal-merma');
@@ -6623,7 +6625,7 @@ function editarMerma(id) {
   const m = DB.mermas.find(x => x.id === id);
   editingMermaId = id;
   const sel = document.getElementById('merma-prod');
-  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${p.stock} ${p.unidad})</option>`).join('');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
   sel.value = m.prodId;
   document.getElementById('merma-cant').value = m.cant;
   document.getElementById('merma-motivo-sel').value = m.motivo;
@@ -6642,24 +6644,24 @@ if (!prod) { alert('Producto no encontrado. Recarga el inventario.'); return; }
   if (!cant || cant <= 0) { alert('Ingresa una cantidad válida'); return; }
 
 if (editingMermaId) {
-    // Editar: restaurar stock anterior y aplicar nuevo
+    // Editar: restaurar stock anterior (en la sede original de esa merma) y aplicar nuevo
     const old = DB.mermas.find(x => x.id === editingMermaId);
     const oldProd = DB.productos.find(p => p.id === old.prodId);
     const oldCant = old.cant;
     const oldCosto = oldProd ? oldProd.costo : 0;
-    if (oldProd) oldProd.stock += oldCant;
-    if (cant > prod.stock) { alert('La cantidad supera el stock disponible'); if(oldProd) oldProd.stock -= oldCant; return; }
+    if (oldProd) ajustarStockSede(oldProd, oldCant, old.sedeId);
+    if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible en esta sede'); if(oldProd) ajustarStockSede(oldProd, -oldCant, old.sedeId); return; }
     const costoAnterior = oldCosto * oldCant;
     const costoNuevo = prod.costo * cant;
     const diferencia = costoNuevo - costoAnterior;
-    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs;
-    prod.stock -= cant;
+    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = currentUserSedeId || 'principal';
+    ajustarStockSede(prod, -cant);
 fbGuardar(); fbGuardarProductos();
   } else {
-    if (cant > prod.stock) { alert('La cantidad supera el stock disponible'); return; }
-  const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser };
+    if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible en esta sede'); return; }
+  const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: currentUserSedeId || 'principal' };
     DB.mermas.push(nuevaMerma);
-    prod.stock -= cant;
+    ajustarStockSede(prod, -cant);
     fbGuardar(); fbGuardarProductos();
   }
   cerrarModal('modal-merma');
@@ -6690,7 +6692,7 @@ function _confirmarElimMerma() {
   if (!m) { cerrarModal('modal-confirmar-eliminar-merma'); return; }
   if (opcion.value === 'restaurar') {
     const prod = DB.productos.find(p => p.id === m.prodId);
-    if (prod) prod.stock += m.cant;
+    if (prod) ajustarStockSede(prod, m.cant, m.sedeId);
     fbGuardarProductos();
   }
   DB.mermas = DB.mermas.filter(x => x.id !== _mermaElimId);
