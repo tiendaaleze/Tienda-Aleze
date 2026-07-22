@@ -4341,6 +4341,7 @@ function cobrarFiado() {
       DB.movimientos = resultado.nuevoDb.movimientos;
       DB.clientes = resultado.nuevoDb.clientes;
       fbSincronizarVenta({ ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' });
+      fbSincronizarFiado(fiado);
       DB.movimientos.slice(_movsAntesLen).forEach(fbSincronizarMovimiento);
     }
     try { renderDashboard(); } catch(e){}
@@ -5688,6 +5689,24 @@ function guardarBoleta() {
 
 // ── Fase 5 arquitectura multi-sede: escritura doble en colección boletas/{id} ──
 // No bloqueante, mismo criterio que fbSincronizarVenta/fbSincronizarMovimiento.
+function fbSincronizarFiado(fiado) {
+  if (!fbFS || !fiado || fiado.id == null) return;
+  const data = { ...fiado, sedeId: fiado.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('fiados').doc(String(fiado.id)).set(data)
+    .catch(e => console.warn('fbSincronizarFiado: no se pudo escribir fiados/' + fiado.id, e));
+}
+function fbSincronizarMerma(merma) {
+  if (!fbFS || !merma || merma.id == null) return;
+  const data = { ...merma, sedeId: merma.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('mermas').doc(String(merma.id)).set(data)
+    .catch(e => console.warn('fbSincronizarMerma: no se pudo escribir mermas/' + merma.id, e));
+}
+function fbSincronizarGasto(gasto) {
+  if (!fbFS || !gasto || gasto.id == null) return;
+  const data = { ...gasto, sedeId: gasto.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('gastos').doc(String(gasto.id)).set(data)
+    .catch(e => console.warn('fbSincronizarGasto: no se pudo escribir gastos/' + gasto.id, e));
+}
 function fbSincronizarBoleta(boleta, proveedorId) {
   if (!fbFS || !boleta || boleta.id == null) return;
   const data = { ...boleta, proveedorId, sedeId: boleta.sedeId || currentUserSedeId || 'principal' };
@@ -6062,6 +6081,7 @@ function ejecutarPagoGlobal(cid, montoTotal, metodo) {
     }
     if (montoPagadoEsteFiado > 0) {
       _hvPagosGlobal.push({ id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser });
+      fbSincronizarFiado(f);
     }
   });
   const cli = DB.clientes.find(c => c.id === cid);
@@ -6104,6 +6124,7 @@ Escribe 1 para confirmar:`;
       if (prod) ajustarStockSede(prod, i.cant, f.sedeId);
     });
     DB.fiados = DB.fiados.filter(x => x.id !== id);
+    if (fbFS) fbFS.collection('fiados').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar fiados/'+id, e));
     const cli = DB.clientes.find(c => c.id === f.clienteId);
     
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 1 ===
@@ -6124,14 +6145,19 @@ Escribe 1 para confirmar:`;
       const cantMerma = Math.round(cantMermaExacta * 100) / 100;
       const perdidaMonto = Math.round(prod.costo * cantMermaExacta * 100) / 100;
       if (perdidaMonto <= 0) return;
-    DB.mermas.push({ id: getId(), prodId: i.prodId, cant: cantMerma, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' — ' + getClienteNombre(f.clienteId), fecha: today(), usuario: currentUser });
+    const _mermaFI = { id: getId(), prodId: i.prodId, cant: cantMerma, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' — ' + getClienteNombre(f.clienteId), fecha: today(), usuario: currentUser, sedeId: f.sedeId || 'principal' };
+    DB.mermas.push(_mermaFI);
+      fbSincronizarMerma(_mermaFI);
       _algunaMermaRegistrada = true;
     });
 
    if (!_algunaMermaRegistrada && pend > 0) {
-      DB.mermas.push({ id: getId(), prodId: null, cant: 0, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' (saldo, sin detalle por producto) — ' + getClienteNombre(f.clienteId) + ' — Pérdida: ' + sol(pend), fecha: today(), usuario: currentUser });
+      const _mermaFISinDetalle = { id: getId(), prodId: null, cant: 0, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' (saldo, sin detalle por producto) — ' + getClienteNombre(f.clienteId) + ' — Pérdida: ' + sol(pend), fecha: today(), usuario: currentUser, sedeId: f.sedeId || 'principal' };
+      DB.mermas.push(_mermaFISinDetalle);
+      fbSincronizarMerma(_mermaFISinDetalle);
     }
     DB.fiados = DB.fiados.filter(x => x.id !== id);
+    if (fbFS) fbFS.collection('fiados').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar fiados/'+id, e));
     const cli = DB.clientes.find(c => c.id === f.clienteId);
     
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 2 ===
@@ -6234,6 +6260,7 @@ f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, meto
   const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, metodo, cajero: currentUser };
   DB.historialVentas.push(_pagoFiado);
   fbSincronizarVenta(_pagoFiado);
+  fbSincronizarFiado(f);
   fbGuardar();
   cerrarModal('modal-pago-fiado');
   renderFiados();
@@ -6729,12 +6756,14 @@ if (editingMermaId) {
     const diferencia = costoNuevo - costoAnterior;
     old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = currentUserSedeId || 'principal';
     ajustarStockSede(prod, -cant);
+    fbSincronizarMerma(old);
 fbGuardar(); fbGuardarProductos();
   } else {
     if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible en esta sede'); return; }
   const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: currentUserSedeId || 'principal' };
     DB.mermas.push(nuevaMerma);
     ajustarStockSede(prod, -cant);
+    fbSincronizarMerma(nuevaMerma);
     fbGuardar(); fbGuardarProductos();
   }
   cerrarModal('modal-merma');
@@ -6769,6 +6798,7 @@ function _confirmarElimMerma() {
     fbGuardarProductos();
   }
   DB.mermas = DB.mermas.filter(x => x.id !== _mermaElimId);
+  if (fbFS) fbFS.collection('mermas').doc(String(_mermaElimId)).delete().catch(e => console.warn('No se pudo borrar mermas/'+_mermaElimId, e));
   _mermaElimId = null;
   fbGuardar();
   cerrarModal('modal-confirmar-eliminar-merma');
@@ -7983,10 +8013,13 @@ function guardarGasto() {
           _pushMovimiento({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
         }
       }
+      fbSincronizarGasto(old);
     }
   } else {
     // NUEVO
-    DB_EXT.gastos.push({ id: getId(), tipo, desc, monto, fecha, metodo });
+    const _nuevoGasto = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: currentUserSedeId || 'principal' };
+    DB_EXT.gastos.push(_nuevoGasto);
+    fbSincronizarGasto(_nuevoGasto);
     ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
     if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
@@ -8006,6 +8039,7 @@ function eliminarGasto(id) {
   const gasto = DB_EXT.gastos.find(x => x.id === id);
   if (!confirm('¿Eliminar este gasto? Se devolverá el monto al efectivo disponible como corrección.')) return;
   DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
+  if (fbFS) fbFS.collection('gastos').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar gastos/'+id, e));
   if (gasto && gasto.monto > 0) {
     ensureCajaAbierta();
     DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
@@ -8377,7 +8411,7 @@ function sincronizarMermasInventario() {
     if (diff < 0 && d.verificado) {
       // Faltante confirmado → registrar como merma, en la sede donde se hizo el conteo
       const cantidad = Math.abs(diff);
-      DB.mermas.push({
+      const _mermaInv = {
         id: getId(),
         prodId: p.id,
         cant: cantidad,
@@ -8386,7 +8420,9 @@ function sincronizarMermasInventario() {
         fecha: document.getElementById('inv-mens-fecha').value || today(),
         usuario: currentUser,
         sedeId: currentUserSedeId || 'principal'
-      });
+      };
+      DB.mermas.push(_mermaInv);
+      fbSincronizarMerma(_mermaInv);
       // Actualizar stock real de esta sede al valor contado
       ajustarStockSede(p, d.contado - _stockAqui);
       registradas++;
@@ -9068,6 +9104,7 @@ function mobCobrarFiado() {
     sedeId: currentUserSedeId || 'principal'
   };
 DB.fiados.push(fiado);
+  fbSincronizarFiado(fiado);
   if (!DB.historialVentas) DB.historialVentas = [];
   const _hvFiadoMob = { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
   DB.historialVentas.push(_hvFiadoMob);
@@ -10644,6 +10681,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           };
           if (!DB.fiados) DB.fiados = [];
           DB.fiados.push(fiadoOnline);
+          fbSincronizarFiado(fiadoOnline);
           cli.deuda   = (cli.deuda||0)   + p.total;
           cli.compras = (cli.compras||0) + 1;
           cli.total   = (cli.total||0)   + p.total;
