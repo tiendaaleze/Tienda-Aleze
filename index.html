@@ -6110,12 +6110,18 @@ const saldo = DB.caja.inicial + ingresos - egresos;
   if (fHasta)  movsVis = movsVis.filter(m => m.fecha <= fHasta);
   if (fTipo)   movsVis = movsVis.filter(m => m.tipo === fTipo);
 
-  document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => `<tr>
+  document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => {
+    const esFiado = m.tipo === 'fiado';
+    const badgeColor = esFiado ? 'gray' : (m.tipo==='ingreso'?'green':'red');
+    const signo = esFiado ? '' : (m.tipo==='ingreso'?'+':'-');
+    const color = esFiado ? 'var(--gray-500)' : (m.tipo==='ingreso'?'var(--accent)':'var(--danger)');
+    return `<tr>
     <td>${m.fecha ? m.fecha + ' ' : ''}${m.hora}</td>
-    <td><span class="badge badge-${m.tipo==='ingreso'?'green':'red'}">${m.tipo}</span></td>
-    <td>${m.desc}</td>
-    <td style="color:${m.tipo==='ingreso'?'var(--accent)':'var(--danger)'};font-weight:700">${m.tipo==='ingreso'?'+':'-'}${sol(m.monto)}</td>
-  </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin movimientos</td></tr>';
+    <td><span class="badge badge-${badgeColor}">${m.tipo}</span></td>
+    <td>${m.desc}${esFiado ? ' <span style="color:var(--gray-400);font-size:.72rem">(sin movimiento de caja)</span>' : ''}</td>
+    <td style="color:${color};font-weight:700">${signo}${sol(m.monto)}</td>
+  </tr>`;
+  }).join('') || '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin movimientos</td></tr>';
 
   const metodos = {};
   ventasHoy.forEach(v => metodos[v.metodo] = (metodos[v.metodo]||0) + v.total);
@@ -9044,14 +9050,25 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
   );
   lista.sort((a,b) => (b.id || 0) > (a.id || 0) ? 1 : -1);
 
-  const total = lista.reduce((s,v) => s+(v.total||0), 0);
+  // Vendido (devengado): toda venta al momento de venderse, fiado incluido — excluye el registro de PAGO (ya se contó al vender)
+  const vendido = lista.filter(v => v.origen !== 'pago_fiado').reduce((s,v) => s+(v.total||0), 0);
+  // Cobrado (caja real): mismo filtro que ya usa Dashboard — solo plata que efectivamente entró
+  const cobrado = lista.filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado')).reduce((s,v) => s+(v.total||0), 0);
+  // Fiado pendiente: saldo real contra DB.fiados (no el total original — puede ya estar parcial o totalmente pagado)
+  const fiadoPendiente = lista.filter(v => v.estado === 'fiado').reduce((s,v) => {
+    const f = DB.fiados.find(x => x.id === v.id);
+    const pendiente = f ? Math.max(0, (f.total||0) - (f.pagado||0)) : (v.total||0);
+    return s + pendiente;
+  }, 0);
   const completadas = lista.filter(v=>v.estado==='completado').length;
   const parciales = lista.filter(v=>v.estado==='parcial').length;
   const anuladas = lista.filter(v=>v.estado==='anulado').length;
 
   const statsEl = document.getElementById('hv-stats');
   if (statsEl) statsEl.innerHTML = `
-    <div class="stat-card green"><div class="stat-label">Total período</div><div class="stat-value">${sol(total)}</div></div>
+    <div class="stat-card green"><div class="stat-label">Vendido</div><div class="stat-value">${sol(vendido)}</div></div>
+    <div class="stat-card blue"><div class="stat-label">Cobrado</div><div class="stat-value">${sol(cobrado)}</div></div>
+    <div class="stat-card orange"><div class="stat-label">Fiado pendiente</div><div class="stat-value">${sol(fiadoPendiente)}</div></div>
     <div class="stat-card"><div class="stat-label">Completadas</div><div class="stat-value">${completadas}</div></div>
     <div class="stat-card orange"><div class="stat-label">Parciales</div><div class="stat-value">${parciales}</div></div>
     <div class="stat-card red"><div class="stat-label">Anuladas</div><div class="stat-value">${anuladas}</div></div>`;
