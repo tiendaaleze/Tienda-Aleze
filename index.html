@@ -6226,11 +6226,32 @@ const saldo = DB.caja.inicial + ingresos - egresos;
   const fDesde  = document.getElementById('caja-filtro-desde')?.value  || '';
   const fHasta  = document.getElementById('caja-filtro-hasta')?.value  || '';
   const fTipo   = document.getElementById('caja-filtro-tipo')?.value   || '';
-  let movsVis = [...DB.movimientos].reverse();
-  if (fDesde)  movsVis = movsVis.filter(m => m.fecha >= fDesde);
-  if (fHasta)  movsVis = movsVis.filter(m => m.fecha <= fHasta);
-  if (fTipo)   movsVis = movsVis.filter(m => m.tipo === fTipo);
 
+  const _limiteLocalMov = new Date(); _limiteLocalMov.setDate(_limiteLocalMov.getDate() - 30);
+  const _limiteLocalMovStr = _limiteLocalMov.toISOString().split('T')[0];
+
+  if (fDesde && fDesde < _limiteLocalMovStr) {
+    // Fuera de la ventana local podada (30 días) — consultar movimientos/{id} directo
+    document.getElementById('caja-mov-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--gray-400)">⏳ Cargando...</td></tr>';
+    _fetchMovimientosRango(fDesde, fHasta || today()).then(lista => {
+      let movsVis = [...lista].reverse();
+      if (fTipo) movsVis = movsVis.filter(m => m.tipo === fTipo);
+      _renderMovsTabla(movsVis);
+    }).catch(e => {
+      console.warn('updateCajaStats: error consultando movimientos/{id}', e);
+      document.getElementById('caja-mov-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--danger)">⚠️ Error cargando. Intenta de nuevo.</td></tr>';
+    });
+  } else {
+    let movsVis = [...DB.movimientos].reverse();
+    if (fDesde)  movsVis = movsVis.filter(m => m.fecha >= fDesde);
+    if (fHasta)  movsVis = movsVis.filter(m => m.fecha <= fHasta);
+    if (fTipo)   movsVis = movsVis.filter(m => m.tipo === fTipo);
+    _renderMovsTabla(movsVis);
+  }
+}
+
+// ── Fase 4: pintar tabla de movimientos — separado para reusar entre ruta local y ruta consultada ──
+function _renderMovsTabla(movsVis) {
   document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => {
     const esFiado = m.tipo === 'fiado';
     const esNeutro = esFiado || m.tipo === 'info' || m.tipo === 'arqueo';
@@ -8945,6 +8966,12 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
       const _limitePodaStr = _limitePoda.toISOString().split('T')[0];
       DB.historialVentas = DB.historialVentas.filter(v => v.fecha >= _limitePodaStr);
     }
+    // Fase 4: mismo criterio para movimientos — el historial completo ya vive en movimientos/{id}.
+    if (DB.movimientos && DB.movimientos.length) {
+      const _limitePodaMov = new Date(); _limitePodaMov.setDate(_limitePodaMov.getDate() - 30);
+      const _limitePodaMovStr = _limitePodaMov.toISOString().split('T')[0];
+      DB.movimientos = DB.movimientos.filter(m => m.fecha >= _limitePodaMovStr);
+    }
     // Excluir productos y categorias — tienen su propio documento
     const payload = JSON.parse(JSON.stringify(DB));
   delete payload.productos;
@@ -9202,6 +9229,12 @@ window.onload = async function() {
 async function _fetchVentasRango(desde, hasta) {
   if (!fbFS) return [];
   const snap = await fbFS.collection('ventas').where('fecha', '>=', desde).where('fecha', '<=', hasta).get();
+  return snap.docs.map(d => d.data());
+}
+// ── Fase 4: consulta a movimientos/{id} — solo se usa si el filtro de Caja pide más de 30 días ──
+async function _fetchMovimientosRango(desde, hasta) {
+  if (!fbFS) return [];
+  const snap = await fbFS.collection('movimientos').where('fecha', '>=', desde).where('fecha', '<=', hasta).get();
   return snap.docs.map(d => d.data());
 }
 
