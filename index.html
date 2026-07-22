@@ -3705,6 +3705,8 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   },0);
   const gastosHoy = (DB_EXT.gastos||[]).filter(g=>g.fecha===hoy).reduce((s,g)=>s+g.monto,0);
   const costoFiadosHoy = hvAll.filter(v => v.fecha === hoy && v.origen === 'pago_fiado').reduce((s,v) => {
+    // Costo real guardado al momento del pago (exacto, por item) — si no existe, es un pago anterior a este arreglo, se aproxima por proporción.
+    if (v.costoAsociado != null) return s + v.costoAsociado;
  const fiado = (v.fiadoId ? DB.fiados.find(f => f.id === v.fiadoId) : null) || DB.fiados.find(f => f.clienteId === v.clienteId && f.total > 0);
     if (!fiado) return s;
     const prop = Math.min(1, v.total / fiado.total);
@@ -6042,6 +6044,27 @@ function abrirPagoGlobal(cid) {
   ejecutarPagoGlobal(cid, monto, metodo);
 }
 
+// ── Asigna un pago a items específicos del fiado (más baratos primero) y devuelve el costo real cubierto ──
+// Mismo criterio en confirmarPagoFiado() y ejecutarPagoGlobal() — así el costo reconocido en
+// Dashboard/Capital coincide exactamente con qué se pagó, no una proporción uniforme sobre todo el fiado.
+function _asignarPagoAItems(fiado, monto) {
+  const itemsOrdenados = [...(fiado.items||[])].sort((a,b) => (a.precio*a.cant) - (b.precio*b.cant));
+  let saldoItem = monto;
+  let costo = 0;
+  itemsOrdenados.forEach(i => {
+    if (saldoItem <= 0) return;
+    const totalItem = i.precio * i.cant;
+    const pendItem = totalItem - (i.pagado || 0);
+    if (pendItem <= 0) return;
+    const cubierto = Math.min(saldoItem, pendItem);
+    i.pagado = (i.pagado || 0) + cubierto;
+    saldoItem -= cubierto;
+    const fraccionItem = totalItem > 0 ? cubierto / totalItem : 0;
+    costo += (i.costoUnitario || 0) * i.cant * fraccionItem;
+  });
+  return Math.round(costo * 10000) / 10000;
+}
+
 function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   metodo = metodo || 'Efectivo';
   let saldo = montoTotal;
@@ -6051,36 +6074,14 @@ function ejecutarPagoGlobal(cid, montoTotal, metodo) {
     if (saldo <= 0) return;
     // Corregimos el pendiente del fiado individual en el bucle
     const pendFiado = Math.round((f.total - f.pagado) * 100) / 100;
-    let montoPagadoEsteFiado = 0;
-    if (saldo >= pendFiado) {
-      if (!f.pagos) f.pagos = [];
-      f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto: pendFiado, tipo: 'global' });
-      f.pagado = Math.round((f.pagado + pendFiado) * 100) / 100;
-      montoPagadoEsteFiado = pendFiado;
-      saldo = Math.round((saldo - pendFiado) * 100) / 100;
-    } else {
-      const itemsOrdenados = [...f.items].sort((a,b) => (a.precio*a.cant) - (b.precio*b.cant));
-      let saldoItem = saldo;
-      itemsOrdenados.forEach(i => {
-        if (saldoItem <= 0) return;
-        const pendItem = (i.precio * i.cant) - (i.pagado || 0);
-        if (pendItem <= 0) return;
-        if (saldoItem >= pendItem) {
-          i.pagado = (i.pagado || 0) + pendItem;
-          saldoItem -= pendItem;
-        } else {
-          i.pagado = (i.pagado || 0) + saldoItem;
-          saldoItem = 0;
-        }
-      });
-      if (!f.pagos) f.pagos = [];
-      f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto: saldo, tipo: 'global' });
-      f.pagado += saldo;
-      montoPagadoEsteFiado = saldo;
-      saldo = 0;
-    }
+    const montoPagadoEsteFiado = Math.min(saldo, pendFiado);
     if (montoPagadoEsteFiado > 0) {
-      _hvPagosGlobal.push({ id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser });
+      const costoAsociado = _asignarPagoAItems(f, montoPagadoEsteFiado);
+      if (!f.pagos) f.pagos = [];
+      f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' });
+      f.pagado = Math.round((f.pagado + montoPagadoEsteFiado) * 100) / 100;
+      saldo = Math.round((saldo - montoPagadoEsteFiado) * 100) / 100;
+      _hvPagosGlobal.push({ id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado });
       fbSincronizarFiado(f);
     }
   });
@@ -6246,6 +6247,7 @@ function confirmarPagoFiado() {
   const metodo = document.getElementById('fiado-pago-metodo')?.value || 'Efectivo';
 const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   if (monto <= 0 || monto > pendiente) { alert('Monto inválido. Máximo: ' + sol(pendiente)); return; }
+  const costoAsociado = _asignarPagoAItems(f, monto);
   if (!f.pagos) f.pagos = [];
 f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
   f.pagado = Math.round((f.pagado + monto) * 100) / 100;
@@ -6257,7 +6259,7 @@ f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, meto
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   _pushMovimiento({ tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today() });
   if (!DB.historialVentas) DB.historialVentas = [];
-  const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, metodo, cajero: currentUser };
+  const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, metodo, cajero: currentUser, costoAsociado };
   DB.historialVentas.push(_pagoFiado);
   fbSincronizarVenta(_pagoFiado);
   fbSincronizarFiado(f);
@@ -8095,6 +8097,8 @@ function _costoDeVenta(v) {
     return v.items.reduce((s,i) => { const p = DB.productos.find(x=>x.id===i.prodId); return s + (p?p.costo*i.cant:0); }, 0);
   }
   if (v.origen === 'pago_fiado') {
+    // Costo real guardado al momento del pago — si no existe (pago anterior a este arreglo), se aproxima por proporción.
+    if (v.costoAsociado != null) return v.costoAsociado;
     const fiado = (v.fiadoId ? DB.fiados.find(f => f.id === v.fiadoId) : null) || DB.fiados.find(f => f.clienteId === v.clienteId && f.total > 0);
     if (!fiado || !fiado.total) return 0;
     const prop = Math.min(1, v.total / fiado.total);
