@@ -8232,13 +8232,14 @@ function abrirInventarioMensual() {
 function renderInvMensualTable() {
   document.getElementById('inv-mens-tbody').innerHTML = DB.productos.map((p, i) => {
     const d = invMensualData[i] || {};
-    const diff = d.contado !== null && d.contado !== '' ? parseFloat(d.contado) - p.stock : null;
+    const _stockAqui = stockEnSede(p);
+    const diff = d.contado !== null && d.contado !== '' ? parseFloat(d.contado) - _stockAqui : null;
     const diffColor = diff === null ? '' : diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--warning)' : 'var(--accent)';
     const rowBg = d.verificado ? (diff === 0 || diff === null ? 'background:var(--accent-light)' : 'background:var(--danger-light)') : '';
     return `<tr style="${rowBg}">
       <td><strong>${p.nombre}</strong></td>
       <td style="font-size:.78rem">${getCategoriaNombre(p.cat)}</td>
-      <td><strong>${p.stock} ${p.unidad}</strong></td>
+      <td><strong>${_stockAqui} ${p.unidad}</strong></td>
       <td>
         <input type="number" step="0.01" value="${d.contado !== null ? d.contado : ''}"
           placeholder="Cantidad física"
@@ -8271,7 +8272,7 @@ function calcDiffCell(i) {
   const p = DB.productos[i];
   const d = invMensualData[i];
   if (d.contado === null || d.contado === '') return '-';
-  const diff = parseFloat(d.contado) - p.stock;
+  const diff = parseFloat(d.contado) - stockEnSede(p);
   const color = diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--warning)' : 'var(--accent)';
   return `<span style="color:${color};font-weight:700">${diff > 0 ? '+' : ''}${diff.toFixed(2)}</span>`;
 }
@@ -8286,7 +8287,7 @@ function actualizarInvMensual(i, campo, valor) {
   const d = invMensualData[i];
   const cell = document.getElementById('diff-cell-' + i);
   if (cell && d.contado !== null) {
-    const diff = d.contado - p.stock;
+    const diff = d.contado - stockEnSede(p);
     const color = diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--warning)' : 'var(--accent)';
     cell.style.color = color;
     cell.textContent = (diff > 0 ? '+' : '') + diff.toFixed(2);
@@ -8298,9 +8299,10 @@ function sincronizarMermasInventario() {
   invMensualData.forEach((d, i) => {
     if (d.contado === null || d.contado === '') return;
    const p = DB.productos.find(prod => prod.id === invMensualData[i].prodId) || DB.productos[i];
-    const diff = d.contado - p.stock;
+    const _stockAqui = stockEnSede(p);
+    const diff = d.contado - _stockAqui;
     if (diff < 0 && d.verificado) {
-      // Faltante confirmado → registrar como merma
+      // Faltante confirmado → registrar como merma, en la sede donde se hizo el conteo
       const cantidad = Math.abs(diff);
       DB.mermas.push({
         id: getId(),
@@ -8309,10 +8311,11 @@ function sincronizarMermasInventario() {
         motivo: d.motivo || 'Inventario mensual',
         obs: 'Registrado desde inventario mensual ' + formatDate(document.getElementById('inv-mens-fecha').value),
         fecha: document.getElementById('inv-mens-fecha').value || today(),
-        usuario: currentUser
+        usuario: currentUser,
+        sedeId: currentUserSedeId || 'principal'
       });
-      // Actualizar stock real
-      p.stock = Math.max(0, d.contado);
+      // Actualizar stock real de esta sede al valor contado
+      ajustarStockSede(p, d.contado - _stockAqui);
       registradas++;
     }
   });
@@ -8331,12 +8334,13 @@ function guardarInventarioMensual() {
     id: getId(),
     fecha,
     usuario: currentUser,
+    sedeId: currentUserSedeId || 'principal',
     items: invMensualData.map((d, i) => ({
       prodId: DB.productos[i].id,
       nombre: DB.productos[i].nombre,
-      stockSistema: DB.productos[i].stock,
+      stockSistema: stockEnSede(DB.productos[i]),
       contado: d.contado,
-      diff: d.contado !== null ? d.contado - DB.productos[i].stock : null,
+      diff: d.contado !== null ? d.contado - stockEnSede(DB.productos[i]) : null,
       motivo: d.motivo,
       verificado: d.verificado
     }))
@@ -8348,13 +8352,14 @@ function guardarInventarioMensual() {
 
 function exportarInventarioMensual() {
   const fecha = document.getElementById('inv-mens-fecha').value || today();
- let csv = 'Producto;Categoría;Tipo;Stock Sistema;Cantidad Contada;Diferencia;Motivo;Verificado;Fecha Inventario\n';
+ let csv = 'Producto;Categoría;Tipo;Stock Sistema (esta sede);Cantidad Contada;Diferencia;Motivo;Verificado;Fecha Inventario\n';
   DB.productos.forEach((p, i) => {
     const d = invMensualData[i] || {};
- const diff = d.contado !== null && d.contado !== undefined ? (d.contado - p.stock).toFixed(2) : '';
+    const _stockAqui = stockEnSede(p);
+ const diff = d.contado !== null && d.contado !== undefined ? (d.contado - _stockAqui).toFixed(2) : '';
     const _cat = DB.categorias.find(c => c.id == p.cat);
     const _catNombre = _cat ? _cat.nombre : 'Sin cat.';
-   csv += `"${p.nombre}";"${_catNombre}";"${p.tipo}";${p.stock};${d.contado??''};${diff};"${d.motivo||''}";"${d.verificado?'Sí':'No'}";"${formatDate(fecha)}"\n`;
+   csv += `"${p.nombre}";"${_catNombre}";"${p.tipo}";${_stockAqui};${d.contado??''};${diff};"${d.motivo||''}";"${d.verificado?'Sí':'No'}";"${formatDate(fecha)}"\n`;
   });
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
@@ -9869,7 +9874,7 @@ function guardarActualizarVenta() {
           const di = d.items?.find(x=>x.prodId===item.prodId);
           return s + (di?.cantDevuelta||0);
         }, 0);
-        prod.stock += Math.max(0, cantOrig - yaDevuelto);
+        ajustarStockSede(prod, Math.max(0, cantOrig - yaDevuelto), vDB.sedeId);
       }
     });
 
@@ -9949,7 +9954,7 @@ function guardarActualizarVenta() {
   // Restituir stock de productos devueltos
   itemsDevueltos.forEach(dev => {
     const prod = DB.productos.find(p => p.id === dev.prodId);
-    if (prod) prod.stock += dev.cantDevuelta;
+    if (prod) ajustarStockSede(prod, dev.cantDevuelta, vDB.sedeId);
   });
 
   // Actualizar cantidades en los items de la venta
