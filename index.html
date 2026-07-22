@@ -3421,6 +3421,19 @@ async function doLogin() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
+      // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
+      try {
+        const stockSnap = await fbFS.collection('stock').get();
+        stockSnap.forEach(doc => {
+          const prod = DB.productos.find(p => String(p.id) === doc.id);
+          const d = doc.data();
+          if (prod && d && d.stockPorSede) {
+            prod.stockPorSede = d.stockPorSede;
+            prod.stock = stockTotal(prod);
+          }
+        });
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
       aplicarNombreNegocio();
 
       if (snapExt.exists) {
@@ -3547,6 +3560,15 @@ function navigate(page) {
           if (pd.categorias) DB.categorias = pd.categorias;
           if (pd.config)     DB.config = { ...DB.config, ...pd.config };
         }
+        // Fase Offline: stock más fresco, mismo criterio que en el login.
+        return fbFS.collection('stock').get().then(stockSnap => {
+          stockSnap.forEach(doc => {
+            const prod = DB.productos.find(p => String(p.id) === doc.id);
+            const d = doc.data();
+            if (prod && d && d.stockPorSede) { prod.stockPorSede = d.stockPorSede; prod.stock = stockTotal(prod); }
+          });
+        }).catch(() => {});
+      }).then(() => {
         renderPos(); if (isMobile()) renderMobPos();
       }).catch(() => { renderPos(); if (isMobile()) renderMobPos(); });
     } else {
@@ -4496,12 +4518,26 @@ function stockTotal(prod) {
   if (!prod.stockPorSede) return prod.stock || 0;
   return Object.values(prod.stockPorSede).reduce((s,v) => s + (v||0), 0);
 }
+// ── Fase Offline: incremento atómico de stock — colección propia y chica (stock/{id}), separada de "productos" ──
+// Firestore no puede incrementar de forma segura un campo dentro de un array; por eso stock vive aparte.
+// No bloqueante — funciona sin señal porque el incremento se encola local (enablePersistence) y el
+// servidor lo aplica cuando reconecta, sumando correctamente aunque 2 sedes ajusten a la vez sin red.
+function fbIncrementarStock(prodId, sede, delta) {
+  if (!fbFS || prodId == null || !delta) return;
+  const campo = `stockPorSede.${sede}`;
+  fbFS.collection('stock').doc(String(prodId)).set(
+    { [campo]: firebase.firestore.FieldValue.increment(delta) },
+    { merge: true }
+  ).catch(e => console.warn('fbIncrementarStock: no se pudo incrementar stock/' + prodId, e));
+}
+
 function ajustarStockSede(prod, delta, sede) {
   if (!prod) return;
   sede = sede || currentUserSedeId || 'principal';
   if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock || 0 };
   prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0) + delta) * 1000) / 1000);
   prod.stock = stockTotal(prod);
+  fbIncrementarStock(prod.id, sede, delta);
 }
 
 function abrirModalProducto() {
@@ -4913,12 +4949,14 @@ function guardarProducto() {
     DB.productos[idx] = prod;
   } else {
     // Nuevo producto: el stock inicial ingresado queda en la sede de quien lo crea.
+    // Usa ajustarStockSede() (no asignación directa) para que también sincronice a stock/{id}.
     const stockRaw = parseFloat(document.getElementById('prod-stock').value);
     const stockInicial = isNaN(stockRaw) ? 0 : Math.round(stockRaw * 1000) / 1000;
     const sede = currentUserSedeId || 'principal';
-    prod.stockPorSede = { [sede]: stockInicial };
-    prod.stock = stockInicial;
+    prod.stockPorSede = {};
+    prod.stock = 0;
     DB.productos.push(prod);
+    if (stockInicial > 0) ajustarStockSede(prod, stockInicial, sede);
   }
   fbGuardarProductos();
   cerrarModal('modal-producto');
@@ -9299,6 +9337,13 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
     // ────────────────────────────────────────────────────────────────────────
 
    fbFS  = firebase.firestore();
+      // Fase Offline: cola local de escrituras + cache — sin esto, las escrituras fallan de inmediato
+      // sin señal en vez de encolarse y aplicarse solas al reconectar. No bloqueante si el navegador no lo soporta.
+      try {
+        fbFS.enablePersistence({ synchronizeTabs: true }).catch(e => {
+          console.warn('[Offline] Persistencia local no activada:', e.code || e.message);
+        });
+      } catch(e) { console.warn('[Offline] enablePersistence no disponible:', e); }
       fbAuth = firebase.auth();
       fbStorage = firebase.storage();
       return true;
@@ -9592,6 +9637,19 @@ window.onload = async function() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
+      // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
+      try {
+        const stockSnap = await fbFS.collection('stock').get();
+        stockSnap.forEach(doc => {
+          const prod = DB.productos.find(p => String(p.id) === doc.id);
+          const d = doc.data();
+          if (prod && d && d.stockPorSede) {
+            prod.stockPorSede = d.stockPorSede;
+            prod.stock = stockTotal(prod);
+          }
+        });
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
       aplicarNombreNegocio();
 
       _fbLastWriteTs = Date.now();
@@ -10872,6 +10930,15 @@ function initTienda() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // Fase Offline: stock más fresco, mismo criterio que en el login.
+      return fbFS.collection('stock').get().then(stockSnap => {
+        stockSnap.forEach(doc => {
+          const prod = DB.productos.find(p => String(p.id) === doc.id);
+          const d = doc.data();
+          if (prod && d && d.stockPorSede) { prod.stockPorSede = d.stockPorSede; prod.stock = stockTotal(prod); }
+        });
+      }).catch(() => {});
+    }).then(() => {
       _initTiendaConDatos();
     }).catch(() => _initTiendaConDatos());
   } else {
