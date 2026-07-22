@@ -9100,6 +9100,13 @@ function abrirActualizarVenta(id) {
     alert('Esta venta ya fue anulada y no puede modificarse.'); return;
   }
 
+  // Política de negocio: devoluciones solo dentro de 15 días desde la venta
+  const diasTranscurridos = -diasHasta(v.fecha);
+  if (diasTranscurridos > 15) {
+    alert('⛔ Esta venta tiene ' + Math.floor(diasTranscurridos) + ' días y ya no admite devolución por este flujo (máximo 15).\n\nSi corresponde un ajuste, regístralo directo como merma (producto) o gasto/movimiento de caja (dinero).');
+    return;
+  }
+
   _huvVenta = JSON.parse(JSON.stringify(v)); // copia de trabajo
 
   // Info resumen
@@ -9195,6 +9202,13 @@ function huvRecalc() {
 function guardarActualizarVenta() {
   if (!_hvEditId || !_huvVenta) return;
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar devoluciones.'); return; }
+
+  // Re-chequeo de política (por si el modal quedó abierto y cruzó la fecha límite)
+  if (-diasHasta(_huvVenta.fecha) > 15) {
+    alert('⛔ Esta venta ya superó los 15 días permitidos. Ciérrala y usa merma o gasto/movimiento de caja.');
+    cerrarModal('modal-actualizar-venta');
+    return;
+  }
 
   const obs     = document.getElementById('huv-obs').value.trim();
   const metodo  = document.getElementById('huv-metodo-reembolso').value;
