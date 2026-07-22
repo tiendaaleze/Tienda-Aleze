@@ -1907,6 +1907,11 @@ background: #F5F3FF;
             </select>
             <input type="date" class="form-control" id="rep-desde" style="width:150px" onchange="generarReporte()" />
             <input type="date" class="form-control" id="rep-hasta" style="width:150px" onchange="generarReporte()" />
+            <select class="form-control" id="rep-sede" style="width:150px" onchange="generarReporte()">
+              <option value="">Todas las sedes</option>
+              <option value="principal">Principal</option>
+              <option value="Tienda Aleze II">Tienda Aleze II</option>
+            </select>
             <button type="button" class="btn btn-outline btn-sm" onclick="exportReporte()">📥 Exportar Excel</button>
           </div>
         </div>
@@ -6319,10 +6324,22 @@ if (periodo === 'todos') { desde = '2000-01-01'; hasta = '2099-12-31'; }
   generarReporte();
 }
 
-function generarReporte() {
+// ── Fase 2 Reportes: trae ventas del rango UNA vez; cada reporte deriva vendido/cobrado ──
+// vendido = devengado (incluye fiado creado, con items — excluye el registro de pago, que no tiene items y duplicaría el ingreso)
+// cobrado = caja real (mismo filtro que ya usa Dashboard)
+async function _cargarVentasReporte(desde, hasta, sede) {
+  let lista = await _fetchVentasRango(desde, hasta);
+  if (sede) lista = lista.filter(v => (v.sedeId||'principal') === sede);
+  const vendido = lista.filter(v => v.origen !== 'pago_fiado');
+  const cobrado = lista.filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado'));
+  return { vendido, cobrado };
+}
+
+async function generarReporte() {
   const tipo = document.getElementById('rep-tipo').value;
   const desde = document.getElementById('rep-desde').value;
   const hasta = document.getElementById('rep-hasta').value;
+  const sede  = document.getElementById('rep-sede')?.value || '';
   if (tipo === 'todos-tipos') {
     document.getElementById('rep-stats').innerHTML = '<div class="stat-card blue"><div class="stat-label">Modo exportación</div><div class="stat-value" style="font-size:1rem">📊 Todos los reportes</div></div>';
     document.getElementById('rep-tabla-titulo').textContent = 'Exportación completa';
@@ -6330,24 +6347,43 @@ function generarReporte() {
     if (chartReporte) { chartReporte.destroy(); chartReporte = null; }
     return;
   }
-  if (tipo === 'ventas') reporteVentas(desde, hasta);
-  else if (tipo === 'productos') reporteProductos(desde, hasta);
-  else if (tipo === 'rentabilidad') reporteRentabilidad(desde, hasta);
-  else if (tipo === 'mermas') reporteMermas(desde, hasta);
-  else if (tipo === 'fiados') reporteFiados();
-  else if (tipo === 'gastos') reporteGastos(desde, hasta);
+  if (tipo === 'mermas') { reporteMermas(desde, hasta); return; }
+  if (tipo === 'fiados') { reporteFiados(); return; }
+  if (tipo === 'gastos') { reporteGastos(desde, hasta); return; }
+
+  // Solo ventas/productos/rentabilidad consultan ventas/{id}
+  const diasRango = Math.round((new Date(hasta) - new Date(desde)) / 86400000);
+  if (diasRango > 30) {
+    if (!confirm(`El rango elegido es de ${diasRango} días — trae más datos de lo normal (más tráfico/lecturas). ¿Continuar?`)) return;
+  }
+  const wrap = document.getElementById('rep-tabla-wrap');
+  if (wrap) wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">⏳ Cargando...</div>';
+  document.getElementById('rep-stats').innerHTML = '';
+
+  let datos;
+  try {
+    datos = await _cargarVentasReporte(desde, hasta, sede);
+  } catch (e) {
+    console.warn('generarReporte: error consultando ventas/{id}', e);
+    if (wrap) wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--danger)">⚠️ Error cargando reporte. Intenta de nuevo.</div>';
+    return;
+  }
+
+  if (tipo === 'ventas') reporteVentas(datos);
+  else if (tipo === 'productos') reporteProductos(datos);
+  else if (tipo === 'rentabilidad') reporteRentabilidad(datos, desde, hasta);
 }
 
-function reporteVentas(desde, hasta) {
-const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado'))].filter(v => v.fecha >= desde && v.fecha <= hasta);
+function reporteVentas(datos) {
+  const { vendido, cobrado } = datos;
   const porDia = {};
-  ventas.forEach(v => porDia[v.fecha] = (porDia[v.fecha]||0) + v.total);
+  vendido.forEach(v => porDia[v.fecha] = (porDia[v.fecha]||0) + v.total);
   const labels = Object.keys(porDia).sort();
   const data = labels.map(d => porDia[d]);
-  const total = ventas.reduce((s,v) => s+v.total, 0);
-  const costoTotal = ventas.reduce((s,v) => s+(v.items||[]).reduce((ss,i) => { const p=DB.productos.find(x=>x.id===i.prodId); return ss+(p?p.costo*i.cant:0); },0), 0);
+  const total = vendido.reduce((s,v) => s+v.total, 0);
+  const costoTotal = vendido.reduce((s,v) => s+(v.items||[]).reduce((ss,i) => { const p=DB.productos.find(x=>x.id===i.prodId); return ss+(p?p.costo*i.cant:0); },0), 0);
   const ganancia = total - costoTotal;
-  const prom = ventas.length > 0 ? total/ventas.length : 0;
+  const totalCobrado = cobrado.reduce((s,v)=>s+v.total,0);
 
   if (chartReporte) chartReporte.destroy();
   chartReporte = new Chart(document.getElementById('chart-reporte').getContext('2d'), {
@@ -6355,7 +6391,7 @@ const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => 
     data: { labels: labels.map(d => formatDate(d)), datasets: [
       { label: 'Ventas S/', data, borderColor: '#7C3AED', backgroundColor: 'rgba(124,58,237,0.1)', fill: true, tension: 0.4 },
       { label: 'Ganancia S/', data: labels.map(d => {
-        const vs = ventas.filter(v=>v.fecha===d);
+        const vs = vendido.filter(v=>v.fecha===d);
         const c = vs.reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
         return vs.reduce((s,v)=>s+v.total,0) - c;
       }), borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.08)', fill: true, tension: 0.4 }
@@ -6364,29 +6400,29 @@ const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => 
   });
 
   document.getElementById('rep-stats').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Total vendido</div><div class="stat-value">${sol(total)}</div></div>
+    <div class="stat-card"><div class="stat-label">Vendido (devengado)</div><div class="stat-value">${sol(total)}</div></div>
+    <div class="stat-card blue" style="border-left-color:var(--info)"><div class="stat-label">Cobrado (caja real)</div><div class="stat-value">${sol(totalCobrado)}</div></div>
     <div class="stat-card green"><div class="stat-label">Ganancia bruta S/</div><div class="stat-value">${sol(ganancia)}</div></div>
-    <div class="stat-card"><div class="stat-label">N° transacciones</div><div class="stat-value">${ventas.length}</div></div>
-    <div class="stat-card blue" style="border-left-color:var(--info)"><div class="stat-label">Ticket promedio</div><div class="stat-value">${sol(prom)}</div></div>`;
+    <div class="stat-card"><div class="stat-label">N° transacciones</div><div class="stat-value">${vendido.length}</div></div>`;
 
-  document.getElementById('rep-tabla-titulo').textContent = 'Ventas por día';
+  document.getElementById('rep-tabla-titulo').textContent = 'Ventas por día (devengado)';
   document.getElementById('rep-tabla-wrap').innerHTML = `
     <table><thead><tr><th>Fecha</th><th>Transacc.</th><th>Total S/</th><th>Costo S/</th><th>Ganancia S/</th></tr></thead>
     <tbody>${labels.map(d => {
-      const vs = ventas.filter(v=>v.fecha===d);
+      const vs = vendido.filter(v=>v.fecha===d);
       const c = vs.reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
       const g = porDia[d]-c;
       return `<tr><td>${formatDate(d)}</td><td>${vs.length}</td><td>${sol(porDia[d])}</td><td style="color:var(--danger)">${sol(c)}</td><td style="color:var(--accent);font-weight:700">${sol(g)}</td></tr>`;
     }).join('')}
     </tbody>
-    <tfoot><tr style="background:var(--gray-50);font-weight:700"><td>TOTAL</td><td>${ventas.length}</td><td>${sol(total)}</td><td style="color:var(--danger)">${sol(costoTotal)}</td><td style="color:var(--accent)">${sol(ganancia)}</td></tr></tfoot>
+    <tfoot><tr style="background:var(--gray-50);font-weight:700"><td>TOTAL</td><td>${vendido.length}</td><td>${sol(total)}</td><td style="color:var(--danger)">${sol(costoTotal)}</td><td style="color:var(--accent)">${sol(ganancia)}</td></tr></tfoot>
     </table>`;
 }
 
-function reporteProductos(desde, hasta) {
-const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado'))].filter(v => v.fecha >= desde && v.fecha <= hasta);
+function reporteProductos(datos) {
+  const { vendido } = datos;
   const prods = {};
-  ventas.forEach(v => (v.items||[]).forEach(i => {
+  vendido.forEach(v => (v.items||[]).forEach(i => {
     if (!prods[i.nombre]) prods[i.nombre] = { cant: 0, total: 0, costo: 0 };
     prods[i.nombre].cant += i.cant;
     prods[i.nombre].total += i.precio * i.cant;
@@ -6402,7 +6438,7 @@ const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => 
     options: { plugins: { legend: { display: false } }, responsive: true, indexAxis: 'y' }
   });
 
-  document.getElementById('rep-tabla-titulo').textContent = 'Top productos del período';
+  document.getElementById('rep-tabla-titulo').textContent = 'Top productos del período (vendido)';
   document.getElementById('rep-tabla-wrap').innerHTML = `
     <table><thead><tr><th>Producto</th><th>Cant.</th><th>Ingresos S/</th><th>Costo S/</th><th>Ganancia S/</th></tr></thead>
     <tbody>${sorted.map(([n,v])=>`<tr><td>${n}</td><td>${v.cant}</td><td>${sol(v.total)}</td><td style="color:var(--danger)">${sol(v.costo)}</td><td style="color:var(--accent);font-weight:700">${sol(v.total-v.costo)}</td></tr>`).join('')}</tbody>
@@ -6411,11 +6447,11 @@ const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => 
   document.getElementById('rep-stats').innerHTML = '';
 }
 
-function reporteRentabilidad(desde, hasta) {
-const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado'))].filter(v => v.fecha >= desde && v.fecha <= hasta);
+function reporteRentabilidad(datos, desde, hasta) {
+  const { vendido, cobrado } = datos;
   // Por producto
   const porProd = {};
-  ventas.forEach(v => (v.items||[]).forEach(i => {
+  vendido.forEach(v => (v.items||[]).forEach(i => {
     const p = DB.productos.find(x=>x.id===i.prodId); if(!p) return;
     if (!porProd[p.id]) porProd[p.id] = { nombre: p.nombre, costo: p.costo, precio: p.precio, cantVendida: 0, ingresos: 0, costoTotal: 0 };
     porProd[p.id].cantVendida += i.cant;
@@ -6436,6 +6472,7 @@ const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => 
   const sueldos = Object.values(DB_EXT.sueldos).reduce((s,v)=>s+v,0);
   const mermasCosto = DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta).reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0);
   const rentReal = totalGan - gastosMes - gastosRec - sueldos - mermasCosto;
+  const totalCobrado = cobrado.reduce((s,v)=>s+v.total,0);
 
   if (chartReporte) chartReporte.destroy();
   chartReporte = new Chart(document.getElementById('chart-reporte').getContext('2d'), {
@@ -6452,9 +6489,10 @@ const ventas = [...(DB.ventas || []), ...(DB.historialVentas || []).filter(v => 
     <div class="stat-card green"><div class="stat-label">Ganancia bruta S/</div><div class="stat-value">${sol(totalGan)}</div></div>
     <div class="stat-card red"><div class="stat-label">Total gastos S/</div><div class="stat-value">${sol(gastosMes+gastosRec+sueldos+mermasCosto)}</div></div>
     <div class="stat-card ${rentReal>=0?'':'red'}"><div class="stat-label">Rentabilidad real S/</div><div class="stat-value" style="color:${rentReal>=0?'var(--accent)':'var(--danger)'}">${sol(rentReal)}</div></div>
-    <div class="stat-card orange"><div class="stat-label">Pérdida mermas S/</div><div class="stat-value">${sol(mermasCosto)}</div></div>`;
+    <div class="stat-card orange"><div class="stat-label">Pérdida mermas S/</div><div class="stat-value">${sol(mermasCosto)}</div></div>
+    <div class="stat-card blue" style="border-left-color:var(--info)"><div class="stat-label">Cobrado en efectivo S/</div><div class="stat-value">${sol(totalCobrado)}</div></div>`;
 
-  document.getElementById('rep-tabla-titulo').textContent = 'Rentabilidad por producto';
+  document.getElementById('rep-tabla-titulo').textContent = 'Rentabilidad por producto (vendido)';
   document.getElementById('rep-tabla-wrap').innerHTML = `
     <table><thead><tr><th>Producto</th><th>Cant.</th><th>Ingresos S/</th><th>Costo S/</th><th>Ganancia S/</th><th>Margen%</th></tr></thead>
     <tbody>${data.map(d=>`<tr>
@@ -6538,9 +6576,14 @@ function reporteGastos(desde, hasta) {
     <tfoot><tr style="background:var(--gray-50);font-weight:700"><td colspan="3">TOTAL</td><td style="color:var(--danger)">${sol(total)}</td></tr></tfoot>
     </table>`;
 }
-function exportReporte() {
+async function exportReporte() {
   const desde = document.getElementById('rep-desde').value || '2000-01-01';
   const hasta  = document.getElementById('rep-hasta').value  || '2099-12-31';
+  const sede   = document.getElementById('rep-sede')?.value  || '';
+  const diasRango = Math.round((new Date(hasta) - new Date(desde)) / 86400000);
+  if (diasRango > 30) {
+    if (!confirm(`El rango elegido es de ${diasRango} días — trae más datos de lo normal (más tráfico/lecturas). ¿Continuar?`)) return;
+  }
   const xe = v => String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const cs = v => `<Cell><Data ss:Type="String">${xe(v)}</Data></Cell>`;
   const cn = v => `<Cell><Data ss:Type="Number">${isNaN(parseFloat(v))?0:parseFloat(v).toFixed(2)}</Data></Cell>`;
@@ -6548,10 +6591,15 @@ function exportReporte() {
   const xr = (...c) => `<Row>${c.join('')}</Row>`;
   const ws = (name, rows) => `<Worksheet ss:Name="${xe(name)}"><Table>${rows.join('')}</Table></Worksheet>`;
 
-  // Filtro común de ventas
-  const vf = [...(DB.ventas||[]), ...(DB.historialVentas||[]).filter(v =>
-    (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado')
-  )].filter(v => v.fecha >= desde && v.fecha <= hasta);
+  // Filtro común de ventas — vendido (devengado), consistente con Historial/Reportes en pantalla
+  let vf;
+  try {
+    const datos = await _cargarVentasReporte(desde, hasta, sede);
+    vf = datos.vendido;
+  } catch (e) {
+    alert('⚠️ No se pudo exportar. Intenta de nuevo.');
+    return;
+  }
 
   // Hoja 1: Ventas por día
   const porDia = {};
