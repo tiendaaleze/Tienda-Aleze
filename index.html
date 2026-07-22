@@ -1567,6 +1567,8 @@ background: #F5F3FF;
         <div class="flex-between mb-1" style="margin-bottom:1rem">
           <div class="page-title" style="margin:0">Inventario</div>
        <div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end">
+            <button type="button" class="btn btn-outline btn-sm" onclick="abrirModalTraslado()">🔄 Trasladar stock</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="abrirModalTraslado()">🔄 Trasladar stock</button>
             <button type="button" class="btn btn-outline btn-sm" onclick="abrirInventarioMensual()">📋 Inventario Mensual</button>
             <button type="button" class="btn btn-outline btn-sm" onclick="abrirImprimirQrMasivo()">🖨️ Imprimir QR</button>
             <button type="button" class="btn btn-outline btn-sm" onclick="abrirSugerirPrecios()">💡 Sugerir precios</button>
@@ -2462,6 +2464,26 @@ background: #F5F3FF;
 </div>
 
 <!-- Modal Merma -->
+<div class="modal-overlay" id="modal-traslado">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>🔄 Traslado de mercadería entre sedes</h3>
+      <button type="button" class="modal-close" onclick="cerrarModal('modal-traslado')">✕</button>
+    </div>
+    <div class="form-group"><label>Producto *</label><select class="form-control" id="trsl-prod" onchange="_traspasoActualizarInfo()"></select></div>
+    <div id="trsl-stock-info" style="font-size:.78rem;color:var(--gray-500);margin:-.5rem 0 .75rem"></div>
+    <div class="grid-2">
+      <div class="form-group"><label>Desde</label><input type="text" class="form-control" id="trsl-origen" readonly style="background:var(--gray-50)" /></div>
+      <div class="form-group"><label>Hacia *</label><select class="form-control" id="trsl-destino"></select></div>
+    </div>
+    <div class="form-group"><label>Cantidad *</label><input type="number" class="form-control" id="trsl-cantidad" step="0.01" /></div>
+    <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem">
+      <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-traslado')">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarTraslado()">Confirmar traslado</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-merma">
   <div class="modal">
     <div class="modal-header">
@@ -6523,7 +6545,7 @@ const saldo = DB.caja.inicial + ingresos - egresos;
 function _renderMovsTabla(movsVis) {
   document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => {
     const esFiado = m.tipo === 'fiado';
-    const esNeutro = esFiado || m.tipo === 'info' || m.tipo === 'arqueo';
+    const esNeutro = esFiado || m.tipo === 'info' || m.tipo === 'arqueo' || m.tipo === 'traslado';
     const badgeColor = esNeutro ? 'gray' : (m.tipo==='ingreso'?'green':'red');
     const signo = esNeutro ? '' : (m.tipo==='ingreso'?'+':'-');
     const color = esNeutro ? 'var(--gray-500)' : (m.tipo==='ingreso'?'var(--accent)':'var(--danger)');
@@ -6616,6 +6638,50 @@ function renderMermas() {
       </td>
     </tr>`;
   }).join('') || '<tr><td colspan="7" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin mermas registradas</td></tr>';
+}
+
+// ── Traslado de mercadería entre sedes (Fase 6 — la data ya soporta esto desde stockPorSede) ──
+function abrirModalTraslado() {
+  const origen = currentUserSedeId || 'principal';
+  const sel = document.getElementById('trsl-prod');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (${stockEnSede(p, origen)} ${p.unidad} en ${origen})</option>`).join('');
+  document.getElementById('trsl-origen').value = origen;
+  const _sedesConocidas = ['principal', 'Tienda Aleze II'];
+  const otrasSedes = _sedesConocidas.filter(s => s !== origen);
+  document.getElementById('trsl-destino').innerHTML = otrasSedes.map(s => `<option value="${s}">${s}</option>`).join('');
+  document.getElementById('trsl-cantidad').value = '';
+  _traspasoActualizarInfo();
+  abrirModal('modal-traslado');
+}
+
+function _traspasoActualizarInfo() {
+  const prodId = parseInt(document.getElementById('trsl-prod').value);
+  const prod = DB.productos.find(p => p.id === prodId);
+  const origen = currentUserSedeId || 'principal';
+  const info = document.getElementById('trsl-stock-info');
+  if (prod && info) info.textContent = `Disponible en ${origen}: ${stockEnSede(prod, origen)} ${prod.unidad}`;
+}
+
+function confirmarTraslado() {
+  const prodId = parseInt(document.getElementById('trsl-prod').value);
+  const prod = DB.productos.find(p => p.id === prodId);
+  if (!prod) { alert('Selecciona un producto.'); return; }
+  const origen = currentUserSedeId || 'principal';
+  const destino = document.getElementById('trsl-destino').value;
+  if (!destino) { alert('Selecciona la sede de destino.'); return; }
+  const cantidad = parseFloat(document.getElementById('trsl-cantidad').value);
+  if (!cantidad || cantidad <= 0) { alert('Ingresa una cantidad válida.'); return; }
+  const disponible = stockEnSede(prod, origen);
+  if (cantidad > disponible) { alert(`No hay suficiente stock en ${origen}. Disponible: ${disponible} ${prod.unidad}`); return; }
+  if (!confirm(`¿Confirmar traslado?\n\n${prod.nombre}: ${cantidad} ${prod.unidad}\nDesde: ${origen}\nHacia: ${destino}`)) return;
+
+  ajustarStockSede(prod, -cantidad, origen);
+  ajustarStockSede(prod, cantidad, destino);
+  _pushMovimiento({ tipo:'traslado', desc:`Traslado: ${prod.nombre} x${cantidad} ${prod.unidad} — ${origen} → ${destino}`, monto:0, hora:nowTime(), fecha:today(), usuario:currentUser });
+  fbGuardarProductos();
+  cerrarModal('modal-traslado');
+  renderInvTable();
+  alert(`✅ Traslado registrado: ${cantidad} ${prod.unidad} de ${origen} a ${destino}.`);
 }
 
 function abrirModalMerma() {
