@@ -1703,7 +1703,7 @@ background: #F5F3FF;
           </div>
           <div style="flex:0 0 auto">
             <label style="font-size:.75rem;font-weight:600">&nbsp;</label>
-            <button type="button" class="btn btn-outline btn-sm" onclick="limpiarFiltrosProveedores()">✕ Limpiar</button>
+            <button type="button" class="btn btn-outline btn-sm" style="background:var(--gray-100);border-color:var(--gray-400)" onclick="limpiarFiltrosProveedores()">✕ Limpiar</button>
           </div>
         </div>
         <div class="card" style="padding:0">
@@ -2415,10 +2415,6 @@ background: #F5F3FF;
       </div>
     </div>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">
-      <div style="flex:1;min-width:120px">
-        <label style="font-size:.75rem;font-weight:600">N° Boleta</label>
-        <input type="text" class="form-control" id="bol-buscar" placeholder="Buscar..." oninput="filtrarBoletas()" />
-      </div>
       <div style="flex:1;min-width:100px">
         <label style="font-size:.75rem;font-weight:600">Desde</label>
         <input type="date" class="form-control" id="bol-filtro-desde" onchange="filtrarBoletas()" />
@@ -2428,7 +2424,7 @@ background: #F5F3FF;
         <input type="date" class="form-control" id="bol-filtro-hasta" onchange="filtrarBoletas()" />
       </div>
       <div style="flex:0 0 auto;display:flex;gap:.4rem;align-items:flex-end">
-        <button type="button" class="btn btn-outline btn-sm" onclick="limpiarFiltrosBoletas()">✕</button>
+        <button type="button" class="btn btn-outline btn-sm" style="background:var(--gray-100);border-color:var(--gray-400)" onclick="limpiarFiltrosBoletas()">✕</button>
         <button type="button" class="btn btn-primary btn-sm" onclick="abrirAgregarBoleta()">+ Agregar</button>
       </div>
     </div>
@@ -5316,12 +5312,10 @@ function filtrarBoletas() {
     return;
   }
   const prov = DB.proveedores.find(x => x.id === editingBoletaProvId);
-  const q = (document.getElementById('bol-buscar')?.value || '').toLowerCase();
   const desde = document.getElementById('bol-filtro-desde')?.value || '';
   const hasta = document.getElementById('bol-filtro-hasta')?.value || '';
   const boletas = (prov && prov.boletas) ? prov.boletas : [];
   let filtradas = boletas;
-  if (q)filtradas = filtradas.filter(b => _norm(b.num+b.fecha+(b.desc||'')).includes(_norm(q)));
   if (desde) filtradas = filtradas.filter(b => b.fecha >= desde);
   if (hasta) filtradas = filtradas.filter(b => b.fecha <= hasta);
   const total = filtradas.reduce((s, b) => s + (b.monto||0), 0);
@@ -5379,7 +5373,7 @@ function eliminarBoleta(idx) {
   filtrarBoletas();
 }
 function limpiarFiltrosBoletas() {
-  const els = ['bol-buscar','bol-filtro-desde','bol-filtro-hasta'];
+  const els = ['bol-filtro-desde','bol-filtro-hasta'];
   els.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   filtrarBoletas();
 }
