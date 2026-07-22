@@ -8816,6 +8816,14 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
     _fbSaveTimer = null;
     _fbEscribiendo = true;
     _fbWritingDB = true;
+    // Fase 3 arquitectura multi-sede: podar historialVentas a una ventana acotada.
+    // El historial completo ya vive en ventas/{id} desde Fase 1 — nada se pierde acá.
+    // Ventana >= 15 días por política de devoluciones (sección 6 hoja de ruta); 30 = margen x2.
+    if (DB.historialVentas && DB.historialVentas.length) {
+      const _limitePoda = new Date(); _limitePoda.setDate(_limitePoda.getDate() - 30);
+      const _limitePodaStr = _limitePoda.toISOString().split('T')[0];
+      DB.historialVentas = DB.historialVentas.filter(v => v.fecha >= _limitePodaStr);
+    }
     // Excluir productos y categorias — tienen su propio documento
     const payload = JSON.parse(JSON.stringify(DB));
   delete payload.productos;
