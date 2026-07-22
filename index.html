@@ -3923,7 +3923,7 @@ function ensureCajaAbierta() {
   let inicialNuevo = montoAuto; // fallback: solo si nunca hubo caja previa (primer uso del sistema)
   if (DB.caja.abierta && DB.caja.fecha && DB.caja.fecha !== fechaHoy) {
     const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
-    DB.movimientos.push({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
+    _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
     inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer es el punto de partida de hoy
     try { fbGuardar(); } catch(e) {}
   } else if (typeof DB.caja.saldoFinal === 'number') {
@@ -3931,7 +3931,7 @@ function ensureCajaAbierta() {
   }
   DB.caja = { abierta:true, inicial:inicialNuevo, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
+  _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
 }
 
 function checkAutoAbrirCaja() {
@@ -4039,6 +4039,7 @@ function procesarVenta() {
   }
   _ventaPendiente = { firma, venta };
   const cartSnapshot = cart.map(i => ({ ...i }));
+  const _movsAntesLen = (DB.movimientos||[]).length;
 
   fbFS.runTransaction(async (tx) => {
     const [dbSnap, prodSnap] = await Promise.all([tx.get(fbDocRef()), tx.get(fbProdDocRef())]);
@@ -4075,16 +4076,16 @@ function procesarVenta() {
       let inicialNuevo = montoAuto;
       if (cajaFresca.abierta && cajaFresca.fecha && cajaFresca.fecha !== fechaHoy) {
         const saldoAnt = (cajaFresca.inicial||0) + (cajaFresca.ingresos||0) - (cajaFresca.egresos||0);
-        movimientosNuevos.push({ tipo:'cierre-auto', desc:'Cierre automático — '+cajaFresca.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaFresca.fecha });
+        movimientosNuevos.push({ id:getId(), tipo:'cierre-auto', desc:'Cierre automático — '+cajaFresca.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaFresca.fecha });
         inicialNuevo = saldoAnt;
       } else if (typeof cajaFresca.saldoFinal === 'number') {
         inicialNuevo = cajaFresca.saldoFinal;
       }
       cajaFresca = { abierta:true, inicial:inicialNuevo, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
-      movimientosNuevos.push({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
+      movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
     }
     cajaFresca.ingresos = (cajaFresca.ingresos||0) + total;
-    movimientosNuevos.push({ tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
+    movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
     nuevoDb.caja = cajaFresca;
     nuevoDb.movimientos = movimientosNuevos;
 
@@ -4105,6 +4106,7 @@ function procesarVenta() {
       DB.movimientos = resultado.nuevoDb.movimientos;
       DB.clientes = resultado.nuevoDb.clientes;
       fbSincronizarVenta({ ...venta, origen: 'pos', estado: 'completado', estadoStock: 'descontado' });
+      DB.movimientos.slice(_movsAntesLen).forEach(fbSincronizarMovimiento);
     }
     try { renderDashboard(); } catch(e){}
     try { renderCaja(); } catch(e){}
@@ -4154,6 +4156,7 @@ function cobrarFiado() {
   }
   _fiadoPendiente = { firma, fiado };
   const cartSnapshot = cart.map(i => ({ ...i }));
+  const _movsAntesLen = (DB.movimientos||[]).length;
 
   fbFS.runTransaction(async (tx) => {
     const [dbSnap, prodSnap] = await Promise.all([tx.get(fbDocRef()), tx.get(fbProdDocRef())]);
@@ -4199,15 +4202,15 @@ function cobrarFiado() {
       let inicialNuevo = montoAuto;
       if (cajaFresca.abierta && cajaFresca.fecha && cajaFresca.fecha !== fechaHoy) {
         const saldoAnt = (cajaFresca.inicial||0) + (cajaFresca.ingresos||0) - (cajaFresca.egresos||0);
-        movimientosNuevos.push({ tipo:'cierre-auto', desc:'Cierre automático — '+cajaFresca.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaFresca.fecha });
+        movimientosNuevos.push({ id:getId(), tipo:'cierre-auto', desc:'Cierre automático — '+cajaFresca.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaFresca.fecha });
         inicialNuevo = saldoAnt;
       } else if (typeof cajaFresca.saldoFinal === 'number') {
         inicialNuevo = cajaFresca.saldoFinal;
       }
       cajaFresca = { abierta:true, inicial:inicialNuevo, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
-      movimientosNuevos.push({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
+      movimientosNuevos.push({ id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
     }
-    movimientosNuevos.push({ tipo:'fiado', desc:'Fiado — ' + getClienteNombre(clienteId), monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
+    movimientosNuevos.push({ id:getId(), tipo:'fiado', desc:'Fiado — ' + getClienteNombre(clienteId), monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
     nuevoDb.caja = cajaFresca;
     nuevoDb.movimientos = movimientosNuevos;
 
@@ -4224,6 +4227,7 @@ function cobrarFiado() {
       DB.movimientos = resultado.nuevoDb.movimientos;
       DB.clientes = resultado.nuevoDb.clientes;
       fbSincronizarVenta({ ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' });
+      DB.movimientos.slice(_movsAntesLen).forEach(fbSincronizarMovimiento);
     }
     try { renderDashboard(); } catch(e){}
     try { renderCaja(); } catch(e){}
@@ -5720,7 +5724,7 @@ function ejecutarPagoGlobal(cid, montoTotal) {
   if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100);
   ensureCajaAbierta();
   DB.caja.ingresos += montoTotal;
-  DB.movimientos.push({ tipo:'ingreso', desc:'Pago global fiado: ' + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today() });
+  _pushMovimiento({ tipo:'ingreso', desc:'Pago global fiado: ' + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today() });
   if (!DB.historialVentas) DB.historialVentas = [];
   _hvPagosGlobal.forEach(entry => { DB.historialVentas.push(entry); fbSincronizarVenta(entry); });
   fbGuardar();
@@ -5878,7 +5882,7 @@ f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto });
   // Ensure caja is open for today, then register ingreso
   ensureCajaAbierta();
   DB.caja.ingresos += monto;
-  DB.movimientos.push({ tipo:'ingreso', desc:'Pago fiado: ' + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today() });
+  _pushMovimiento({ tipo:'ingreso', desc:'Pago fiado: ' + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today() });
   if (!DB.historialVentas) DB.historialVentas = [];
   const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, cajero: currentUser };
   DB.historialVentas.push(_pagoFiado);
@@ -6072,7 +6076,7 @@ function abrirCaja() {
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
  DB.caja = { abierta:true, inicial:monto, ingresos:0, egresos:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push({ tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today() });
+  _pushMovimiento({ tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today() });
   fbGuardar(); renderCaja();
 }
 
@@ -6088,7 +6092,7 @@ function guardarMontoAperturaDefault() {
 function cerrarCaja() {
   const saldo = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
   if (!confirm(`Cerrar caja. Saldo final: ${sol(saldo)}\n¿Confirmar cierre de turno?`)) return;
-  DB.movimientos.push({ tipo:'cierre', desc:`Cierre de caja — Saldo: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today() });
+  _pushMovimiento({ tipo:'cierre', desc:`Cierre de caja — Saldo: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today() });
   DB.caja.abierta = false; DB.caja.fechaCierre = today(); DB.caja.saldoFinal = saldo;
   fbGuardar(); renderCaja();
 }
@@ -6145,7 +6149,7 @@ function registrarMovimiento() {
   const desc = document.getElementById('mov-desc').value;
   if (monto <= 0) { alert('Ingresa un monto válido'); return; }
   if (tipo === 'ingreso') DB.caja.ingresos += monto; else DB.caja.egresos += monto;
-  DB.movimientos.push({ tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today() });
+  _pushMovimiento({ tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today() });
   fbGuardar();
   document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
   updateCajaStats();
@@ -7498,12 +7502,12 @@ function guardarGasto() {
         if (diff > 0) {
           // Aumento — egreso adicional
           DB.caja.egresos = (DB.caja.egresos||0) + diff;
-          DB.movimientos.push({ tipo:'egreso', desc:`Ajuste gasto (aumento): ${desc} (${tipo})`, monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser });
+          _pushMovimiento({ tipo:'egreso', desc:`Ajuste gasto (aumento): ${desc} (${tipo})`, monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser });
         } else {
           // Reducción — ingreso por corrección
           DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
           DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
-          DB.movimientos.push({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
+          _pushMovimiento({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
         }
       }
     }
@@ -7512,7 +7516,7 @@ function guardarGasto() {
     DB_EXT.gastos.push({ id: getId(), tipo, desc, monto, fecha });
     ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
-    DB.movimientos.push({ tipo:'egreso', desc:`Gasto: ${desc} (${tipo})`, monto, hora: nowTime(), fecha, usuario: currentUser });
+    _pushMovimiento({ tipo:'egreso', desc:`Gasto: ${desc} (${tipo})`, monto, hora: nowTime(), fecha, usuario: currentUser });
   }
 
   fbGuardar();
@@ -7531,7 +7535,7 @@ function eliminarGasto(id) {
   if (gasto && gasto.monto > 0) {
     ensureCajaAbierta();
     DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
-    DB.movimientos.push({ tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser });
+    _pushMovimiento({ tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser });
     fbGuardar();
   }
   fbGuardarExt();
@@ -7724,7 +7728,7 @@ function confirmarAddCapital() {
   // Reinyección real: esta plata entra físicamente al negocio, suma al efectivo disponible
   ensureCajaAbierta();
   DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
-  DB.movimientos.push({ tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser });
+  _pushMovimiento({ tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser });
   fbGuardar();
   fbGuardarExt();
   cerrarModal('modal-add-capital');
@@ -7801,7 +7805,7 @@ function confirmarPagoCuota() {
   // Registrar egreso en caja
   ensureCajaAbierta();
   DB.caja.egresos = (DB.caja.egresos||0) + monto;
-  DB.movimientos.push({ tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser });
+  _pushMovimiento({ tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser });
   fbGuardar();
   fbGuardarExt();
   cerrarModal('modal-pago-cuota');
@@ -8612,7 +8616,7 @@ if (cli) {
 
   // Always register movement with ensureCajaAbierta
   ensureCajaAbierta();
-  DB.movimientos.push({ tipo:'fiado', desc:`Fiado — ${getClienteNombre(clienteId)}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
+  _pushMovimiento({ tipo:'fiado', desc:`Fiado — ${getClienteNombre(clienteId)}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
 
   _fbLastWriteTs = Date.now();
   _fbEscribiendo = true;
@@ -8674,7 +8678,7 @@ function mobProcesarVenta(){
   // Register caja movement always
   ensureCajaAbierta();
   DB.caja.ingresos += total;
-  DB.movimientos.push({ tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
+  _pushMovimiento({ tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
 
   if (!DB.historialVentas) DB.historialVentas = [];
   const _ventaMob = { ...venta, origen:'pos', estado:'completado', estadoStock:'descontado' };
@@ -8869,6 +8873,23 @@ function fbSincronizarVenta(venta) {
   const data = { ...venta, sedeId: venta.sedeId || currentUserSedeId || 'principal' };
   fbFS.collection('ventas').doc(String(venta.id)).set(data)
     .catch(e => console.warn('fbSincronizarVenta: no se pudo escribir ventas/' + venta.id, e));
+}
+
+// ── Fase 4 arquitectura multi-sede: escritura doble en colección movimientos/{id} ──
+// Mismo criterio que fbSincronizarVenta: no bloqueante, sedeId por defecto 'principal'.
+function fbSincronizarMovimiento(mov) {
+  if (!fbFS || !mov || mov.id == null) return;
+  const data = { ...mov, sedeId: mov.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('movimientos').doc(String(mov.id)).set(data)
+    .catch(e => console.warn('fbSincronizarMovimiento: no se pudo escribir movimientos/' + mov.id, e));
+}
+// Push no-transaccional: agrega id si falta, empuja a DB.movimientos local, sincroniza a la colección nueva.
+function _pushMovimiento(mov) {
+  if (mov.id == null) mov.id = getId();
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(mov);
+  fbSincronizarMovimiento(mov);
+  return mov;
 }
 
 // ── Escuchar cambios de OTROS dispositivos ──
@@ -9406,7 +9427,7 @@ function guardarActualizarVenta() {
     // Registrar egreso en caja — si estaba cerrada, se reabre encadenando el saldo real antes de aplicar el reembolso
     ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-    DB.movimientos.push({
+    _pushMovimiento({
       tipo: 'egreso',
       desc: `Reembolso anulación venta — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
       monto: montoReembolso,
@@ -9498,7 +9519,7 @@ function guardarActualizarVenta() {
   // Registrar egreso en caja — si estaba cerrada, se reabre encadenando el saldo real antes de aplicar el reembolso
   ensureCajaAbierta();
   DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-  DB.movimientos.push({
+  _pushMovimiento({
     tipo: 'egreso',
     desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
     monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza
@@ -10106,9 +10127,9 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       ensureCajaAbierta();
       if (_esPagado) {
         DB.caja.ingresos += p.total;
-        DB.movimientos.push({ tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
+        _pushMovimiento({ tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
       } else {
-        DB.movimientos.push({ tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
+        _pushMovimiento({ tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
       }
 
      // ── Firestore + Firebase ───────────────────────────────────────────────
