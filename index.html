@@ -8858,7 +8858,7 @@ function mobSelectCat(catId, el) {
 }
 
 function renderMobPosGrid(prods) {
-   prods = prods || DB.productos.filter(p => p.stock > 0 && (!p.esCombo || p.promoActiva !== false));
+   prods = prods || DB.productos.filter(p => (p.esCombo || stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
   const grid = document.getElementById('mob-pos-grid');
   if (!grid) return;
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today());
@@ -8873,16 +8873,17 @@ function renderMobPosGrid(prods) {
       const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
       return promo ? promo.precioPromo : p.precio;
     })();
-    const stockBajo = p.stock <= p.stockMin;
+    const stockBajo = stockEnSede(p) <= p.stockMin;
     const iconHtml = p.imagen
       ? `<div style="width:44px;height:44px;margin:0 auto .25rem;border-radius:8px;overflow:hidden"><img src="${p.imagen}" style="width:100%;height:100%;object-fit:cover"/></div>`
       : `<div class="p-icon">${getCatIcono(p.cat)}</div>`;
-    return `<div class="product-card${p.stock === 0 ? ' opacity-50' : ''}" onclick="mobAddToCart(${p.id})" style="${p.stock===0?'opacity:.45;pointer-events:none':''}">
+    const _stockSede = stockEnSede(p);
+    return `<div class="product-card${_stockSede === 0 && !p.esCombo ? ' opacity-50' : ''}" onclick="mobAddToCart(${p.id})" style="${_stockSede===0 && !p.esCombo?'opacity:.45;pointer-events:none':''}">
       ${tag}
       ${iconHtml}
       <div class="p-name">${p.nombre}</div>
       <div class="p-price" style="${stockBajo?'color:var(--danger)':''}">S/ ${precio.toFixed(2)}</div>
-      <div class="p-stock" style="${stockBajo?'color:var(--danger);font-weight:700':''}">Stock: ${p.stock} ${p.unidad}</div>
+      <div class="p-stock" style="${stockBajo?'color:var(--danger);font-weight:700':''}">Stock: ${_stockSede} ${p.unidad}</div>
     </div>`;
   }).join('') || '<p style="color:var(--gray-400);text-align:center;padding:2rem;grid-column:1/-1">Sin productos</p>';
 }
@@ -8890,11 +8891,11 @@ function renderMobPosGrid(prods) {
 // ---- MOB CART ----
 function mobAddToCart(prodId) {
   const prod = DB.productos.find(p => p.id === prodId);
-  if (!prod || prod.stock === 0) return;
+  if (!prod || (!prod.esCombo && stockEnSede(prod) === 0)) return;
   if (prod.esCombo && prod.componentes) {
     for (const comp of prod.componentes) {
       const cp = DB.productos.find(x => x.id === comp.prodId);
-      if (!cp || cp.stock < comp.cant) {
+      if (!cp || stockEnSede(cp) < comp.cant) {
         alert(`Stock insuficiente de "${cp?.nombre || 'componente'}" para armar este pack`);
         return;
       }
@@ -8905,7 +8906,7 @@ function mobAddToCart(prodId) {
   const precio = promo ? promo.precioPromo : prod.precio;
   const existing = cart.find(i => i.prodId === prodId);
   if (existing) {
-    if (existing.cant >= prod.stock) { alert('Stock insuficiente'); return; }
+    if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
   } else {
     cart.push({ prodId, nombre: prod.nombre, precio, cant: prod.tipo === 'granel' ? 0.5 : 1, tipo: prod.tipo, unidad: prod.unidad });
@@ -8926,7 +8927,7 @@ function mobRenderCart() {
 function mobChangeQty(i, delta) {
   const prod = DB.productos.find(p => p.id === cart[i].prodId);
   const step = cart[i].tipo === 'granel' ? 0.25 : 1;
-  cart[i].cant = Math.max(step, Math.min(prod ? prod.stock : 999, cart[i].cant + delta * step));
+  cart[i].cant = Math.max(step, Math.min(prod ? stockEnSede(prod) : 999, cart[i].cant + delta * step));
   mobRenderCart(); mobCalcTotal(); mobUpdateBar();
 }
 
@@ -8996,11 +8997,11 @@ DB.fiados.push(fiado);
   cart.forEach(item => {
     const prod = DB.productos.find(p => p.id === item.prodId);
     if (prod) {
-      if (!prod.esCombo) prod.stock = Math.max(0, prod.stock - item.cant);
+      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
       if (prod.esCombo && prod.componentes) {
         prod.componentes.forEach(comp => {
           const cp = DB.productos.find(x => x.id === comp.prodId);
-          if (cp) cp.stock = Math.max(0, cp.stock - comp.cant * item.cant);
+          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
         });
       }
     }
@@ -9064,11 +9065,11 @@ function mobProcesarVenta(){
   cart.forEach(item => {
     const prod = DB.productos.find(p => p.id === item.prodId);
     if (prod) {
-      if (!prod.esCombo) prod.stock = Math.max(0, prod.stock - item.cant);
+      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
       if (prod.esCombo && prod.componentes) {
         prod.componentes.forEach(comp => {
           const cp = DB.productos.find(x => x.id === comp.prodId);
-          if (cp) cp.stock = Math.max(0, cp.stock - comp.cant * item.cant);
+          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
         });
       }
     }
