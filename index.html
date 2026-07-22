@@ -3588,9 +3588,10 @@ function getAlertas() {
   const alertas = [];
   const diasVenc = parseInt(DB.config.diasVenc) || 7;
   DB.productos.forEach(p => {
-    if (p.stock <= p.stockMin) {
+    const _stockAqui = stockEnSede(p);
+    if (_stockAqui <= p.stockMin) {
       const key = 'stock_' + p.id;
-      if (!ignoradas[key]) alertas.push({ tipo:'danger', titulo:'Stock bajo: '+p.nombre, sub:'Stock: '+p.stock+' '+p.unidad+' (mín: '+p.stockMin+')', key });
+      if (!ignoradas[key]) alertas.push({ tipo:'danger', titulo:'Stock bajo: '+p.nombre, sub:'Stock: '+_stockAqui+' '+p.unidad+' (mín: '+p.stockMin+')', key });
     }
     if (p.venc && diasHasta(p.venc) <= diasVenc && diasHasta(p.venc) >= 0) {
       const key = 'venc_soon_' + p.id;
@@ -3689,7 +3690,7 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   }, 0);
   document.getElementById('dash-rent').textContent = sol(totalHoy + fiadosCobradosHoy - costoHoy - costoFiadosHoy - gastosHoy - mermasHoy);
 
-  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => p.stock <= p.stockMin).length;
+  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p) <= p.stockMin).length;
   document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0).length;
 
   // Capital
@@ -4389,22 +4390,27 @@ function renderInvTable(prods) {
   prods = prods || DB.productos;
   const tbody = document.getElementById('inv-tbody');
   tbody.innerHTML = prods.map(p => {
+    const _stockAqui = stockEnSede(p);
     const dias = diasHasta(p.venc);
     let estado = '<span class="badge badge-green">✅ OK</span>';
-    if (p.stock <= p.stockMin) estado = '<span class="badge badge-red">⚠️ Stock bajo</span>';
+    if (_stockAqui <= p.stockMin) estado = '<span class="badge badge-red">⚠️ Stock bajo</span>';
     if (p.venc && dias <= 7 && dias >= 0) estado = '<span class="badge badge-orange">⏰ Vence pronto</span>';
     if (p.venc && dias < 0) estado = '<span class="badge badge-red">❌ Vencido</span>';
     const margenPct = p.costo > 0 ? ((p.precio - p.costo) / p.costo * 100).toFixed(1) + '%' : '-';
     const margenSol = sol(p.precio - p.costo);
+    const _desglose = (p.stockPorSede && Object.keys(p.stockPorSede).length > 1)
+      ? Object.entries(p.stockPorSede).map(([s,v]) => `${s}: ${v}`).join(' · ')
+      : '';
     return `<tr>
       <td style="font-family:monospace;font-size:0.75rem">${p.codigo}</td>
       <td><strong>${p.nombre}</strong></td>
       <td>${getCategoriaNombre(p.cat)}</td>
       <td><span class="badge badge-${p.tipo==='granel'?'blue':'gray'}">${p.tipo==='granel'?'Granel':'Unidad'}</span></td>
      <td>
-  <strong style="color:${p.stock<=p.stockMin?'var(--danger)':'inherit'}">
-    ${p.unidad === 'kg' ? parseFloat(Number(p.stock || 0).toFixed(3)) : parseFloat(Number(p.stock || 0).toFixed(2))} ${p.unidad}
+  <strong style="color:${_stockAqui<=p.stockMin?'var(--danger)':'inherit'}">
+    ${p.unidad === 'kg' ? parseFloat(Number(_stockAqui || 0).toFixed(3)) : parseFloat(Number(_stockAqui || 0).toFixed(2))} ${p.unidad}
   </strong>
+  ${_desglose ? `<div style="font-size:.68rem;color:var(--gray-500)">Todas las sedes: ${_desglose}</div>` : ''}
 </td>
       <td>${p.stockMin}</td>
       <td>${sol(p.costo)}</td>
@@ -4443,9 +4449,9 @@ function filterInventario() {
   let prods = DB.productos;
 if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)));
   if (cat) prods = prods.filter(p => p.cat == cat);
-  if (estado === 'bajo') prods = prods.filter(p => p.stock <= p.stockMin);
+  if (estado === 'bajo') prods = prods.filter(p => stockEnSede(p) <= p.stockMin);
   if (estado === 'vence') prods = prods.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0);
-  if (estado === 'ok') prods = prods.filter(p => p.stock > p.stockMin && (!p.venc || diasHasta(p.venc) > 7));
+  if (estado === 'ok') prods = prods.filter(p => stockEnSede(p) > p.stockMin && (!p.venc || diasHasta(p.venc) > 7));
   renderInvTable(prods);
 }
 
@@ -8079,7 +8085,7 @@ async function updateCapStats() {
         <div style="font-size:.78rem;font-weight:700;color:var(--info);margin-bottom:.3rem">💡 Sugerencia de reinversión</div>
         <div style="font-size:.78rem;color:var(--gray-700)">
           Reinvertir aprox. ${sol(reinvertir)} (10% del capital) priorizando:
-          ${DB.productos.filter(p=>p.stock<=p.stockMin).slice(0,3).map(p=>p.nombre).join(', ') || 'productos con stock bajo'}
+          ${DB.productos.filter(p=>stockEnSede(p)<=p.stockMin).slice(0,3).map(p=>p.nombre).join(', ') || 'productos con stock bajo'}
         </div>
       </div>
     </div>`;
@@ -8733,7 +8739,7 @@ window.addToCart = function(prodId) {
   if (prod&&prod.esCombo&&prod.componentes) {
     for (const comp of prod.componentes) {
       const cp=DB.productos.find(x=>x.id===comp.prodId);
-      if (!cp||cp.stock<comp.cant) { alert(`Stock insuficiente de "${cp?.nombre||'componente'}" para armar el combo`); return; }
+      if (!cp||stockEnSede(cp)<comp.cant) { alert(`Stock insuficiente de "${cp?.nombre||'componente'}" para armar el combo`); return; }
     }
   }
   _addToCartOrig(prodId);
@@ -10695,7 +10701,7 @@ function tndLoadCart() {
     _tiendaCart = saved
       .map(item => {
         const prod = (DB.productos || []).find(p => p.id === item.prodId);
-        if (!prod || prod.stock <= 0) return null; // producto sin stock
+        if (!prod || stockTotal(prod) <= 0) return null; // producto sin stock (consolidado, tienda pública)
         if (prod.venc && prod.venc < today()) return null; // producto vencido
         return { ...item, precio: prod.precio, nombre: prod.nombre }; // precio actualizado
       })
@@ -10765,9 +10771,11 @@ function initTienda() {
   }
 }
 
+// Tienda pública: siempre stock consolidado entre sedes — el cliente no elige sede, despacha quien confirme (ver Fase 6).
 function _getStockBadge(p) {
-  if (p.stock <= 0) return '<span class="badge badge-red">Agotado</span>';
-  if (p.stock <= p.stockMin) return '<span class="badge badge-orange">Últimas unidades</span>';
+  const _stockPub = stockTotal(p);
+  if (_stockPub <= 0) return '<span class="badge badge-red">Agotado</span>';
+  if (_stockPub <= p.stockMin) return '<span class="badge badge-orange">Últimas unidades</span>';
   return '<span class="badge badge-green">Disponible</span>';
 }
 
@@ -10981,10 +10989,10 @@ const grid  = document.getElementById('tnd-grid');
     : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">${cfg.eslogan||'Todo lo que necesitas, cerca de ti'}</div></div>`;
   const hoy = new Date().toISOString().slice(0,10);
   const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy);
-  const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && p.stock > 0)).filter(Boolean);
+  const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
   const promosHtml = prodsPromo.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">🔥 Promociones activas</div><div style="display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;-webkit-overflow-scrolling:touch;scrollbar-width:none">${prodsPromo.slice(0,6).map(p => `<div onclick="tndSetCat(${p.cat})" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:90px;object-fit:cover">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+p.precio).toFixed(2)}</div></div></div>`).join('')}</div></div>` : '';
   const cats2 = (DB.categorias||[]).filter(c => c.nombre);
-  const catsHtml = cats2.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">📦 Nuestras categorías</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem">${cats2.map(c => { const nProds=(DB.productos||[]).filter(p=>p.cat==c.id&&p.stock>0).length; return `<div onclick="tndSetCat(${c.id})" style="cursor:pointer;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${c.imagen?`<img src="${c.imagen}" style="width:100%;aspect-ratio:1;object-fit:contain;background:#f5f3ff;display:block">`:`<div style="height:110px;background:linear-gradient(135deg,#5B21B6,#7C3AED);display:flex;align-items:center;justify-content:center;font-size:2.5rem">${c.emoji||'📦'}</div>`}<div style="padding:.6rem .75rem"><div style="font-weight:700;font-size:.88rem;color:#1f2937">${c.nombre}</div><div style="font-size:.75rem;color:#6b7280">${nProds} producto${nProds!==1?'s':''} disponible${nProds!==1?'s':''}</div></div></div>`; }).join('')}</div><button onclick="tndSetCat('')" style="width:100%;margin-top:.75rem;padding:.6rem;background:#f3f4f6;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;color:#374151">Ver todos los productos →</button></div>` : '';
+  const catsHtml = cats2.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">📦 Nuestras categorías</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem">${cats2.map(c => { const nProds=(DB.productos||[]).filter(p=>p.cat==c.id&&stockTotal(p)>0).length; return `<div onclick="tndSetCat(${c.id})" style="cursor:pointer;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${c.imagen?`<img src="${c.imagen}" style="width:100%;aspect-ratio:1;object-fit:contain;background:#f5f3ff;display:block">`:`<div style="height:110px;background:linear-gradient(135deg,#5B21B6,#7C3AED);display:flex;align-items:center;justify-content:center;font-size:2.5rem">${c.emoji||'📦'}</div>`}<div style="padding:.6rem .75rem"><div style="font-weight:700;font-size:.88rem;color:#1f2937">${c.nombre}</div><div style="font-size:.75rem;color:#6b7280">${nProds} producto${nProds!==1?'s':''} disponible${nProds!==1?'s':''}</div></div></div>`; }).join('')}</div><button onclick="tndSetCat('')" style="width:100%;margin-top:.75rem;padding:.6rem;background:#f3f4f6;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;color:#374151">Ver todos los productos →</button></div>` : '';
 const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
   const serviciosHtml = cfg.serviciosBannerUrl
     ? `<div style="margin-bottom:1.25rem">
@@ -11074,7 +11082,7 @@ function tndFiltrar() {
   const grid = document.getElementById('tnd-grid');
   if (!grid) return;
   grid.innerHTML = prods.map(p => {
-    const agotado = p.stock <= 0;
+    const agotado = stockTotal(p) <= 0;
     const cat = (DB.categorias||[]).find(c => c.id === p.cat);
    const icon = p.imagen
       ? `<img src="${p.imagen}" style="width:60px;height:60px;object-fit:contain;border-radius:8px">`
@@ -11103,14 +11111,14 @@ function tndFiltrar() {
 
 function tndAgregarCarrito(prodId) {
   const p = DB.productos.find(x => x.id === prodId);
-  if (!p || p.stock <= 0) return;
+  if (!p || stockTotal(p) <= 0) return;
   if (p.venc && p.venc < today()) { alert('Este producto ya no está disponible.'); tndFiltrar(); return; }
   const promo = _getPromoTienda(p);
   const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
   const cat = (DB.categorias||[]).find(c => c.id === p.cat);
   const existing = _tiendaCart.find(i => i.prodId === prodId);
   if (existing) {
-    if (existing.cant >= p.stock) { alert('No hay más stock disponible'); return; }
+    if (existing.cant >= stockTotal(p)) { alert('No hay más stock disponible'); return; }
     existing.cant++;
   } else {
     _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: 1, icon: cat?.emoji||'📦', tipo: p.tipo });
