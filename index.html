@@ -2347,7 +2347,7 @@ background: #F5F3FF;
 
 <!-- Modal Proveedor -->
 <div class="modal-overlay" id="modal-proveedor">
-  <div class="modal" style="max-width:720px">
+  <div class="modal">
     <div class="modal-header">
       <h3 id="prov-modal-titulo">Nuevo Proveedor</h3>
       <button type="button" class="modal-close" onclick="cerrarModal('modal-proveedor')">✕</button>
@@ -2360,58 +2360,70 @@ background: #F5F3FF;
       <div class="form-group"><label>Número de contacto</label><input type="text" class="form-control" id="prov-tel" /></div>
       <div class="form-group"><label>Productos que provee</label><input type="text" class="form-control" id="prov-productos" placeholder="Ej: Gaseosas, snacks..." /></div>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-bottom:.75rem">
-      <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-proveedor')">Cancelar</button>
-      <button type="button" class="btn btn-primary" onclick="guardarProveedor()">Guardar proveedor</button>
-    </div>
-<div id="prov-boletas-seccion" style="display:none;border-top:2px solid var(--gray-200);padding-top:.75rem">
-      <div style="font-weight:700;font-size:.95rem;margin-bottom:.75rem;color:var(--primary)">📄 Historial de boletas</div>
-      <div id="bol-form" style="display:none;background:var(--gray-50);border-radius:8px;padding:.75rem;margin-bottom:.75rem">
-        <div class="grid-2">
-          <div class="form-group"><label>N° Boleta *</label><input type="text" class="form-control" id="bol-num" /></div>
-          <div class="form-group"><label>Fecha de compra *</label><input type="date" class="form-control" id="bol-fecha" /></div>
-        </div>
-        <div class="grid-2">
-          <div class="form-group"><label>Importe total (S/)</label><input type="number" class="form-control" id="bol-monto" step="0.01" /></div>
-          <div class="form-group"><label>URL Drive (acceso directo)</label><input type="text" class="form-control" id="bol-url" placeholder="Link Google Drive..." /></div>
-        </div>
-       <div class="form-group"><label>Descripción</label><input type="text" class="form-control" id="bol-desc" /></div>
-        <!-- Sección productos recibidos -->
-        <div style="border-top:1px solid var(--gray-200);margin-top:.75rem;padding-top:.75rem">
-          <div style="font-weight:700;font-size:.82rem;margin-bottom:.5rem">📦 Productos recibidos <span style="font-weight:400;color:var(--gray-500)">(opcional)</span></div>
-          <div style="display:flex;gap:.4rem;margin-bottom:.5rem">
-            <input type="text" class="form-control" id="bol-prod-buscar" placeholder="🔍 Buscar producto del inventario..." oninput="_boletaBuscar()" style="flex:1" />
-          </div>
-          <div id="bol-prod-sugerencias" style="display:none;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:140px;overflow-y:auto;margin-bottom:.5rem;font-size:.82rem"></div>
-          <div id="bol-prod-lista" style="font-size:.82rem">
-            <div style="color:var(--gray-400);text-align:center;padding:.5rem">Sin productos agregados aún</div>
-          </div>
-        </div>
-        <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
-          <button type="button" class="btn btn-outline btn-sm" onclick="cerrarAgregarBoleta()">Cancelar</button>
-          <button type="button" class="btn btn-primary btn-sm" onclick="guardarBoleta()">Guardar boleta</button>
-        </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem">
+      <button type="button" class="btn btn-outline" id="prov-btn-boletas" style="display:none" onclick="verBoletas(editingProvId)">📄 Ver boletas y compras</button>
+      <div style="display:flex;gap:0.5rem;margin-left:auto">
+        <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-proveedor')">Cancelar</button>
+        <button type="button" class="btn btn-primary" onclick="guardarProveedor()">Guardar proveedor</button>
       </div>
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">
-        <div style="flex:1;min-width:120px">
-          <label style="font-size:.75rem;font-weight:600">N° Boleta</label>
-          <input type="text" class="form-control" id="bol-buscar" placeholder="Buscar..." oninput="filtrarBoletas()" />
-        </div>
-        <div style="flex:1;min-width:100px">
-          <label style="font-size:.75rem;font-weight:600">Desde</label>
-          <input type="date" class="form-control" id="bol-filtro-desde" onchange="filtrarBoletas()" />
-        </div>
-        <div style="flex:1;min-width:100px">
-          <label style="font-size:.75rem;font-weight:600">Hasta</label>
-          <input type="date" class="form-control" id="bol-filtro-hasta" onchange="filtrarBoletas()" />
-        </div>
-        <div style="flex:0 0 auto;display:flex;gap:.4rem;align-items:flex-end">
-          <button type="button" class="btn btn-outline btn-sm" onclick="limpiarFiltrosBoletas()">✕</button>
-          <button type="button" class="btn btn-primary btn-sm" onclick="abrirAgregarBoleta()">+ Agregar</button>
-        </div>
-      </div>
-      <div class="table-wrap"><table><thead><tr><th>N° Boleta</th><th>Fecha</th><th>Descripción</th><th>Importe</th><th>URL</th><th></th></tr></thead><tbody id="boletas-tbody"></tbody></table></div>
     </div>
+  </div>
+</div>
+
+<!-- Modal Boletas y compras de un proveedor — separado del modal de datos del proveedor -->
+<div class="modal-overlay" id="modal-boletas-proveedor">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-header">
+      <h3 id="bolprov-titulo">📄 Boletas y compras</h3>
+      <button type="button" class="modal-close" onclick="cerrarModal('modal-boletas-proveedor')">✕</button>
+    </div>
+    <div id="bol-form" style="display:none;background:var(--gray-50);border-radius:8px;padding:.75rem;margin-bottom:.75rem">
+      <div class="grid-2">
+        <div class="form-group"><label>N° Boleta *</label><input type="text" class="form-control" id="bol-num" /></div>
+        <div class="form-group"><label>Fecha de compra *</label><input type="date" class="form-control" id="bol-fecha" /></div>
+      </div>
+      <div class="grid-2">
+        <div class="form-group"><label>Importe total (S/)</label><input type="number" class="form-control" id="bol-monto" step="0.01" oninput="_boletaActualizarTotal()" /></div>
+        <div class="form-group"><label>URL Drive (acceso directo)</label><input type="text" class="form-control" id="bol-url" placeholder="Link Google Drive..." /></div>
+      </div>
+     <div class="form-group"><label>Descripción</label><input type="text" class="form-control" id="bol-desc" /></div>
+      <!-- Sección productos recibidos -->
+      <div style="border-top:1px solid var(--gray-200);margin-top:.75rem;padding-top:.75rem">
+        <div style="font-weight:700;font-size:.82rem;margin-bottom:.5rem">📦 Productos recibidos <span style="font-weight:400;color:var(--gray-500)">(opcional)</span></div>
+        <div style="display:flex;gap:.4rem;margin-bottom:.5rem">
+          <input type="text" class="form-control" id="bol-prod-buscar" placeholder="🔍 Buscar producto del inventario..." oninput="_boletaBuscar()" style="flex:1" />
+        </div>
+        <div id="bol-prod-sugerencias" style="display:none;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:140px;overflow-y:auto;margin-bottom:.5rem;font-size:.82rem"></div>
+        <div id="bol-prod-nuevo" style="display:none;background:#fff;border:1px solid var(--primary);border-radius:6px;padding:.6rem;margin-bottom:.5rem"></div>
+        <div id="bol-prod-lista" style="font-size:.82rem">
+          <div style="color:var(--gray-400);text-align:center;padding:.5rem">Sin productos agregados aún</div>
+        </div>
+        <div id="bol-prod-total" style="font-size:.8rem;font-weight:600;text-align:right;margin-top:.5rem;padding-top:.4rem;border-top:1px dashed var(--gray-300)"></div>
+      </div>
+      <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
+        <button type="button" class="btn btn-outline btn-sm" onclick="cerrarAgregarBoleta()">Cancelar</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="guardarBoleta()">Guardar boleta</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem;align-items:flex-end">
+      <div style="flex:1;min-width:120px">
+        <label style="font-size:.75rem;font-weight:600">N° Boleta</label>
+        <input type="text" class="form-control" id="bol-buscar" placeholder="Buscar..." oninput="filtrarBoletas()" />
+      </div>
+      <div style="flex:1;min-width:100px">
+        <label style="font-size:.75rem;font-weight:600">Desde</label>
+        <input type="date" class="form-control" id="bol-filtro-desde" onchange="filtrarBoletas()" />
+      </div>
+      <div style="flex:1;min-width:100px">
+        <label style="font-size:.75rem;font-weight:600">Hasta</label>
+        <input type="date" class="form-control" id="bol-filtro-hasta" onchange="filtrarBoletas()" />
+      </div>
+      <div style="flex:0 0 auto;display:flex;gap:.4rem;align-items:flex-end">
+        <button type="button" class="btn btn-outline btn-sm" onclick="limpiarFiltrosBoletas()">✕</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="abrirAgregarBoleta()">+ Agregar</button>
+      </div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>N° Boleta</th><th>Fecha</th><th>Descripción</th><th>Importe</th><th>URL</th><th></th></tr></thead><tbody id="boletas-tbody"></tbody></table></div>
   </div>
 </div>
 
@@ -5186,9 +5198,7 @@ function abrirModalProveedor() {
   editingBoletaProvId = null;
   document.getElementById('prov-modal-titulo').textContent = 'Nuevo Proveedor';
   ['prov-nombre','prov-contacto','prov-tel','prov-productos'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('prov-boletas-seccion').style.display = 'block';
-  document.getElementById('bol-form').style.display = 'none';
-  limpiarFiltrosBoletas();
+  document.getElementById('prov-btn-boletas').style.display = 'none'; // recién existe una vez guardado
   abrirModal('modal-proveedor');
 }
 
@@ -5201,9 +5211,7 @@ function editarProveedor(id) {
   document.getElementById('prov-contacto').value = p.contacto;
   document.getElementById('prov-tel').value = p.tel;
   document.getElementById('prov-productos').value = p.productos;
-  document.getElementById('prov-boletas-seccion').style.display = 'block';
-  document.getElementById('bol-form').style.display = 'none';
-  limpiarFiltrosBoletas();
+  document.getElementById('prov-btn-boletas').style.display = 'inline-block';
   abrirModal('modal-proveedor');
 }
 
@@ -5244,6 +5252,9 @@ function abrirAgregarBoleta() {
   document.getElementById('bol-monto').value = '';
   document.getElementById('bol-url').value = '';
   document.getElementById('bol-desc').value = '';
+  document.getElementById('bol-prod-nuevo').style.display = 'none';
+  _boletaProductos = [];
+  _boletaRenderLista();
 }
 function cerrarAgregarBoleta() {
   document.getElementById('bol-form').style.display = 'none';
@@ -5255,7 +5266,13 @@ function cerrarAgregarBoleta() {
   _boletaRenderLista();
 }
 function verBoletas(provId) {
-  editarProveedor(provId);
+  editingBoletaProvId = provId;
+  const prov = DB.proveedores.find(x => x.id === provId);
+  document.getElementById('bolprov-titulo').textContent = '📄 Boletas y compras — ' + (prov ? prov.nombre : '');
+  document.getElementById('bol-form').style.display = 'none';
+  limpiarFiltrosBoletas();
+  cerrarModal('modal-proveedor');
+  abrirModal('modal-boletas-proveedor');
 }
 function filtrarBoletas() {
   const prov = DB.proveedores.find(x => x.id === editingBoletaProvId);
@@ -5336,16 +5353,60 @@ function _boletaBuscar() {
   const matches = DB.productos.filter(p =>
 _norm(p.nombre).includes(_norm(q)) || _norm(p.codigo||'').includes(_norm(q))
   ).slice(0, 8);
+  const crearLink = `<div onclick="_boletaAbrirCrearProducto()" style="padding:.5rem .75rem;cursor:pointer;color:var(--primary);font-weight:600;border-top:1px solid var(--gray-100)">+ Crear producto nuevo</div>`;
   if (!matches.length) {
-    sug.innerHTML = '<div style="padding:.5rem;color:var(--gray-400)">Sin resultados — créalo primero en Inventario</div>';
+    sug.innerHTML = '<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>' + crearLink;
   } else {
     sug.innerHTML = matches.map(p =>
       `<div onclick="_boletaAgregarProd(${p.id})" style="padding:.4rem .75rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
         <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock: ${p.stock} | S/${p.costo}</span>
        </div>`
-    ).join('');
+    ).join('') + crearLink;
   }
   sug.style.display = 'block';
+}
+
+// ── Crear producto nuevo sin salir de la boleta — mínimo viable, se puede completar después en Inventario ──
+function _boletaAbrirCrearProducto() {
+  const q = document.getElementById('bol-prod-buscar').value.trim();
+  document.getElementById('bol-prod-sugerencias').style.display = 'none';
+  const el = document.getElementById('bol-prod-nuevo');
+  el.innerHTML = `
+    <div style="font-weight:700;font-size:.8rem;margin-bottom:.4rem;color:var(--primary)">+ Nuevo producto</div>
+    <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.4rem">
+      <input type="text" id="bpn-nombre" class="form-control" placeholder="Nombre *" style="flex:2;min-width:120px" />
+      <select id="bpn-cat" class="form-control" style="flex:1;min-width:100px">
+        ${DB.categorias.map(c=>`<option value="${c.id}">${c.emoji||''} ${c.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.4rem">
+      <input type="number" id="bpn-precio" class="form-control" placeholder="Precio de venta S/ *" step="0.01" style="flex:1;min-width:110px" />
+      <span style="font-size:.72rem;color:var(--gray-500);align-self:center">Costo y stock los define esta boleta</span>
+    </div>
+    <div style="display:flex;gap:.4rem;justify-content:flex-end">
+      <button type="button" class="btn btn-outline btn-xs" onclick="document.getElementById('bol-prod-nuevo').style.display='none'">Cancelar</button>
+      <button type="button" class="btn btn-primary btn-xs" onclick="_boletaCrearProducto()">Crear y agregar</button>
+    </div>`;
+  document.getElementById('bpn-nombre').value = q;
+  el.style.display = 'block';
+}
+
+function _boletaCrearProducto() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede crear productos.'); return; }
+  const nombre = document.getElementById('bpn-nombre').value.trim();
+  const cat = parseInt(document.getElementById('bpn-cat').value);
+  const precio = parseFloat(document.getElementById('bpn-precio').value);
+  if (!nombre || !cat || isNaN(precio) || precio <= 0) { alert('Completa nombre, categoría y precio de venta.'); return; }
+  const prod = {
+    id: getId(), nombre, cat, tipo:'unidad', unidad:'unidad',
+    costo: 0, precio, stock: 0, stockMin: 5, venc: '',
+    codigo: '7' + getId().toString().slice(-12), prov: editingBoletaProvId, imagen: ''
+  };
+  DB.productos.push(prod);
+  fbGuardarProductos();
+  document.getElementById('bol-prod-nuevo').style.display = 'none';
+  document.getElementById('bol-prod-buscar').value = '';
+  _boletaAgregarProd(prod.id);
 }
 
 function _boletaAgregarProd(id) {
@@ -5367,19 +5428,35 @@ function _boletaQuitarProd(id) {
   _boletaRenderLista();
 }
 
+// Costo Promedio Ponderado: mezcla el stock existente (a su costo) con la compra nueva.
+// stockActual=0 (producto recién creado) -> el promedio es simplemente el costo de esta compra, correcto.
+function _boletaCostoPromedio(stockActual, costoActual, cantNueva, costoNuevo) {
+  const stockFinal = stockActual + cantNueva;
+  if (stockFinal <= 0) return costoNuevo;
+  return ((stockActual * costoActual) + (cantNueva * costoNuevo)) / stockFinal;
+}
+
 function _boletaRenderLista() {
   const el = document.getElementById('bol-prod-lista');
   if (!el) return;
   if (!_boletaProductos.length) {
     el.innerHTML = '<div style="color:var(--gray-400);text-align:center;padding:.5rem">Sin productos agregados aún</div>';
+    _boletaActualizarTotal();
     return;
   }
 el.innerHTML = _boletaProductos.map((p, i) => {
     const prod = DB.productos.find(x => x.id === p.prodId);
+    const stockActual = prod ? prod.stock : 0;
+    const costoActual = prod ? prod.costo : 0;
+    const cantNueva = p.cantidad || 0;
+    const stockFinal = Math.round((stockActual + cantNueva) * 1000) / 1000;
+    const costoNuevo = p.esBonif ? 0 : (p.costo || 0);
+    const costoPromedio = _boletaCostoPromedio(stockActual, costoActual, cantNueva, costoNuevo);
+    const costoCambia = Math.abs(costoPromedio - costoActual) > 0.005;
     const precio = prod ? prod.precio : 0;
-    const margenActual = precio > 0 ? ((precio - prod.costo) / precio * 100).toFixed(1) : '—';
-    const margenNuevo  = precio > 0 && !p.esBonif && p.costo > 0 ? ((precio - p.costo) / precio * 100).toFixed(1) : null;
-    const margenColor  = margenNuevo !== null && parseFloat(margenNuevo) < parseFloat(margenActual) ? 'var(--danger)' : 'var(--accent)';
+    const margenActual = precio > 0 ? ((precio - costoActual) / precio * 100).toFixed(1) : '—';
+    const margenNuevo  = precio > 0 ? ((precio - costoPromedio) / precio * 100).toFixed(1) : '—';
+    const margenColor  = margenNuevo !== '—' && margenActual !== '—' && parseFloat(margenNuevo) < parseFloat(margenActual) ? 'var(--danger)' : 'var(--accent)';
     return `
     <div style="background:var(--gray-50);border-radius:6px;padding:.4rem .6rem;margin-bottom:.4rem">
       <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
@@ -5393,15 +5470,37 @@ el.innerHTML = _boletaProductos.map((p, i) => {
         </label>
         <button onclick="_boletaQuitarProd(${p.prodId})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:0 2px">✕</button>
       </div>
+      <div style="display:flex;align-items:center;gap:.7rem;margin-top:.3rem;flex-wrap:wrap;font-size:.72rem;color:var(--gray-500)">
+        <span>📦 Stock: <b style="color:var(--gray-700)">${stockActual}</b> → <b style="color:var(--accent)">${stockFinal}</b></span>
+        <span>💰 Costo: <b style="color:var(--gray-700)">${sol(costoActual)}</b>${costoCambia ? ` → <b style="color:var(--warning)">${sol(costoPromedio)}</b> (promedio ponderado)` : ' (sin cambio)'}</span>
+      </div>
       <div style="display:flex;align-items:center;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
         <label style="font-size:.72rem;color:var(--gray-500)">Vence:</label>
         <input type="date" value="${p.venc||''}" style="font-size:.75rem;padding:2px 4px;border:1px solid var(--gray-200);border-radius:4px"
           onchange="_boletaProductos[${i}].venc=this.value" title="Fecha de vencimiento (opcional)" />
-        ${margenNuevo !== null ? `<span style="font-size:.72rem;color:var(--gray-500)">Margen: <b style="color:${margenColor}">${margenNuevo}%</b> <span style="color:var(--gray-400)">(antes ${margenActual}%)</span></span>` : `<span style="font-size:.72rem;color:var(--gray-400)">Margen actual: ${margenActual}%</span>`}
+        <span style="font-size:.72rem;color:var(--gray-500)">Margen: <b style="color:${margenColor}">${margenNuevo}%</b> <span style="color:var(--gray-400)">(antes ${margenActual}%)</span></span>
       </div>
     </div>`;
   }).join('');
-}  
+  _boletaActualizarTotal();
+}
+
+// ── Total cargado en vivo vs. importe declarado — reemplaza el aviso único de "al guardar" ──
+function _boletaActualizarTotal() {
+  const el = document.getElementById('bol-prod-total');
+  if (!el) return;
+  const totalCargado = Math.round(_boletaProductos.filter(p=>!p.esBonif).reduce((s,p) => s + (p.cantidad||0)*(p.costo||0), 0) * 100) / 100;
+  const declarado = parseFloat(document.getElementById('bol-monto')?.value) || 0;
+  if (!_boletaProductos.length && declarado === 0) { el.innerHTML = ''; return; }
+  const dif = Math.round((declarado - totalCargado) * 100) / 100;
+  let estado = '';
+  if (declarado > 0) {
+    if (dif === 0) estado = ' <span style="color:var(--accent)">✅ cuadra</span>';
+    else if (dif > 0) estado = ` <span style="color:var(--warning)">(falta cargar ${sol(dif)})</span>`;
+    else estado = ` <span style="color:var(--danger)">(sobra ${sol(Math.abs(dif))} sobre lo declarado)</span>`;
+  }
+  el.innerHTML = `Total cargado: <b>${sol(totalCargado)}</b>${declarado > 0 ? ` de ${sol(declarado)} declarado${estado}` : ''}`;
+}
 function guardarBoleta() {
   if (currentRole !== 'admin') return;
   const num   = document.getElementById('bol-num').value.trim();
@@ -5433,12 +5532,15 @@ function guardarBoleta() {
       ? `\n\n⚠️ El total de productos (S/${totalProductos.toFixed(2)}) difiere del importe ingresado (S/${montoIngresado.toFixed(2)}) en S/${difMonto.toFixed(2)}. Verifica si hay productos no registrados.`
       : '';
     if (!confirm(`📦 Confirmar actualización de stock:\n\n${resumen}\n\nTotal productos: S/${totalProductos.toFixed(2)}${alertaDif}\n\n¿Continuar?`)) return;
-    // ── Actualizar stock y costo ──
+    // ── Actualizar stock y costo (Costo Promedio Ponderado — no sobreescribe, mezcla con lo que ya había) ──
     _boletaProductos.forEach(p => {
       const prod = DB.productos.find(x => x.id === p.prodId);
       if (!prod) return;
-    prod.stock = Math.round(((prod.stock || 0) + p.cantidad) * 1000) / 1000;
-      if (!p.esBonif && p.costo > 0) prod.costo = p.costo;
+      const stockAntes = prod.stock || 0;
+      const costoNuevo = p.esBonif ? 0 : (p.costo || 0);
+      const costoPromedio = _boletaCostoPromedio(stockAntes, prod.costo || 0, p.cantidad, costoNuevo);
+      prod.stock = Math.round((stockAntes + p.cantidad) * 1000) / 1000;
+      prod.costo = Math.round(costoPromedio * 10000) / 10000;
       if (p.venc) prod.venc = p.venc;
     });
     fbGuardarProductos();
