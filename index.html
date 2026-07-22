@@ -2246,7 +2246,9 @@ background: #F5F3FF;
         </div>
         <div class="form-group"><label>Precio de venta (S/) *</label><input type="number" class="form-control" id="prod-precio" step="0.01" oninput="calcMargen()" /></div>
         <div class="form-group"><label>Margen calculado</label><input type="text" class="form-control" id="prod-margen" readonly style="background:var(--gray-50);font-weight:700" /></div>
-        <div class="form-group"><label>Stock actual *</label><input type="number" class="form-control" id="prod-stock" step="0.01" /></div>
+        <div class="form-group" id="prod-stock-wrap"><label>Stock inicial (en tu sede) *</label><input type="number" class="form-control" id="prod-stock" step="0.01" />
+          <div id="prod-stock-nota" style="display:none;font-size:.72rem;color:var(--gray-500);margin-top:.3rem">Para cambiar stock de un producto existente: usa Boletas (compra), Mermas (pérdida), o Inventario mensual (conteo físico) — no se edita aquí.</div>
+        </div>
         <div class="form-group"><label>Stock mínimo (alerta)</label><input type="number" class="form-control" id="prod-stock-min" step="0.01" value="5" /></div>
       </div>
     </div>
@@ -3804,7 +3806,7 @@ function renderPosGrid(search = '') {
   // Guard: no renderizar sin sesión activa
   if (!currentUser) return;
   const s = search || document.getElementById('pos-search')?.value.toLowerCase() || '';
-  let prods = DB.productos.filter(p => p.stock > 0 && (!p.esCombo || p.promoActiva !== false));
+  let prods = DB.productos.filter(p => (p.esCombo || stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
  if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)));
   if (posFilterCat) prods = prods.filter(p => p.cat == posFilterCat);
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today());
@@ -3826,7 +3828,7 @@ function renderPosGrid(search = '') {
       ${iconHtml}
       <div class="p-name">${p.nombre}</div>
       <div class="p-price">${sol(precioMostrar)} ${promoTag}</div>
-      <div class="p-stock">Stock: ${p.stock} ${p.unidad}</div>
+      <div class="p-stock">Stock: ${stockEnSede(p)} ${p.unidad}</div>
     </div>`;
   }).join('') || '<p style="color:var(--gray-400);font-size:0.85rem;padding:1rem">Sin productos</p>';
 }
@@ -3841,7 +3843,7 @@ function _posEnterScan() {
   if (!s) return;
   
   const matches = DB.productos.filter(p =>
-    p.stock > 0 &&
+    (p.esCombo || stockEnSede(p) > 0) &&
     (!p.esCombo || p.promoActiva !== false) &&
     (_norm(p.codigo||'') === _norm(s) || _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)))
   );
@@ -3866,7 +3868,7 @@ function _mobPosEnterScan() {
   if (!s) return;
   
   const matches = DB.productos.filter(p =>
-    p.stock > 0 &&
+    (p.esCombo || stockEnSede(p) > 0) &&
     (!p.esCombo || p.promoActiva !== false) &&
     (_norm(p.codigo||'') === _norm(s) || _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)))
   );
@@ -3891,7 +3893,7 @@ function addToCart(prodId) {
   if (prod.esCombo && prod.componentes) {
     for (const comp of prod.componentes) {
       const cp = DB.productos.find(x => x.id === comp.prodId);
-      if (!cp || cp.stock < comp.cant) {
+      if (!cp || stockEnSede(cp) < comp.cant) {
         alert(`Stock insuficiente de "${cp?.nombre || 'componente'}" para armar este pack`);
         return;
       }
@@ -3902,7 +3904,7 @@ function addToCart(prodId) {
   const precio = promo ? promo.precioPromo : prod.precio;
   const existing = cart.find(i => i.prodId === prodId);
   if (existing) {
-    if (existing.cant >= prod.stock) { alert('Stock insuficiente'); return; }
+    if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
   } else {
     cart.push({ prodId, nombre: prod.nombre, precio, cant: prod.tipo === 'granel' ? 0.5 : 1, tipo: prod.tipo, unidad: prod.unidad });
@@ -3937,7 +3939,7 @@ function renderCart() {
 function changeQty(i, delta) {
   const prod = DB.productos.find(p => p.id === cart[i].prodId);
   const step = cart[i].tipo === 'granel' ? 0.25 : 1;
-  cart[i].cant = Math.max(step, Math.min(prod ? prod.stock : 999, cart[i].cant + delta * step));
+  cart[i].cant = Math.max(step, Math.min(prod ? stockEnSede(prod) : 999, cart[i].cant + delta * step));
   renderCart(); calcTotal();
 }
 
@@ -3945,7 +3947,7 @@ function setGranelQty(i, val) {
   if (i >= cart.length) return;
   const cant = parseFloat(val) || 0.01;
   const prod = DB.productos.find(p => p.id === cart[i].prodId);
-  const max = prod ? prod.stock : 999;
+  const max = prod ? stockEnSede(prod) : 999;
   cart[i].cant = Math.max(0.01, Math.min(max, parseFloat(cant.toFixed(2))));
   // Actualizar precio del ítem sin re-renderizar el carrito completo
   const cartItems = document.querySelectorAll('.cart-item');
@@ -4137,14 +4139,15 @@ function procesarVenta() {
     }
 
     const productos = JSON.parse(JSON.stringify(prodData.productos || []));
+    const _sedeVenta = currentUserSedeId || 'principal';
     cartSnapshot.forEach(item => {
       const prod = productos.find(p => p.id === item.prodId);
       if (prod) {
-        if (!prod.esCombo) prod.stock = Math.max(0, Math.round((prod.stock - item.cant) * 1000) / 1000);
+        if (!prod.esCombo) ajustarStockSede(prod, -item.cant, _sedeVenta);
         if (prod.esCombo && prod.componentes) {
           prod.componentes.forEach(comp => {
             const cp = productos.find(x => x.id === comp.prodId);
-            if (cp) cp.stock = Math.max(0, Math.round((cp.stock - comp.cant * item.cant) * 1000) / 1000);
+            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant), _sedeVenta);
           });
         }
       }
@@ -4255,14 +4258,15 @@ function cobrarFiado() {
     }
 
     const productos = JSON.parse(JSON.stringify(prodData.productos || []));
+    const _sedeVenta = currentUserSedeId || 'principal';
     cartSnapshot.forEach(item => {
       const prod = productos.find(p => p.id === item.prodId);
       if (prod) {
-        if (!prod.esCombo) prod.stock = Math.max(0, Math.round((prod.stock - item.cant) * 1000) / 1000);
+        if (!prod.esCombo) ajustarStockSede(prod, -item.cant, _sedeVenta);
         if (prod.esCombo && prod.componentes) {
           prod.componentes.forEach(comp => {
             const cp = productos.find(x => x.id === comp.prodId);
-            if (cp) cp.stock = Math.max(0, Math.round((cp.stock - comp.cant * item.cant) * 1000) / 1000);
+            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant), _sedeVenta);
           });
         }
       }
@@ -4446,9 +4450,32 @@ if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.c
 
 function exportInventario() { alert('Función de exportación: En la versión conectada a Google Sheets, los datos se exportan automáticamente.'); }
 
+// ── Fase 6 arquitectura multi-sede: stock por sede ──
+// ajustarStockSede() es el UNICO lugar que muta stock — así prod.stock (total consolidado,
+// usado por reportes y donde no importa la sede) nunca se desincroniza de stockPorSede (el dato real).
+function stockEnSede(prod, sede) {
+  if (!prod) return 0;
+  sede = sede || currentUserSedeId || 'principal';
+  if (!prod.stockPorSede) return sede === 'principal' ? (prod.stock || 0) : 0;
+  return prod.stockPorSede[sede] || 0;
+}
+function stockTotal(prod) {
+  if (!prod) return 0;
+  if (!prod.stockPorSede) return prod.stock || 0;
+  return Object.values(prod.stockPorSede).reduce((s,v) => s + (v||0), 0);
+}
+function ajustarStockSede(prod, delta, sede) {
+  if (!prod) return;
+  sede = sede || currentUserSedeId || 'principal';
+  if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock || 0 };
+  prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0) + delta) * 1000) / 1000);
+  prod.stock = stockTotal(prod);
+}
+
 function abrirModalProducto() {
   editingProductId = null;
   document.getElementById('modal-prod-titulo').textContent = 'Nuevo Producto';
+  document.getElementById('prod-stock-wrap').style.display = 'block';
   // Solo inputs/selects — NO incluir divs como prod-margen-cat-label
   ['prod-nombre','prod-costo','prod-precio','prod-stock','prod-venc','prod-codigo','prod-precio-sugerido'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = '';
@@ -4478,7 +4505,7 @@ function editarProducto(id) {
   document.getElementById('prod-unidad').value = p.unidad;
   document.getElementById('prod-costo').value = p.costo;
   document.getElementById('prod-precio').value = p.precio;
-  document.getElementById('prod-stock').value = p.stock;
+  document.getElementById('prod-stock-wrap').style.display = 'none';
   document.getElementById('prod-stock-min').value = p.stockMin;
   document.getElementById('prod-venc').value = p.venc || '';
   document.getElementById('prod-codigo').value = p.codigo;
@@ -4827,16 +4854,16 @@ function guardarProducto() {
   const cat = parseInt(document.getElementById('prod-cat').value);
   const costo = parseFloat(document.getElementById('prod-costo').value);
   const precio = parseFloat(document.getElementById('prod-precio').value);
- const stockRaw = parseFloat(document.getElementById('prod-stock').value);
-const stock = isNaN(stockRaw) ? 0 : Math.round(stockRaw * 1000) / 1000;
-  if (!nombre || !cat || isNaN(costo) || isNaN(precio) || isNaN(stock)) { alert('Completa los campos obligatorios'); return; }
+  if (!nombre || !cat || isNaN(costo) || isNaN(precio)) { alert('Completa los campos obligatorios'); return; }
+
+  const existente = editingProductId ? DB.productos.find(p => p.id === editingProductId) : null;
 
   const prod = {
     id: editingProductId || getId(),
     nombre, cat,
     tipo: document.getElementById('prod-tipo').value,
     unidad: document.getElementById('prod-unidad').value,
-    costo, precio, stock,
+    costo, precio,
     stockMin: parseFloat(document.getElementById('prod-stock-min').value) || 5,
     venc: document.getElementById('prod-venc').value,
     codigo: document.getElementById('prod-codigo').value || '7' + getId().toString().slice(-12),
@@ -4844,10 +4871,21 @@ const stock = isNaN(stockRaw) ? 0 : Math.round(stockRaw * 1000) / 1000;
     imagen: document.getElementById('prod-img-data').value || ''
   };
 
-  if (editingProductId) {
+  if (existente) {
+    // Fase 6: el stock NUNCA se toca desde este formulario al editar — se preserva tal cual.
+    // Cambios de stock van por boleta (compra), merma (pérdida) o inventario mensual (conteo físico),
+    // así queda auditado y atribuido a la sede correcta — no un número que se pisa a mano.
+    prod.stockPorSede = existente.stockPorSede;
+    prod.stock = existente.stock;
     const idx = DB.productos.findIndex(p => p.id === editingProductId);
     DB.productos[idx] = prod;
   } else {
+    // Nuevo producto: el stock inicial ingresado queda en la sede de quien lo crea.
+    const stockRaw = parseFloat(document.getElementById('prod-stock').value);
+    const stockInicial = isNaN(stockRaw) ? 0 : Math.round(stockRaw * 1000) / 1000;
+    const sede = currentUserSedeId || 'principal';
+    prod.stockPorSede = { [sede]: stockInicial };
+    prod.stock = stockInicial;
     DB.productos.push(prod);
   }
   fbGuardarProductos();
