@@ -1399,12 +1399,12 @@ background: #F5F3FF;
             <div class="stat-value" id="dash-rent">S/ 0.00</div>
             <div class="stat-sub">neta de costos</div>
           </div>
-          <div class="stat-card orange">
+          <div class="stat-card orange" style="cursor:pointer" onclick="irAStockBajo()">
             <div class="stat-label">Stock bajo</div>
             <div class="stat-value" id="dash-stock-bajo">0</div>
             <div class="stat-sub">productos</div>
           </div>
-          <div class="stat-card red">
+          <div class="stat-card red" style="cursor:pointer" onclick="irAVencimientos()">
             <div class="stat-label">Vencimientos</div>
             <div class="stat-value" id="dash-vencimientos">0</div>
             <div class="stat-sub">próximos 7 días</div>
@@ -3648,6 +3648,18 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   else document.getElementById('bday-banner').style.display='none';
 
   renderChartVentas();
+}
+
+function irAStockBajo() {
+  navigate('inventario');
+  document.getElementById('inv-estado').value = 'bajo';
+  filterInventario();
+}
+
+function irAVencimientos() {
+  navigate('inventario');
+  document.getElementById('inv-estado').value = 'vence';
+  filterInventario();
 }
 
 function renderChartVentas() {
