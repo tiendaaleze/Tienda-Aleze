@@ -1292,6 +1292,9 @@ background: #F5F3FF;
     <div id="bday-banner" style="display:none;background:rgba(255,255,255,.2);border-radius:8px;padding:.3rem .7rem;font-size:.75rem;color:#fff;cursor:pointer;margin-right:.5rem" onclick="showAlerts()">🎂 <span id="bday-msg"></span></div>
     <div class="alert-badge" onclick="showAlerts()" id="alert-count" title="Alertas">0</div>
     <div class="header-user">
+      <select id="sede-admin-selector" style="display:none;font-size:.75rem;padding:.25rem .4rem;border-radius:6px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;margin-right:.5rem" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos y caja se registran ahí">
+        <option value="" style="color:#000">Mi sede</option>
+      </select>
       <div class="avatar" id="header-avatar">JC</div>
       <span id="header-username">Jose Carlos</span>
       <span id="header-role" style="font-size:0.75rem;opacity:0.75">(Admin)</span>
@@ -1777,6 +1780,7 @@ background: #F5F3FF;
   <!-- CAJA -->
       <div id="page-caja" class="page">
         <div class="page-title">Control de Caja</div>
+        <div id="caja-sede-banner" style="display:none;background:#fff3cd;color:#856404;padding:.5rem .75rem;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:1rem"></div>
         <div id="caja-cerrada">
           <div class="card" style="max-width:420px;margin:2rem auto;text-align:center">
             <div style="font-size:3rem;margin-bottom:1rem">💰</div>
@@ -3128,6 +3132,23 @@ let currentUser = null;
 let currentRole = null;
 let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del cajero logueado
 
+// ── Sede administrativa (más allá de offline): sede 2 no tiene admin propio, así que el admin
+// necesita poder operar (boletas, mermas, productos nuevos, gastos, caja) para cualquier sede
+// sin que eso cambie currentUserSedeId — sus VENTAS siguen siendo de su sede física real.
+let _sedeAdminOverride = null;
+function sedeAdminEfectiva() {
+  if (currentRole === 'admin' && _sedeAdminOverride) return _sedeAdminOverride;
+  return currentUserSedeId || 'principal';
+}
+function cambiarSedeAdmin(sede) {
+  _sedeAdminOverride = sede || null;
+  try {
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    if (pageId === 'caja') renderCaja();
+  } catch(e) {}
+}
+
 // Extended DB with new modules
 const DB_EXT = {
   sueldos: {'Jose Carlos':0,'Shessira':0,'José Luis':0},
@@ -3238,12 +3259,11 @@ function _cajaSedeEnvuelta(sede) {
 }
 Object.defineProperty(DB, 'caja', {
   get() {
-    const sede = (typeof currentUserSedeId !== 'undefined' && currentUserSedeId) || 'principal';
-    return _cajaSedeEnvuelta(sede);
+    return _cajaSedeEnvuelta(sedeAdminEfectiva());
   },
   set(v) {
     // Reasignación completa (abrir/cerrar caja) — no es un incremento, es un estado nuevo.
-    const sede = (typeof currentUserSedeId !== 'undefined' && currentUserSedeId) || 'principal';
+    const sede = sedeAdminEfectiva();
     DB._cajas[sede] = _crearCajaProxy(sede, v);
     if (fbFS) fbFS.collection('caja').doc(String(sede)).set(v).catch(e => console.warn('No se pudo sincronizar caja/'+sede, e));
     try { fbGuardar(); } catch(e) {}
@@ -3540,6 +3560,21 @@ currentRole = role;
   document.getElementById('header-username').textContent = name;
   document.getElementById('header-avatar').textContent = name.substring(0,2).toUpperCase();
   document.getElementById('header-role').textContent = role === 'admin' ? '(Admin)' : '(Cajero)';
+
+  // Sede administrativa: solo admin la ve — sede 2 no tiene admin propio, así que el admin
+  // necesita poder operar (boletas, mermas, productos nuevos, gastos, caja) para cualquier sede.
+  const _selSedeAdmin = document.getElementById('sede-admin-selector');
+  if (_selSedeAdmin) {
+    if (role === 'admin') {
+      const _miSede = currentUserSedeId || 'principal';
+      const _otrasSedes = ['principal', 'Tienda Aleze II'].filter(s => s !== _miSede);
+      _selSedeAdmin.innerHTML = `<option value="" style="color:#000">Mi sede (${_miSede})</option>` +
+        _otrasSedes.map(s => `<option value="${s}" style="color:#000">${s}</option>`).join('');
+      _selSedeAdmin.style.display = 'inline-block';
+    } else {
+      _selSedeAdmin.style.display = 'none';
+    }
+  }
 
   if (role !== 'admin') {
     document.getElementById('admin-nav').style.display = 'none';
@@ -4951,7 +4986,7 @@ function guardarProducto() {
     // Usa ajustarStockSede() (no asignación directa) para que también sincronice a stock/{id}.
     const stockRaw = parseFloat(document.getElementById('prod-stock').value);
     const stockInicial = isNaN(stockRaw) ? 0 : Math.round(stockRaw * 1000) / 1000;
-    const sede = currentUserSedeId || 'principal';
+    const sede = sedeAdminEfectiva();
     prod.stockPorSede = {};
     prod.stock = 0;
     DB.productos.push(prod);
@@ -5508,7 +5543,7 @@ _norm(p.nombre).includes(_norm(q)) || _norm(p.codigo||'').includes(_norm(q))
   } else {
     sug.innerHTML = matches.map(p =>
       `<div onclick="_boletaAgregarProd(${p.id})" style="padding:.4rem .75rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
-        <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock aquí: ${stockEnSede(p)} | S/${p.costo}</span>
+        <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock aquí: ${stockEnSede(p, sedeAdminEfectiva())} | S/${p.costo}</span>
        </div>`
     ).join('') + crearLink;
   }
@@ -5596,7 +5631,7 @@ function _boletaRenderLista() {
 const _unidadNombre = { und:'unidades', kg:'kg', g:'g', L:'L', ml:'ml' };
 el.innerHTML = _boletaProductos.map((p, i) => {
     const prod = DB.productos.find(x => x.id === p.prodId);
-    const stockActual = prod ? stockEnSede(prod) : 0;
+    const stockActual = prod ? stockEnSede(prod, sedeAdminEfectiva()) : 0;
     const stockGlobalAntes = prod ? stockTotal(prod) : 0;
     const costoActual = prod ? prod.costo : 0;
     const cantNueva = p.cantidad || 0;
@@ -5695,13 +5730,15 @@ function guardarBoleta() {
       : '';
     if (!confirm(`📦 Confirmar actualización de stock:\n\n${resumen}\n\nTotal productos: S/${totalProductos.toFixed(2)}${alertaDif}\n\n¿Continuar?`)) return;
     // ── Actualizar stock y costo (Costo Promedio Ponderado — no sobreescribe, mezcla con lo que ya había) ──
+    // sedeAdminEfectiva(): sede 2 no tiene admin propio, esto deja recibir mercadería ahí sin engañar al stock.
+    const _sedeBoleta = sedeAdminEfectiva();
     _boletaProductos.forEach(p => {
       const prod = DB.productos.find(x => x.id === p.prodId);
       if (!prod) return;
       const stockGlobalAntes = stockTotal(prod);
       const costoNuevo = p.esBonif ? 0 : (p.costo || 0);
       const costoPromedio = _boletaCostoPromedio(stockGlobalAntes, prod.costo || 0, p.cantidad, costoNuevo);
-      ajustarStockSede(prod, p.cantidad);
+      ajustarStockSede(prod, p.cantidad, _sedeBoleta);
       prod.costo = Math.round(costoPromedio * 10000) / 10000;
       if (p.venc) prod.venc = p.venc;
     });
@@ -5716,7 +5753,8 @@ function guardarBoleta() {
     desc:     document.getElementById('bol-desc').value,
     url:      document.getElementById('bol-url').value.trim(),
     productos: _boletaProductos.map(p => ({ prodId: p.prodId, nombre: p.nombre, cantidad: p.cantidad, esBonif: p.esBonif })),
-    pagado: 0, pagos: []
+    pagado: 0, pagos: [],
+    sedeId: sedeAdminEfectiva()
   };
   prov.boletas.push(_nuevaBoleta);
   fbSincronizarBoleta(_nuevaBoleta, prov.id);
@@ -6467,6 +6505,15 @@ function compartirHistorialWhatsapp() {
 
 // ===================== CAJA =====================
 function renderCaja() {
+  const _banner = document.getElementById('caja-sede-banner');
+  if (_banner) {
+    if (currentRole === 'admin' && _sedeAdminOverride) {
+      _banner.style.display = 'block';
+      _banner.textContent = `⚠️ Estás operando la caja de "${_sedeAdminOverride}" — no la tuya. Tus ventas en POS siguen siendo de tu sede real. Cambia esto arriba, junto a tu nombre.`;
+    } else {
+      _banner.style.display = 'none';
+    }
+  }
   if (DB.caja.abierta) {
     document.getElementById('caja-cerrada').style.display = 'none';
     document.getElementById('caja-abierta').style.display = 'block';
@@ -6753,7 +6800,7 @@ function confirmarTraslado() {
 function abrirModalMerma() {
   editingMermaId = null;
   const sel = document.getElementById('merma-prod');
-  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p, sedeAdminEfectiva())} ${p.unidad})</option>`).join('');
   document.getElementById('merma-cant').value = '';
   document.getElementById('merma-obs').value = '';
   abrirModal('modal-merma');
@@ -6764,7 +6811,7 @@ function editarMerma(id) {
   const m = DB.mermas.find(x => x.id === id);
   editingMermaId = id;
   const sel = document.getElementById('merma-prod');
-  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p, sedeAdminEfectiva())} ${p.unidad})</option>`).join('');
   sel.value = m.prodId;
   document.getElementById('merma-cant').value = m.cant;
   document.getElementById('merma-motivo-sel').value = m.motivo;
@@ -6774,6 +6821,7 @@ function editarMerma(id) {
 
 function guardarMerma() {
   if (currentRole !== 'admin') return;
+  const _sede = sedeAdminEfectiva();
   const prodId = parseInt(document.getElementById('merma-prod').value);
   const cant = parseFloat(document.getElementById('merma-cant').value) || 0;
   const motivo = document.getElementById('merma-motivo-sel').value;
@@ -6789,19 +6837,19 @@ if (editingMermaId) {
     const oldCant = old.cant;
     const oldCosto = oldProd ? oldProd.costo : 0;
     if (oldProd) ajustarStockSede(oldProd, oldCant, old.sedeId);
-    if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible en esta sede'); if(oldProd) ajustarStockSede(oldProd, -oldCant, old.sedeId); return; }
+    if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); if(oldProd) ajustarStockSede(oldProd, -oldCant, old.sedeId); return; }
     const costoAnterior = oldCosto * oldCant;
     const costoNuevo = prod.costo * cant;
     const diferencia = costoNuevo - costoAnterior;
-    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = currentUserSedeId || 'principal';
-    ajustarStockSede(prod, -cant);
+    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede;
+    ajustarStockSede(prod, -cant, _sede);
     fbSincronizarMerma(old);
 fbGuardar(); fbGuardarProductos();
   } else {
-    if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible en esta sede'); return; }
-  const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: currentUserSedeId || 'principal' };
+    if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
+  const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede };
     DB.mermas.push(nuevaMerma);
-    ajustarStockSede(prod, -cant);
+    ajustarStockSede(prod, -cant, _sede);
     fbSincronizarMerma(nuevaMerma);
     fbGuardar(); fbGuardarProductos();
   }
@@ -8056,7 +8104,7 @@ function guardarGasto() {
     }
   } else {
     // NUEVO
-    const _nuevoGasto = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: currentUserSedeId || 'principal' };
+    const _nuevoGasto = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sedeAdminEfectiva() };
     DB_EXT.gastos.push(_nuevoGasto);
     fbSincronizarGasto(_nuevoGasto);
     ensureCajaAbierta();
