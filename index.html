@@ -222,12 +222,18 @@ background: #F5F3FF;
   .stat-num { display:block;font-size:1.1rem;font-weight:600;color:var(--primary); }
   .stat-num.warm { color:#B45309; }
   .stat-lbl { display:block;font-size:.7rem;color:var(--gray-500); }
-  .btn-personal {
-    width:100%;padding:.6rem 1rem;background:transparent;color:#6D28D9;
-    border:.5px solid #C4B5FD;border-radius:var(--radius);
-    font-size:.82rem;font-weight:500;cursor:pointer;transition:background .2s;
+  .btn-personal-icon {
+    position:fixed;top:14px;right:14px;width:38px;height:38px;
+    border-radius:50%;background:rgba(255,255,255,.65);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    border:1px solid rgba(0,0,0,.06);color:#475569;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;opacity:.55;z-index:50;
+    transition:opacity .2s,transform .15s,background .2s;
   }
-  .btn-personal:hover { background:#F5F3FF; }
+  .btn-personal-icon:hover, .btn-personal-icon:active {
+    opacity:1;background:rgba(255,255,255,.92);transform:scale(1.06);
+  }
   .btn-volver { background:none;border:none;color:var(--gray-400);font-size:.8rem;margin-top:.6rem;cursor:pointer; }
 
   /* LAYOUT */
@@ -1272,8 +1278,15 @@ background: #F5F3FF;
       <div class="stat-item"><span class="stat-num warm" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num">2</span><span class="stat-lbl">Sedes</span></div>
     </div>
-    <button type="button" class="btn-personal" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">🔒 Acceso personal</button>
     <div style="color:var(--gray-400);font-size:.7rem;margin-top:.5rem">v1.0.1</div>
+    <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="7.5" cy="15.5" r="5.5"></circle>
+        <path d="M21 2l-9.6 9.6"></path>
+        <path d="M15.5 7.5L18 10"></path>
+        <path d="M18.5 5.5L21 8"></path>
+      </svg>
+    </button>
   </div>
 
   <!-- PANEL 2: PIN -->
