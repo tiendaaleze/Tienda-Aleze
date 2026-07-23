@@ -3132,6 +3132,46 @@ let currentUser = null;
 let currentRole = null;
 let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del cajero logueado
 
+// ── Clientes offline-seguro: mismo Proxy que caja/stock, pero por CLIENTE, no por sede ──
+// (la deuda de un cliente es con el negocio completo — ya se confirmó, no hace falta separar).
+// Solo 5 puntos de entrada real (3 altas + 2 cargas de Firestore) necesitan envolver; las 18
+// mutaciones existentes (cli.deuda = X, etc.) quedan cubiertas solas, sin tocarlas.
+const _CLIENTE_CAMPOS_INCREMENTALES = ['deuda', 'compras', 'total', 'puntos'];
+const _clienteProxiesCreados = new WeakSet();
+function fbAjustarCliente(id, campo, delta) {
+  if (!fbFS || id == null || !delta) return;
+  fbFS.collection('clientes').doc(String(id)).set(
+    { [campo]: firebase.firestore.FieldValue.increment(delta) },
+    { merge: true }
+  ).catch(e => console.warn('fbAjustarCliente: no se pudo ajustar clientes/' + id, e));
+}
+function fbSincronizarClienteCampo(id, campo, valor) {
+  if (!fbFS || id == null) return;
+  fbFS.collection('clientes').doc(String(id)).set({ [campo]: valor }, { merge: true })
+    .catch(e => console.warn('fbSincronizarClienteCampo: no se pudo actualizar clientes/' + id, e));
+}
+function _envolverCliente(c) {
+  if (!c || _clienteProxiesCreados.has(c)) return c;
+  const proxy = new Proxy(c, {
+    set(target, prop, value) {
+      if (_CLIENTE_CAMPOS_INCREMENTALES.includes(prop) && typeof value === 'number' && typeof target[prop] === 'number') {
+        const delta = Math.round((value - target[prop]) * 100) / 100;
+        target[prop] = value;
+        if (delta !== 0) fbAjustarCliente(target.id, prop, delta);
+      } else {
+        target[prop] = value;
+        fbSincronizarClienteCampo(target.id, prop, value);
+      }
+      return true;
+    }
+  });
+  _clienteProxiesCreados.add(proxy);
+  return proxy;
+}
+function _envolverTodosClientes() {
+  if (Array.isArray(DB.clientes)) DB.clientes = DB.clientes.map(c => _envolverCliente(c));
+}
+
 // ── Sede administrativa (más allá de offline): sede 2 no tiene admin propio, así que el admin
 // necesita poder operar (boletas, mermas, productos nuevos, gastos, caja) para cualquier sede
 // sin que eso cambie currentUserSedeId — sus VENTAS siguen siendo de su sede física real.
@@ -3497,6 +3537,7 @@ async function doLogin() {
                           'proveedores','promociones','config',
                           'inventariosMensuales','historialVentas'];
         camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
+        _envolverTodosClientes();
         if (data.config && data.config.passwords) Object.assign(PASSWORDS, data.config.passwords);
         // Caja por sede: formato nuevo (cajas) si existe, si no migra el formato viejo (caja unica -> principal)
         if (data.cajas) DB._cajas = data.cajas;
@@ -5883,7 +5924,7 @@ function guardarCliente() {
     const c = DB.clientes.find(x => x.id === editingCliId);
     Object.assign(c, data);
   } else {
-    DB.clientes.push({ id: getId(), ...data, compras: 0, total: 0, deuda: 0 });
+    DB.clientes.push(_envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deuda: 0 }));
   }
   fbGuardar();
   cerrarModal('modal-cliente');
@@ -7942,7 +7983,7 @@ function abrirCliRapido() {
 function guardarCliRapido() {
   const nombre = document.getElementById('cr-nombre').value.trim();
   if (!nombre) { alert('Ingresa un nombre'); return; }
-  const c = { id: getId(), nombre, alias: nombre, tel: document.getElementById('cr-tel').value, dir: '', cumple: '', compras: 0, total: 0, deuda: 0 };
+  const c = _envolverCliente({ id: getId(), nombre, alias: nombre, tel: document.getElementById('cr-tel').value, dir: '', cumple: '', compras: 0, total: 0, deuda: 0 });
   DB.clientes.push(c);
   fbGuardar();
   updatePosClientes();
@@ -9538,6 +9579,7 @@ function fbEscuchar() {
     const camposOp = ['ventas','clientes','fiados','mermas','movimientos',
                       'proveedores','promociones','inventariosMensuales','historialVentas'];
     camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
+    _envolverTodosClientes();
     if (data.config) DB.config = { ...DB.config, ...data.config };
     // Caja por sede: mismo criterio que en doLogin
     if (data.cajas) DB._cajas = data.cajas;
@@ -10744,9 +10786,9 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       const telNorm = (p.telefono||p.clienteTel||'').replace(/\s/g,'');
       let cli = telNorm ? DB.clientes.find(c=>(c.tel||'').replace(/\s/g,'')=== telNorm) : null;
       if (!cli && (p.clienteNombre||'').length >= 2) {
-        cli = { id: getId(), nombre: p.clienteNombre, alias: p.clienteNombre,
+        cli = _envolverCliente({ id: getId(), nombre: p.clienteNombre, alias: p.clienteNombre,
                 tel: p.clienteTel||p.telefono||'', dir: p.clienteDir||'',
-                cumple: '', compras: 0, total: 0, deuda: 0 };
+                cumple: '', compras: 0, total: 0, deuda: 0 });
         DB.clientes.push(cli);
       }
 
