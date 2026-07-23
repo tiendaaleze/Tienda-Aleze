@@ -9035,6 +9035,9 @@ function eliminarPromo(id) {
   if (p && p.packProdId) {
     DB.productos = DB.productos.filter(x => x.id !== p.packProdId);
     fbGuardarProductos();
+    // Limpia el documento huérfano en stock/{id} — el pack no trackea stock real (se arma
+    // de sus componentes), pero el doc igual quedaría abandonado si no se borra explícito.
+    if (fbFS) fbFS.collection('stock').doc(String(p.packProdId)).delete().catch(()=>{});
   }
   DB.promociones = DB.promociones.filter(x => x.id !== id);
   fbGuardar();
