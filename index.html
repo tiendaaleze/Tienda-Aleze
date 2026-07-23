@@ -11400,6 +11400,114 @@ function tndGetClienteIdReal() {
   return null;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Verificación SMS de teléfono (Firebase Phone Auth) — CONSTRUIDA COMPLETA,
+// pero dormida detrás de DB.config.requiereVerificacionSMS (false por defecto).
+// Con el flag apagado, nada de esto se llama — tndResolverCliente() sigue
+// siendo el único mecanismo activo. Cuando exista pasarela de pago real,
+// activar el flag alcanza para que esta verificación se vuelva obligatoria.
+// ══════════════════════════════════════════════════════════════════════════
+let _tndRecaptchaVerifier = null;
+let _tndConfirmationResult = null;
+
+function _tndFormatearTelefonoPeru(tel) {
+  const limpio = (tel || '').replace(/\D/g, '');
+  if (limpio.startsWith('51') && limpio.length === 11) return '+' + limpio;
+  return '+51' + limpio.replace(/^51/, '');
+}
+
+// Envía el código por SMS al teléfono dado. Requiere fbAuth (ya inicializado para login
+// de staff — se reutiliza, no es un servicio aparte) y el contenedor reCAPTCHA invisible.
+function tndEnviarCodigoSMS(tel) {
+  if (!fbAuth) { alert('Servicio no disponible por el momento. Intenta más tarde.'); return Promise.resolve(false); }
+  const telE164 = _tndFormatearTelefonoPeru(tel);
+  try {
+    if (!_tndRecaptchaVerifier) {
+      _tndRecaptchaVerifier = new firebase.auth.RecaptchaVerifier('tnd-recaptcha-container', { size: 'invisible' });
+    }
+    return fbAuth.signInWithPhoneNumber(telE164, _tndRecaptchaVerifier)
+      .then(confirmationResult => {
+        _tndConfirmationResult = confirmationResult;
+        return true;
+      })
+      .catch(e => {
+        console.warn('[SMS] Error al enviar código:', e);
+        alert('No se pudo enviar el código. Verifica el número e intenta de nuevo.\n' + (e.message || ''));
+        return false;
+      });
+  } catch(e) {
+    console.warn('[SMS] Error de reCAPTCHA:', e);
+    alert('No se pudo iniciar la verificación. Intenta de nuevo.');
+    return Promise.resolve(false);
+  }
+}
+
+// Confirma el código de 6 dígitos que el cliente recibió por SMS.
+function tndVerificarCodigoSMS(codigo) {
+  if (!_tndConfirmationResult) { alert('Primero solicita el código.'); return Promise.resolve(false); }
+  return _tndConfirmationResult.confirm(codigo)
+    .then(() => {
+      try { localStorage.setItem('aleze_tnd_sms_verificado', '1'); } catch(e) {}
+      _tndConfirmationResult = null;
+      return true;
+    })
+    .catch(e => {
+      console.warn('[SMS] Código incorrecto:', e);
+      alert('Código incorrecto. Intenta de nuevo.');
+      return false;
+    });
+}
+
+// Sesión larga (acordado): una vez verificado en este equipo, no se vuelve a pedir código
+// salvo que el propio flujo de pago (a futuro) lo exija explícitamente aparte.
+function tndTelefonoYaVerificado() {
+  try { return localStorage.getItem('aleze_tnd_sms_verificado') === '1'; } catch(e) { return false; }
+}
+
+// ── Envoltorio de activación: hoy (flag apagado) llama directo a tndResolverCliente().
+// El día que el flag esté en true, exige verificación SMS antes de resolver la identidad,
+// salvo que este equipo ya la haya hecho antes (sesión larga). callback recibe el clienteId.
+function tndResolverClienteConVerificacion(nombre, tel, callback) {
+  if (!DB.config.requiereVerificacionSMS || tndTelefonoYaVerificado()) {
+    callback(tndResolverCliente(nombre, tel));
+    return;
+  }
+  _tndPendienteNombre = nombre;
+  _tndPendienteTel = tel;
+  _tndPendienteCallback = callback;
+  _tndStep = 'verificar-sms';
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+}
+let _tndPendienteNombre = null, _tndPendienteTel = null, _tndPendienteCallback = null;
+
+function tndSolicitarCodigoUI() {
+  const tel = _tndPendienteTel;
+  document.getElementById('tnd-sms-status').textContent = '⏳ Enviando código...';
+  tndEnviarCodigoSMS(tel).then(ok => {
+    if (ok) {
+      document.getElementById('tnd-sms-status').textContent = '✅ Código enviado a ' + tel;
+      document.getElementById('tnd-sms-paso2').style.display = 'block';
+    } else {
+      document.getElementById('tnd-sms-status').textContent = '';
+    }
+  });
+}
+
+function tndConfirmarCodigoUI() {
+  const codigo = document.getElementById('tnd-sms-codigo')?.value.trim();
+  if (!codigo || codigo.length < 4) { alert('Ingresa el código recibido.'); return; }
+  tndVerificarCodigoSMS(codigo).then(ok => {
+    if (ok && _tndPendienteCallback) {
+      const clienteId = tndResolverCliente(_tndPendienteNombre, _tndPendienteTel);
+      const cb = _tndPendienteCallback;
+      _tndPendienteNombre = _tndPendienteTel = _tndPendienteCallback = null;
+      cb(clienteId);
+    }
+  });
+}
+
 // Guarda el carrito actual en localStorage
 function tndSaveCart() {
   try {
@@ -11643,6 +11751,7 @@ function _renderTienda() {
 }
 </style>
 
+<div id="tnd-recaptcha-container"></div>
 <div class="tnd-header">
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.75rem;align-items:center">
@@ -11885,9 +11994,11 @@ function tndIdentificarParaPuntos() {
   if (!nombre || nombre.length < 3) { alert('Ingresa tu nombre (mínimo 3 caracteres)'); return; }
   const telLimpio = (tel||'').replace(/\s/g,'');
   if (!telLimpio || telLimpio.length < 7) { alert('Ingresa tu número de teléfono (mínimo 7 dígitos)'); return; }
-  tndResolverCliente(nombre, telLimpio);
-  tndSaveUser(nombre, telLimpio);
-  tndRenderPanel();
+  tndResolverClienteConVerificacion(nombre, telLimpio, () => {
+    tndSaveUser(nombre, telLimpio);
+    _tndStep = 'puntos';
+    tndRenderPanel();
+  });
 }
 
 function tndCerrarPanel() {
@@ -11927,6 +12038,35 @@ function tndRenderPanel() {
     footer.innerHTML = `
       <button class="tnd-btn tnd-btn-primary" onclick="tndIrDatos()">Continuar → Datos</button>
       <button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>`;
+  }
+
+  if (_tndStep === 'verificar-sms') {
+    titulo.textContent = '🔒 Verificar tu número';
+    body.innerHTML = `
+      <p style="font-size:.82rem;color:#6b7280;margin-bottom:1rem">Por seguridad, confirmamos tu número antes de continuar.</p>
+      <div class="tnd-form-group">
+        <label>Te enviaremos un código a:</label>
+        <div style="font-weight:700;padding:.5rem 0">${_tndPendienteTel||''}</div>
+      </div>
+      <div id="tnd-sms-status" style="font-size:.82rem;color:#6b7280;margin:.5rem 0"></div>
+      <div id="tnd-sms-paso2" style="display:none" class="tnd-form-group">
+        <label>Código recibido</label>
+        <input type="text" id="tnd-sms-codigo" placeholder="123456" maxlength="6" inputmode="numeric" />
+      </div>`;
+    footer.innerHTML = `
+      <button class="tnd-btn tnd-btn-primary" onclick="tndSolicitarCodigoUI()">Enviar código</button>
+      <button class="tnd-btn tnd-btn-primary" style="display:none" id="tnd-sms-btn-verificar" onclick="tndConfirmarCodigoUI()">Verificar</button>
+      <button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cancelar</button>`;
+    // Revela el botón de verificar recién cuando aparece el campo de código
+    setTimeout(() => {
+      const obs = new MutationObserver(() => {
+        const visible = document.getElementById('tnd-sms-paso2')?.style.display === 'block';
+        const btn = document.getElementById('tnd-sms-btn-verificar');
+        if (btn) btn.style.display = visible ? 'inline-block' : 'none';
+      });
+      const target = document.getElementById('tnd-sms-paso2');
+      if (target) obs.observe(target, { attributes: true, attributeFilter: ['style'] });
+    }, 0);
   }
 
   if (_tndStep === 'puntos') {
@@ -12105,6 +12245,14 @@ function tndEnviarPedido() {
  const subtotal = Math.round(_tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0) * 100) / 100;
   if (!subtotal || subtotal <= 0) {
     alert('El total del pedido no es válido'); return;
+  }
+
+  // ── Verificación SMS (dormida mientras el flag esté apagado) — si hace falta y
+  // todavía no se hizo en este equipo, se muestra y se vuelve a llamar esta misma
+  // función al terminar. El resto de tndEnviarPedido() no cambia en nada.
+  if (DB.config.requiereVerificacionSMS && !tndTelefonoYaVerificado()) {
+    tndResolverClienteConVerificacion(_tiendaUser.nombre, telLimpio, () => tndEnviarPedido());
+    return;
   }
 
   // ── Bloquear botón inmediatamente ────────────────────────────────────────
