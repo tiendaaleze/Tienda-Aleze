@@ -12569,32 +12569,78 @@ function confirmarCategoriasNuevasExcel() {
 <script>
 // ===================== BACKUP AUTOMÁTICO =====================
 let _backupTimer = null;
+// ── Respaldo completo: catálogo + las 9 colecciones propias, no solo aleze/db ──
+// Firestore limita cada documento a 1 MB — por eso el respaldo se guarda como VARIOS
+// documentos (uno principal + uno por colección), no todo apretado en uno solo. Ventas y
+// movimientos se acotan a 30 días (mismo criterio que la poda local); el resto va completo.
+const _BACKUP_COLECCIONES_COMPLETAS = ['boletas', 'fiados', 'mermas', 'gastos', 'stock', 'caja', 'clientes'];
+const _BACKUP_COLECCIONES_30DIAS = ['ventas', 'movimientos'];
+
+async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
+  if (!fbFS) return [];
+  try {
+    let query = fbFS.collection(nombreColeccion);
+    if (filtrarDesde) query = query.where('fecha', '>=', filtrarDesde);
+    const snap = await query.get();
+    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+  } catch (e) {
+    console.warn('_leerColeccionParaBackup: error en ' + nombreColeccion, e);
+    return [];
+  }
+}
+
+async function _ejecutarBackup() {
+  if (!fbFS || !currentUser) return;
+  const ahora = new Date();
+  const key = 'backup_' + ahora.toISOString().replace(/[:.]/g, '-').substring(0, 16);
+  const hace30dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  // Documento principal: aleze/db (legado) + catálogo completo — todo esto es chico, cabe en uno.
+  const payload = JSON.parse(JSON.stringify(DB));
+  delete payload.productos; delete payload.categorias; delete payload.pedidosOnline; delete payload.caja;
+  payload._productos = DB.productos;
+  payload._categorias = DB.categorias;
+  payload.cajas = DB._cajas; // ambas sedes, no solo la de quien está logueado
+  payload._backupTs = ahora.toISOString();
+  payload._backupUser = currentUser;
+  payload._backupColecciones = [..._BACKUP_COLECCIONES_COMPLETAS, ..._BACKUP_COLECCIONES_30DIAS];
+
+  try {
+    await fbFS.collection('aleze_backups').doc(key).set(payload);
+    // Un documento aparte por cada colección propia — evita el límite de 1 MB por documento.
+    const trabajos = [
+      ..._BACKUP_COLECCIONES_COMPLETAS.map(async col => {
+        const items = await _leerColeccionParaBackup(col);
+        return fbFS.collection('aleze_backups').doc(key + '__' + col).set({ items });
+      }),
+      ..._BACKUP_COLECCIONES_30DIAS.map(async col => {
+        const items = await _leerColeccionParaBackup(col, hace30dias);
+        return fbFS.collection('aleze_backups').doc(key + '__' + col).set({ items });
+      }),
+    ];
+    await Promise.all(trabajos);
+    console.log('[Backup] Guardado completo:', key);
+  } catch (e) {
+    console.warn('[Backup] Error:', e);
+    alert('⚠️ El respaldo automático de las ' + ahora.toLocaleTimeString('es-PE') + ' no se pudo guardar completo. Revisa tu conexión — el sistema lo reintentará en 30 minutos.');
+  }
+}
+
 function iniciarBackupAutomatico() {
   if (_backupTimer) clearInterval(_backupTimer);
-  _backupTimer = setInterval(() => {
-    if (!fbFS || !currentUser) return;
-    const ahora = new Date();
-    const key = 'backup_' + ahora.toISOString().replace(/[:.]/g, '-').substring(0, 16);
-    const payload = JSON.parse(JSON.stringify(DB));
-  delete payload.productos; delete payload.categorias; delete payload.pedidosOnline;
-    payload._backupTs = ahora.toISOString();
-    payload._backupUser = currentUser;
-    fbFS.collection('aleze_backups').doc(key).set(payload)
-      .then(() => console.log('[Backup] Guardado:', key))
-      .catch(e => {
-        console.warn('[Backup] Error:', e);
-        alert('⚠️ El respaldo automático de las ' + ahora.toLocaleTimeString('es-PE') + ' no se pudo guardar. Revisa tu conexión — el sistema lo reintentará en 30 minutos.');
-      });
-  }, 30 * 60 * 1000);
+  _backupTimer = setInterval(_ejecutarBackup, 30 * 60 * 1000);
 }
+
 function verBackups() {
   if (!fbFS) return;
   const el = document.getElementById('backup-lista');
   el.innerHTML = '⏳ Cargando respaldos...';
   fbFS.collection('aleze_backups').orderBy('_backupTs', 'desc').limit(10).get()
     .then(snap => {
-      if (snap.empty) { el.innerHTML = 'Sin respaldos disponibles aún.'; return; }
-      el.innerHTML = snap.docs.map(d => {
+      // Solo documentos principales (sin '__') — los de cada colección son satélites del principal.
+      const principales = snap.docs.filter(d => !d.id.includes('__'));
+      if (!principales.length) { el.innerHTML = 'Sin respaldos disponibles aún.'; return; }
+      el.innerHTML = principales.map(d => {
         const ts = new Date(d.data()._backupTs).toLocaleString('es-PE');
         const user = d.data()._backupUser || '?';
         return '<div style="display:flex;justify-content:space-between;align-items:center;padding:.35rem 0;border-bottom:1px solid var(--gray-100)"><span>📅 ' + ts + ' — ' + user + '</span><button type="button" class="btn btn-xs btn-danger" onclick="restaurarBackup(this.dataset.id)" data-id="' + d.id + '">↩️ Restaurar</button></div>';
@@ -12602,25 +12648,51 @@ function verBackups() {
     })
     .catch(e => { el.innerHTML = 'Error cargando respaldos.'; });
 }
-function restaurarBackup(id) {
-  if (!confirm('⚠️ ¿Restaurar este respaldo? Los datos actuales se reemplazarán.')) return;
-  fbFS.collection('aleze_backups').doc(id).get()
-    .then(doc => {
-      if (!doc.exists) { alert('Respaldo no encontrado.'); return; }
-      const data = doc.data();
-      delete data._backupTs; delete data._backupUser;
-      _fbLastWriteTs = Date.now();
-      _fbEscribiendo = true;
-      data._resetToken = true;
-      fbDocRef().set(data)
-        .then(() => {
-          setTimeout(() => { _fbEscribiendo = false; }, 300);
-          alert('✅ Respaldo restaurado correctamente.');
-          try { renderDashboard(); } catch(e) {}
-        })
-        .catch(e => { _fbEscribiendo = false; alert('Error al restaurar: ' + e.message); });
-    })
-    .catch(e => { alert('⚠️ No se pudo leer el respaldo. Revisa tu conexión e intenta de nuevo.\nCódigo: ' + (e.code || e.message || 'desconocido')); });
+
+async function restaurarBackup(id) {
+  if (!confirm('⚠️ ¿Restaurar este respaldo? Los datos actuales (catálogo, stock, ventas, caja, clientes y todo lo demás) se reemplazarán por completo.')) return;
+  try {
+    const doc = await fbFS.collection('aleze_backups').doc(id).get();
+    if (!doc.exists) { alert('Respaldo no encontrado.'); return; }
+    const data = doc.data();
+    const colecciones = data._backupColecciones || [];
+    delete data._backupTs; delete data._backupUser; delete data._backupColecciones;
+    const productos = data._productos || [];
+    const categorias = data._categorias || [];
+    delete data._productos; delete data._categorias;
+
+    _fbLastWriteTs = Date.now();
+    _fbEscribiendo = true;
+    data._resetToken = true;
+
+    // 1) Documento principal (legado + config)
+    await fbDocRef().set(data);
+    // 2) Catálogo completo (productos + categorías + stockPorSede, ya incluido en cada producto)
+    await fbProdDocRef().set({ productos, categorias, config: DB.config || {} });
+    // 3) Cada colección propia: vaciar la actual y volver a escribir lo respaldado
+    for (const col of colecciones) {
+      await _vaciarColeccion(col);
+      const satDoc = await fbFS.collection('aleze_backups').doc(id + '__' + col).get();
+      if (satDoc.exists) {
+        const items = satDoc.data().items || [];
+        for (let i = 0; i < items.length; i += 450) {
+          const batch = fbFS.batch();
+          items.slice(i, i + 450).forEach(item => {
+            const { _id, ...resto } = item;
+            batch.set(fbFS.collection(col).doc(String(_id)), resto);
+          });
+          await batch.commit();
+        }
+      }
+    }
+
+    setTimeout(() => { _fbEscribiendo = false; }, 300);
+    alert('✅ Respaldo restaurado por completo — catálogo, stock, y las ' + colecciones.length + ' colecciones incluidas. Recarga la página para ver todo actualizado.');
+    try { renderDashboard(); } catch(e) {}
+  } catch (e) {
+    _fbEscribiendo = false;
+    alert('⚠️ No se pudo restaurar completo. Revisa tu conexión e intenta de nuevo.\nCódigo: ' + (e.code || e.message || 'desconocido'));
+  }
 }
 </script>
 <!-- ── PWA: Registro del Service Worker ── -->
