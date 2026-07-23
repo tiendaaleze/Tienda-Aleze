@@ -3410,7 +3410,14 @@ let DB = {
   mermas: [],
   promociones: [],
   movimientos: [],
- config: { nombre: 'Tienda Aleze', direccion: 'Jr. Tigrillo Mz. Ll4 Lt. 5 Asoc. Percin Deza SJL', telefono: '', ticketMsg: '¡Gracias por su compra!', diasVenc: 7, whatsappTienda: '980037284', montoAperturaAuto: 0, eslogan: 'Todo lo que necesitas, cerca de ti', bannerUrl: '', bannerLink: '', bannerVisible: true, usuariosStaff: [], tiendasExternas: [{id:'efe',nombre:'Tienda Efe',imagen:'',url:'',visible:true,waCatalogo:false},{id:'curacao',nombre:'Curacao',imagen:'',url:'',visible:true,waCatalogo:false},{id:'juntoz',nombre:'Juntoz',imagen:'',url:'',visible:true,waCatalogo:false},{id:'bata',nombre:'Bata',imagen:'',url:'',visible:true,waCatalogo:true}], serviciosWa: [{id:'impresiones',nombre:'Impresiones y copias',emoji:'🖨️',visible:true},{id:'recargas',nombre:'Recargas celular',emoji:'📱',visible:true},{id:'pagos',nombre:'Pago de servicios',emoji:'💡',visible:true},{id:'escaneos',nombre:'Escaneos',emoji:'📋',visible:true}], serviciosBannerUrl: '', tiendasTexto: '', alertasIgnoradas: {} },
+ config: { nombre: 'Tienda Aleze', direccion: 'Jr. Tigrillo Mz. Ll4 Lt. 5 Asoc. Percin Deza SJL', telefono: '', ticketMsg: '¡Gracias por su compra!', diasVenc: 7, whatsappTienda: '980037284', montoAperturaAuto: 0, eslogan: 'Todo lo que necesitas, cerca de ti', bannerUrl: '', bannerLink: '', bannerVisible: true, usuariosStaff: [], tiendasExternas: [{id:'efe',nombre:'Tienda Efe',imagen:'',url:'',visible:true,waCatalogo:false},{id:'curacao',nombre:'Curacao',imagen:'',url:'',visible:true,waCatalogo:false},{id:'juntoz',nombre:'Juntoz',imagen:'',url:'',visible:true,waCatalogo:false},{id:'bata',nombre:'Bata',imagen:'',url:'',visible:true,waCatalogo:true}], serviciosWa: [{id:'impresiones',nombre:'Impresiones y copias',emoji:'🖨️',visible:true},{id:'recargas',nombre:'Recargas celular',emoji:'📱',visible:true},{id:'pagos',nombre:'Pago de servicios',emoji:'💡',visible:true},{id:'escaneos',nombre:'Escaneos',emoji:'📋',visible:true}], serviciosBannerUrl: '', tiendasTexto: '', alertasIgnoradas: {},
+   // Verificacion SMS de telefono en tienda publica: construida como flag apagado a
+   // proposito. Hoy el telefono identifica al cliente (tndResolverCliente), pero no lo
+   // verifica. Cuando exista pasarela de pago real, este flag pasa a true y el flujo de
+   // verificacion (Firebase Phone Auth, pendiente de implementar) se vuelve obligatorio
+   // antes de pedir o ver puntos, no solo un dato que cualquiera puede escribir.
+   requiereVerificacionSMS: false
+  },
   _cajas: { principal: { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' } },
   historialVentas: [],
   pedidosOnline: []
@@ -11357,13 +11364,40 @@ let _tiendaUser = null; // {nombre, tel, dir}
 
 // ── Carrito persistente — localStorage ───────────────────────────────────────
 // El clienteId es único por dispositivo/navegador (no requiere login)
-function tndGetClienteId() {
-  let id = localStorage.getItem('aleze_tnd_cid');
-  if (!id) {
-    id = 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-    localStorage.setItem('aleze_tnd_cid', id);
+// ── Identidad real del cliente en tienda pública: el teléfono es la llave, no un token
+// aleatorio por dispositivo — así cambiar de equipo o borrar el navegador ya no pierde el
+// historial ni los puntos. localStorage queda solo como comodidad (recordar quién es en ESTE
+// equipo), nunca como la fuente de verdad — esa es siempre la búsqueda en DB.clientes.
+function tndResolverCliente(nombre, tel) {
+  const telLimpio = (tel || '').replace(/\s/g, '');
+  if (!telLimpio || telLimpio.length < 7) return null;
+  let cli = DB.clientes.find(c => (c.tel || '').replace(/\s/g, '') === telLimpio);
+  if (cli) {
+    if (nombre && nombre.trim() && cli.nombre !== nombre.trim()) {
+      cli.nombre = nombre.trim();
+      if (!cli.alias) cli.alias = nombre.trim();
+    }
+  } else {
+    cli = _envolverCliente({ id: getId(), nombre: nombre || 'Cliente', alias: nombre || 'Cliente', tel: telLimpio, dir: '', cumple: '', compras: 0, total: 0, deuda: 0, puntos: 0 });
+    DB.clientes.push(cli);
+    fbGuardar();
   }
-  return id;
+  try { localStorage.setItem('aleze_tnd_cid_real', String(cli.id)); } catch(e) {}
+  return cli.id;
+}
+
+// Recupera el cliente real ya identificado en este equipo (si lo hay) — no crea nada nuevo,
+// solo consulta la comodidad local. Si no hay nada guardado, el visitante sigue anónimo hasta
+// que escriba su teléfono (al pedir, o al querer ver sus puntos).
+function tndGetClienteIdReal() {
+  try {
+    const cached = localStorage.getItem('aleze_tnd_cid_real');
+    if (cached) {
+      const id = parseInt(cached);
+      if (DB.clientes.find(c => c.id === id)) return id;
+    }
+  } catch(e) {}
+  return null;
 }
 
 // Guarda el carrito actual en localStorage
@@ -11426,7 +11460,7 @@ function initTienda() {
       tiendaEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:60vh;color:#6B7280;font-size:1rem">Cargando catálogo...</div>';
       return;
     }
-    tndGetClienteId();
+    tndGetClienteIdReal();
     tndLoadUser();
     tndLoadCart();
     tndUpdateCartBadge();
@@ -11613,6 +11647,7 @@ function _renderTienda() {
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.75rem;align-items:center">
     <span style="font-size:.78rem;opacity:.8">${dir}</span>
+    <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
       🛒 Carrito
       <span class="tnd-cart-count" id="tnd-cart-count">0</span>
@@ -11836,6 +11871,25 @@ function tndAbrirCarrito() {
   document.getElementById('tnd-panel').classList.add('open');
 }
 
+function tndAbrirMisPuntos() {
+  _tndStep = 'puntos';
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+}
+
+// Identificación mínima para ver puntos — mismo mecanismo real usado al pedir (teléfono = llave).
+function tndIdentificarParaPuntos() {
+  const nombre = document.getElementById('tnd-puntos-nombre')?.value.trim();
+  const tel = document.getElementById('tnd-puntos-tel')?.value.trim();
+  if (!nombre || nombre.length < 3) { alert('Ingresa tu nombre (mínimo 3 caracteres)'); return; }
+  const telLimpio = (tel||'').replace(/\s/g,'');
+  if (!telLimpio || telLimpio.length < 7) { alert('Ingresa tu número de teléfono (mínimo 7 dígitos)'); return; }
+  tndResolverCliente(nombre, telLimpio);
+  tndSaveUser(nombre, telLimpio);
+  tndRenderPanel();
+}
+
 function tndCerrarPanel() {
   document.getElementById('tnd-overlay').classList.remove('open');
   document.getElementById('tnd-panel').classList.remove('open');
@@ -11873,6 +11927,46 @@ function tndRenderPanel() {
     footer.innerHTML = `
       <button class="tnd-btn tnd-btn-primary" onclick="tndIrDatos()">Continuar → Datos</button>
       <button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>`;
+  }
+
+  if (_tndStep === 'puntos') {
+    titulo.textContent = '⭐ Mis puntos';
+    const clienteId = tndGetClienteIdReal();
+    if (!clienteId) {
+      body.innerHTML = `
+        <p style="font-size:.82rem;color:#6b7280;margin-bottom:1rem">Ingresa tu nombre y teléfono para ver tus puntos — es el mismo dato que usás al pedir, así siempre encuentra tu cuenta real, sin importar desde qué equipo entres.</p>
+        <div class="tnd-form-group">
+          <label>Nombre *</label>
+          <input type="text" id="tnd-puntos-nombre" placeholder="Tu nombre" value="${_tiendaUser?.nombre||''}" />
+        </div>
+        <div class="tnd-form-group">
+          <label>Teléfono *</label>
+          <input type="tel" id="tnd-puntos-tel" placeholder="999 999 999" value="${_tiendaUser?.tel||''}" />
+        </div>`;
+      footer.innerHTML = `<button class="tnd-btn tnd-btn-primary" onclick="tndIdentificarParaPuntos()">Ver mis puntos</button>`;
+    } else {
+      const cli = DB.clientes.find(c => c.id === clienteId);
+      const est = estadoFidelizacion(clienteId);
+      const disponibles = premiosDisponibles(clienteId);
+      let progresoHtml = '';
+      if (est.estado === 'premio_disponible') {
+        progresoHtml = `<div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎉 ¡Ya tenés premio disponible! Pídelo en cualquiera de nuestras sedes.</div>`;
+      } else if (est.estado === 'cerca') {
+        progresoHtml = `<div style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Te faltan <strong>${est.faltan} puntos</strong> para tu próximo premio.</div>`;
+      }
+      body.innerHTML = `
+        <div style="text-align:center;padding:1rem 0">
+          <div style="font-size:2.2rem;font-weight:800;color:#7C3AED">${cli.puntos||0}</div>
+          <div style="font-size:.8rem;color:#6b7280">puntos acumulados</div>
+        </div>
+        ${progresoHtml}
+        ${disponibles.length ? `
+          <div style="font-size:.85rem;font-weight:700;margin-bottom:.5rem">🎁 Podés canjear ahora:</div>
+          ${disponibles.map(p => `<div style="padding:.5rem;background:#F9FAFB;border-radius:6px;margin-bottom:.4rem;font-size:.82rem">${p.tipo==='producto'?'📦':'💰'} ${p.nombre}</div>`).join('')}
+          <p style="font-size:.75rem;color:#9ca3af;margin-top:.5rem">Pídelo en caja al recoger tu pedido, o en cualquiera de nuestras sedes.</p>
+        ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para acercarte a tu próximo premio.</p>'}`;
+      footer.innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`;
+    }
   }
 
   if (_tndStep === 'datos') {
@@ -12025,8 +12119,7 @@ function tndEnviarPedido() {
   // ── Construir pedido con TODOS los campos requeridos por pedidoValido() ──
   // Incluye: clienteNombre, telefono, items, total, fecha, origen
   if (!DB.pedidosOnline) DB.pedidosOnline = [];
-  const clienteExistente = (DB.clientes||[]).find(c=>(c.tel||'').replace(/\s/g,'')=== telLimpio);
-  const clienteId = clienteExistente ? clienteExistente.id : tndGetClienteId();
+  const clienteId = tndResolverCliente(_tiendaUser.nombre, telLimpio);
   const pedido = {
     id:            getId(),
     fecha,                          // string "YYYY-MM-DD" — requerido por reglas
