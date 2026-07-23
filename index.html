@@ -3346,11 +3346,30 @@ function premiosDisponibles(clienteId) {
 // corresponde — producto → merma (stock baja, costo ya afecta rentabilidad automático, mismo
 // mecanismo que cualquier otra merma); descuento → reduce el total de la venta actual, así
 // queda dentro del ingreso real de la venta, sin cuenta aparte que alguien tenga que cuadrar.
-function procesarCanje(clienteId, premioId) {
+async function procesarCanje(clienteId, premioId) {
   const cli = DB.clientes.find(c => c.id === clienteId);
   const premio = (DB_EXT.premiosFidelizacion || []).find(p => p.id === premioId);
   if (!cli || !premio) { alert('No se pudo procesar el canje.'); return null; }
   if ((cli.puntos || 0) < premio.puntos) { alert('El cliente ya no tiene suficientes puntos para este premio.'); return null; }
+
+  // Mitigación de doble-canje entre 2 dispositivos: verifica el saldo REAL en el servidor
+  // justo antes de confirmar — reduce la ventana de riesgo al tiempo de esta consulta, no a
+  // toda la sesión. No es una transacción (rompería el trabajo offline ya hecho) — si no hay
+  // conexión, sigue con el chequeo local, igual que antes de este fix.
+  if (fbFS) {
+    try {
+      const doc = await fbFS.collection('clientes').doc(String(clienteId)).get();
+      if (doc.exists) {
+        const saldoReal = doc.data().puntos || 0;
+        if (saldoReal < premio.puntos) {
+          alert(`⚠️ El saldo de este cliente cambió (probablemente ya se procesó un canje desde otro dispositivo). Saldo actual: ${saldoReal} puntos — no se completó este canje.`);
+          return null;
+        }
+      }
+    } catch(e) {
+      console.warn('procesarCanje: no se pudo verificar el saldo en el servidor, continuando con el valor local', e);
+    }
+  }
 
   const sede = currentUserSedeId || 'principal';
   const canje = {
@@ -6185,7 +6204,7 @@ function _boletaActualizarTotal() {
   }
   el.innerHTML = `Total cargado: <b>${sol(totalCargado)}</b>${declarado > 0 ? ` de ${sol(declarado)} declarado${estado}` : ''}`;
 }
-function guardarBoleta() {
+async function guardarBoleta() {
   if (currentRole !== 'admin') return;
   const num   = document.getElementById('bol-num').value.trim();
   const fecha = document.getElementById('bol-fecha').value;
@@ -6216,6 +6235,29 @@ function guardarBoleta() {
       ? `\n\n⚠️ El total de productos (S/${totalProductos.toFixed(2)}) difiere del importe ingresado (S/${montoIngresado.toFixed(2)}) en S/${difMonto.toFixed(2)}. Verifica si hay productos no registrados.`
       : '';
     if (!confirm(`📦 Confirmar actualización de stock:\n\n${resumen}\n\nTotal productos: S/${totalProductos.toFixed(2)}${alertaDif}\n\n¿Continuar?`)) return;
+
+    // Mitigación de costo pisado entre 2 boletas simultáneas (sede 1 y sede 2 recibiendo el
+    // mismo producto casi al mismo tiempo): refresca costo/stock desde el servidor justo antes
+    // de calcular el promedio ponderado — reduce la ventana de riesgo, no requiere transacción
+    // (que exigiría estar online siempre, rompiendo el trabajo offline ya hecho).
+    if (fbFS) {
+      try {
+        const _snapFresco = await fbProdDocRef().get();
+        if (_snapFresco.exists) {
+          const _dataFresca = _snapFresco.data();
+          _boletaProductos.forEach(p => {
+            const prodFresco = (_dataFresca.productos||[]).find(x => x.id === p.prodId);
+            const prodLocal = DB.productos.find(x => x.id === p.prodId);
+            if (prodFresco && prodLocal) {
+              prodLocal.costo = prodFresco.costo;
+              prodLocal.stockPorSede = prodFresco.stockPorSede;
+              prodLocal.stock = stockTotal(prodLocal);
+            }
+          });
+        }
+      } catch(e) { console.warn('guardarBoleta: no se pudo refrescar antes de aplicar, usando datos locales', e); }
+    }
+
     // ── Actualizar stock y costo (Costo Promedio Ponderado — no sobreescribe, mezcla con lo que ya había) ──
     // sedeAdminEfectiva(): sede 2 no tiene admin propio, esto deja recibir mercadería ahí sin engañar al stock.
     const _sedeBoleta = sedeAdminEfectiva();
@@ -9609,11 +9651,11 @@ function abrirModalCanje() {
   abrirModal('modal-canje');
 }
 
-function confirmarCanje(clienteId, premioId) {
+async function confirmarCanje(clienteId, premioId) {
   const premio = (DB_EXT.premiosFidelizacion||[]).find(p => p.id === premioId);
   if (!premio) return;
   if (!confirm(`¿Confirmar canje de "${premio.nombre}" por ${premio.puntos} puntos?`)) return;
-  const canje = procesarCanje(clienteId, premioId);
+  const canje = await procesarCanje(clienteId, premioId);
   if (canje) {
     cerrarModal('modal-canje');
     alert('✅ Canje registrado: ' + premio.nombre);
