@@ -1499,7 +1499,7 @@ background: #F5F3FF;
                 <span id="pos-cli-nombre" style="font-weight:700;color:var(--primary)"></span>
                 <span id="pos-cli-consumo" style="color:var(--gray-600)"></span>
               </div>
-              <div id="pos-premio-alert" class="premio-alert">🎁 <span id="pos-premio-txt"></span></div>
+              <div id="pos-premio-alert" class="premio-alert">🎁 <span id="pos-premio-txt"></span> <button type="button" id="pos-premio-btn-canjear" class="btn btn-xs btn-accent" style="display:none;margin-left:.4rem" onclick="abrirModalCanje()">Canjear</button></div>
             </div>
             <div class="cart-items" id="cart-items"></div>
             <div class="cart-footer">
@@ -2064,9 +2064,19 @@ background: #F5F3FF;
         <div class="card" style="margin-bottom:1rem">
           <div class="card-title">🎁 Premios canjeables</div>
           <div id="fid-premios-list"></div>
-          <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap">
-            <input type="number" class="form-control" id="fid-nuevo-premio-puntos" placeholder="Puntos" style="max-width:110px" />
-            <input type="text" class="form-control" id="fid-nuevo-premio-nombre" placeholder="Nombre del premio (ej: S/10 de descuento)" style="flex:1;min-width:180px" />
+          <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;align-items:flex-end">
+            <div class="form-group" style="margin:0"><label style="font-size:.75rem">Puntos</label><input type="number" class="form-control" id="fid-nuevo-premio-puntos" style="max-width:100px" /></div>
+            <div class="form-group" style="margin:0"><label style="font-size:.75rem">Tipo</label>
+              <select class="form-control" id="fid-nuevo-premio-tipo" style="max-width:130px" onchange="_toggleCamposPremio()">
+                <option value="descuento">💰 Descuento</option>
+                <option value="producto">📦 Producto</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0" id="fid-nuevo-premio-desc-wrap"><label style="font-size:.75rem">Descuento (S/)</label><input type="number" class="form-control" id="fid-nuevo-premio-monto" step="0.5" style="max-width:110px" /></div>
+            <div class="form-group" style="margin:0;display:none;min-width:200px" id="fid-nuevo-premio-prod-wrap"><label style="font-size:.75rem">Producto</label>
+              <select class="form-control" id="fid-nuevo-premio-prod"></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:150px"><label style="font-size:.75rem">Nombre visible</label><input type="text" class="form-control" id="fid-nuevo-premio-nombre" placeholder="Ej: S/10 de descuento" /></div>
             <button type="button" class="btn btn-outline btn-sm" onclick="agregarPremioFidelizacion()">+ Agregar</button>
           </div>
         </div>
@@ -2690,6 +2700,20 @@ background: #F5F3FF;
 </div>
 
 <!-- Modal Cliente Rápido POS -->
+<div class="modal-overlay" id="modal-canje">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>🎁 Canjear premio</h3>
+      <button type="button" class="modal-close" onclick="cerrarModal('modal-canje')">✕</button>
+    </div>
+    <div id="modal-canje-cliente" style="font-size:.85rem;color:var(--gray-600);margin-bottom:.75rem"></div>
+    <div id="modal-canje-lista"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:1rem">
+      <button type="button" class="btn btn-outline btn-sm" onclick="cerrarModal('modal-canje')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-cli-rapido">
   <div class="modal"><div class="modal-header"><h3>👤 Cliente rápido</h3><button type="button" class="modal-close" onclick="cerrarModal('modal-cli-rapido')">✕</button></div>
     <div class="form-group"><label>Nombre o alias *</label><input type="text" class="form-control" id="cr-nombre" /></div>
@@ -3267,6 +3291,58 @@ function fbSincronizarCanje(canje) {
   const data = { ...canje, sedeId: canje.sedeId || currentUserSedeId || 'principal' };
   fbFS.collection('canjes').doc(String(canje.id)).set(data)
     .catch(e => console.warn('fbSincronizarCanje: no se pudo escribir canjes/' + canje.id, e));
+}
+
+// Todos los premios que el saldo actual alcanza a cubrir — no solo el más caro (para elegir).
+function premiosDisponibles(clienteId) {
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  if (!cli) return [];
+  const saldo = cli.puntos || 0;
+  return [...(DB_EXT.premiosFidelizacion || [])].filter(p => p.puntos <= saldo).sort((a,b) => a.puntos - b.puntos);
+}
+
+// ── Procesa un canje: descuenta puntos, registra el canje, y refleja el costo real donde
+// corresponde — producto → merma (stock baja, costo ya afecta rentabilidad automático, mismo
+// mecanismo que cualquier otra merma); descuento → reduce el total de la venta actual, así
+// queda dentro del ingreso real de la venta, sin cuenta aparte que alguien tenga que cuadrar.
+function procesarCanje(clienteId, premioId) {
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  const premio = (DB_EXT.premiosFidelizacion || []).find(p => p.id === premioId);
+  if (!cli || !premio) { alert('No se pudo procesar el canje.'); return null; }
+  if ((cli.puntos || 0) < premio.puntos) { alert('El cliente ya no tiene suficientes puntos para este premio.'); return null; }
+
+  const sede = currentUserSedeId || 'principal';
+  const canje = {
+    id: getId(), clienteId, fecha: today(), hora: nowTime(),
+    premioId: premio.id, premioNombre: premio.nombre, puntosUsados: premio.puntos,
+    tipo: premio.tipo, staff: currentUser, sedeId: sede
+  };
+
+  if (premio.tipo === 'producto' && premio.prodId) {
+    const prod = DB.productos.find(p => p.id === premio.prodId);
+    if (prod) {
+      ajustarStockSede(prod, -1, sede);
+      const merma = {
+        id: getId(), prodId: prod.id, cant: 1, motivo: 'Canje de fidelización',
+        obs: `Canje: ${premio.nombre} — ${getClienteNombre(clienteId)}`,
+        fecha: today(), usuario: currentUser, sedeId: sede
+      };
+      DB.mermas.push(merma);
+      fbSincronizarMerma(merma);
+      canje.prodId = prod.id;
+      canje.costoAsociado = prod.costo || 0;
+    }
+  } else if (premio.tipo === 'descuento') {
+    canje.montoDescuento = premio.monto || 0;
+    const descInput = document.getElementById('pos-descuento') || document.getElementById('mob-pos-descuento');
+    if (descInput) descInput.value = (parseFloat(descInput.value) || 0) + canje.montoDescuento;
+  }
+
+  cli.puntos = (cli.puntos || 0) - premio.puntos;
+  fbSincronizarCanje(canje);
+  fbGuardar();
+  fbGuardarProductos();
+  return canje;
 }
 
 function cambiarSedeAdmin(sede) {
@@ -8106,26 +8182,47 @@ function guardarFidelizacionConfig() {
   alert('✅ Configuración guardada.');
 }
 
+function _toggleCamposPremio() {
+  const tipo = document.getElementById('fid-nuevo-premio-tipo').value;
+  document.getElementById('fid-nuevo-premio-desc-wrap').style.display = tipo === 'descuento' ? 'block' : 'none';
+  const prodWrap = document.getElementById('fid-nuevo-premio-prod-wrap');
+  prodWrap.style.display = tipo === 'producto' ? 'block' : 'none';
+  if (tipo === 'producto') {
+    const sel = document.getElementById('fid-nuevo-premio-prod');
+    if (!sel.options.length) sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (costo S/${p.costo})</option>`).join('');
+  }
+}
+
 function renderPremiosFidelizacion() {
   const el = document.getElementById('fid-premios-list');
   const premios = DB_EXT.premiosFidelizacion || [];
   if (!premios.length) { el.innerHTML = '<div style="color:var(--gray-400);padding:.5rem">Sin premios configurados — agrega el primero abajo.</div>'; return; }
   el.innerHTML = [...premios].sort((a,b)=>a.puntos-b.puntos).map(p => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-bottom:1px solid var(--gray-100)">
-      <span><strong>${p.puntos} pts</strong> — ${p.nombre}</span>
+      <span><strong>${p.puntos} pts</strong> — ${p.tipo==='producto'?'📦':'💰'} ${p.nombre}</span>
       <button type="button" class="btn btn-xs btn-danger" onclick="eliminarPremioFidelizacion(${p.id})">✕</button>
     </div>`).join('');
 }
 
 function agregarPremioFidelizacion() {
   const puntos = parseInt(document.getElementById('fid-nuevo-premio-puntos').value);
+  const tipo = document.getElementById('fid-nuevo-premio-tipo').value;
   const nombre = document.getElementById('fid-nuevo-premio-nombre').value.trim();
   if (!puntos || puntos <= 0 || !nombre) { alert('Completa puntos y nombre del premio.'); return; }
+  const premio = { id: getId(), puntos, nombre, tipo };
+  if (tipo === 'descuento') {
+    premio.monto = parseFloat(document.getElementById('fid-nuevo-premio-monto').value) || 0;
+    if (premio.monto <= 0) { alert('Ingresa el monto del descuento.'); return; }
+  } else {
+    premio.prodId = parseInt(document.getElementById('fid-nuevo-premio-prod').value) || null;
+    if (!premio.prodId) { alert('Selecciona el producto.'); return; }
+  }
   if (!DB_EXT.premiosFidelizacion) DB_EXT.premiosFidelizacion = [];
-  DB_EXT.premiosFidelizacion.push({ id: getId(), puntos, nombre });
+  DB_EXT.premiosFidelizacion.push(premio);
   fbGuardarExt();
   document.getElementById('fid-nuevo-premio-puntos').value = '';
   document.getElementById('fid-nuevo-premio-nombre').value = '';
+  document.getElementById('fid-nuevo-premio-monto').value = '';
   renderPremiosFidelizacion();
 }
 
@@ -9261,18 +9358,50 @@ function actualizarPremioAlertPOS() {
   const cliId = parseInt(document.getElementById('pos-cliente').value)||null;
   const alertDiv = document.getElementById('pos-premio-alert');
   const alertTxt = document.getElementById('pos-premio-txt');
+  const btnCanjear = document.getElementById('pos-premio-btn-canjear');
   if (!cliId||!alertDiv) { if(alertDiv) alertDiv.style.display='none'; return; }
   const est = estadoFidelizacion(cliId);
   if (est.estado === 'premio_disponible') {
     alertDiv.style.display='block';
     alertDiv.style.background = 'var(--accent-light)';
     alertTxt.textContent = `🎉 ${getClienteNombre(cliId)} puede canjear: ${est.premio.nombre}`;
+    if (btnCanjear) btnCanjear.style.display = 'inline-block';
   } else if (est.estado === 'cerca') {
     alertDiv.style.display='block';
     alertDiv.style.background = '';
     alertTxt.textContent = `${getClienteNombre(cliId)} está cerca de su próximo premio — le faltan ${est.faltan} puntos`;
+    if (btnCanjear) btnCanjear.style.display = 'none';
   } else {
     alertDiv.style.display='none';
+    if (btnCanjear) btnCanjear.style.display = 'none';
+  }
+}
+
+// ── Modal de canje: lista todos los premios que el saldo actual alcanza, cajero elige cual ──
+function abrirModalCanje() {
+  const cliId = parseInt(document.getElementById('pos-cliente').value) || null;
+  if (!cliId) return;
+  const disponibles = premiosDisponibles(cliId);
+  if (!disponibles.length) { alert('Este cliente ya no tiene premios disponibles con su saldo actual.'); return; }
+  document.getElementById('modal-canje-cliente').textContent = `${getClienteNombre(cliId)} — saldo: ${(DB.clientes.find(c=>c.id===cliId)?.puntos)||0} puntos`;
+  document.getElementById('modal-canje-lista').innerHTML = disponibles.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--gray-100)">
+      <span>${p.tipo==='producto'?'📦':'💰'} <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">(${p.puntos} pts)</span></span>
+      <button type="button" class="btn btn-sm btn-primary" onclick="confirmarCanje(${cliId}, ${p.id})">Canjear</button>
+    </div>`).join('');
+  abrirModal('modal-canje');
+}
+
+function confirmarCanje(clienteId, premioId) {
+  const premio = (DB_EXT.premiosFidelizacion||[]).find(p => p.id === premioId);
+  if (!premio) return;
+  if (!confirm(`¿Confirmar canje de "${premio.nombre}" por ${premio.puntos} puntos?`)) return;
+  const canje = procesarCanje(clienteId, premioId);
+  if (canje) {
+    cerrarModal('modal-canje');
+    alert('✅ Canje registrado: ' + premio.nombre);
+    actualizarPremioAlertPOS();
+    try { calcTotal(); } catch(e) {}
   }
 }
 
