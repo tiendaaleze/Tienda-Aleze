@@ -11578,19 +11578,45 @@ let _tiendaUser = null; // {nombre, tel, dir}
 // aleatorio por dispositivo — así cambiar de equipo o borrar el navegador ya no pierde el
 // historial ni los puntos. localStorage queda solo como comodidad (recordar quién es en ESTE
 // equipo), nunca como la fuente de verdad — esa es siempre la búsqueda en DB.clientes.
-function tndResolverCliente(nombre, tel) {
+// Escribe DIRECTO a clientes/{id} — no via fbGuardar() (el documento viejo completo exige
+// isAdmin() sin excepcion; un visitante de la tienda nunca esta autenticado, esa escritura
+// fallaba en silencio). La regla de clientes ahora permite esto especificamente, validado.
+function tndSincronizarClientePublico(cli, esNuevo) {
+  if (!fbFS) return;
+  const data = esNuevo
+    ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: cli.cumple||'', compras: 0, total: 0, deuda: 0, puntos: 0 }
+    : { nombre: cli.nombre, alias: cli.alias };
+  fbFS.collection('clientes').doc(String(cli.id))[esNuevo ? 'set' : 'set'](data, esNuevo ? {} : { merge: true })
+    .catch(e => console.warn('tndSincronizarClientePublico: no se pudo escribir clientes/' + cli.id, e));
+}
+
+// Asíncrona: DB.clientes nunca se carga entera para un visitante público (evita traer todo
+// el listado solo para identificar a uno) — si no está en memoria, consulta Firestore SOLO por
+// ese teléfono puntual. Devuelve una Promise<clienteId>.
+async function tndResolverCliente(nombre, tel) {
   const telLimpio = (tel || '').replace(/\s/g, '');
   if (!telLimpio || telLimpio.length < 7) return null;
   let cli = DB.clientes.find(c => (c.tel || '').replace(/\s/g, '') === telLimpio);
+  if (!cli && fbFS) {
+    try {
+      const snap = await fbFS.collection('clientes').where('tel', '==', telLimpio).limit(1).get();
+      if (!snap.empty) {
+        const doc = snap.docs[0];
+        cli = _envolverCliente({ id: parseInt(doc.id), ...doc.data() });
+        DB.clientes.push(cli);
+      }
+    } catch(e) { console.warn('tndResolverCliente: no se pudo consultar clientes por telefono', e); }
+  }
   if (cli) {
     if (nombre && nombre.trim() && cli.nombre !== nombre.trim()) {
       cli.nombre = nombre.trim();
       if (!cli.alias) cli.alias = nombre.trim();
+      tndSincronizarClientePublico(cli, false);
     }
   } else {
     cli = _envolverCliente({ id: getId(), nombre: nombre || 'Cliente', alias: nombre || 'Cliente', tel: telLimpio, dir: '', cumple: '', compras: 0, total: 0, deuda: 0, puntos: 0 });
     DB.clientes.push(cli);
-    fbGuardar();
+    tndSincronizarClientePublico(cli, true);
   }
   try { localStorage.setItem('aleze_tnd_cid_real', String(cli.id)); } catch(e) {}
   return cli.id;
@@ -11679,7 +11705,7 @@ function tndTelefonoYaVerificado() {
 // salvo que este equipo ya la haya hecho antes (sesión larga). callback recibe el clienteId.
 function tndResolverClienteConVerificacion(nombre, tel, callback) {
   if (!DB.config.requiereVerificacionSMS || tndTelefonoYaVerificado()) {
-    callback(tndResolverCliente(nombre, tel));
+    tndResolverCliente(nombre, tel).then(callback);
     return;
   }
   _tndPendienteNombre = nombre;
@@ -11710,10 +11736,10 @@ function tndConfirmarCodigoUI() {
   if (!codigo || codigo.length < 4) { alert('Ingresa el código recibido.'); return; }
   tndVerificarCodigoSMS(codigo).then(ok => {
     if (ok && _tndPendienteCallback) {
-      const clienteId = tndResolverCliente(_tndPendienteNombre, _tndPendienteTel);
       const cb = _tndPendienteCallback;
+      const nombrePend = _tndPendienteNombre, telPend = _tndPendienteTel;
       _tndPendienteNombre = _tndPendienteTel = _tndPendienteCallback = null;
-      cb(clienteId);
+      tndResolverCliente(nombrePend, telPend).then(cb);
     }
   });
 }
@@ -12528,7 +12554,7 @@ function tndVolverDatos() {
 // ── Flag anti-doble-envío — se resetea tras éxito o error ───────────────────
 let _tndEnviando = false;
 
-function tndEnviarPedido() {
+async function tndEnviarPedido() {
   // ── Guardia anti-doble-clic ──────────────────────────────────────────────
   if (_tndEnviando) return;
 
@@ -12568,7 +12594,7 @@ function tndEnviarPedido() {
   // ── Construir pedido con TODOS los campos requeridos por pedidoValido() ──
   // Incluye: clienteNombre, telefono, items, total, fecha, origen
   if (!DB.pedidosOnline) DB.pedidosOnline = [];
-  const clienteId = tndResolverCliente(_tiendaUser.nombre, telLimpio);
+  const clienteId = await tndResolverCliente(_tiendaUser.nombre, telLimpio);
   const pedido = {
     id:            getId(),
     fecha,                          // string "YYYY-MM-DD" — requerido por reglas
