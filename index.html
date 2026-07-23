@@ -3185,19 +3185,67 @@ let DB = {
   pedidosOnline: []
 };
 
-// ── Caja por sede (más allá de offline: 2 sedes reales no pueden compartir 1 sola caja) ──
-// DB.caja sigue funcionando en las 64+ referencias existentes sin tocarlas — el getter/setter
-// rutea automáticamente a la sede de la sesión actual. La sede se separa recién acá; el
-// incremento atómico offline-seguro (como se hizo con stock) queda para una siguiente pasada.
+// ── Caja por sede + incremento atómico offline-seguro, de una sola vez ──
+// DB.caja sigue funcionando en las 90+ referencias existentes (lecturas Y escrituras) sin
+// tocarlas una por una: el getter rutea a la sede actual, y un Proxy intercepta CUALQUIER
+// asignación sobre esa caja (DB.caja.ingresos = X, DB.caja.abierta = false, etc.) para
+// sincronizarla a Firestore sola — incremento atómico si es un número acumulado (ingresos,
+// egresos...), set directo si es un campo de estado (abierta, saldoFinal, fecha...). Funciona
+// sin señal porque queda en cola local (enablePersistence) y el servidor lo aplica al reconectar,
+// sumando correcto aunque las 2 sedes ajusten caja a la vez sin red.
+const _CAJA_CAMPOS_INCREMENTALES = ['ingresos', 'egresos', 'ingresosEfectivo', 'egresosEfectivo', 'retiros'];
+const _cajaProxiesCreados = new WeakSet();
+
+function fbAjustarCaja(sede, campo, delta) {
+  if (!fbFS || !sede || !delta) return;
+  fbFS.collection('caja').doc(String(sede)).set(
+    { [campo]: firebase.firestore.FieldValue.increment(delta) },
+    { merge: true }
+  ).catch(e => console.warn('fbAjustarCaja: no se pudo ajustar caja/' + sede, e));
+}
+function fbSincronizarCajaCampo(sede, campo, valor) {
+  if (!fbFS || !sede) return;
+  fbFS.collection('caja').doc(String(sede)).set({ [campo]: valor }, { merge: true })
+    .catch(e => console.warn('fbSincronizarCajaCampo: no se pudo actualizar caja/' + sede, e));
+}
+function _crearCajaProxy(sede, cajaObj) {
+  const proxy = new Proxy(cajaObj, {
+    set(target, prop, value) {
+      if (_CAJA_CAMPOS_INCREMENTALES.includes(prop) && typeof value === 'number' && typeof target[prop] === 'number') {
+        const delta = Math.round((value - target[prop]) * 100) / 100;
+        target[prop] = value;
+        if (delta !== 0) fbAjustarCaja(sede, prop, delta);
+      } else {
+        target[prop] = value;
+        fbSincronizarCajaCampo(sede, prop, value);
+      }
+      return true;
+    }
+  });
+  _cajaProxiesCreados.add(proxy);
+  return proxy;
+}
+function _cajaSedeEnvuelta(sede) {
+  let actual = DB._cajas[sede];
+  if (!actual) {
+    actual = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
+    DB._cajas[sede] = _crearCajaProxy(sede, actual);
+  } else if (!_cajaProxiesCreados.has(actual)) {
+    // Objeto recién cargado de Firestore (plano, sin envolver todavía) -> envolver ahora
+    DB._cajas[sede] = _crearCajaProxy(sede, actual);
+  }
+  return DB._cajas[sede];
+}
 Object.defineProperty(DB, 'caja', {
   get() {
     const sede = (typeof currentUserSedeId !== 'undefined' && currentUserSedeId) || 'principal';
-    if (!DB._cajas[sede]) DB._cajas[sede] = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
-    return DB._cajas[sede];
+    return _cajaSedeEnvuelta(sede);
   },
   set(v) {
+    // Reasignación completa (abrir/cerrar caja) — no es un incremento, es un estado nuevo.
     const sede = (typeof currentUserSedeId !== 'undefined' && currentUserSedeId) || 'principal';
-    DB._cajas[sede] = v;
+    DB._cajas[sede] = _crearCajaProxy(sede, v);
+    if (fbFS) fbFS.collection('caja').doc(String(sede)).set(v).catch(e => console.warn('No se pudo sincronizar caja/'+sede, e));
     try { fbGuardar(); } catch(e) {}
   },
   configurable: true
@@ -3434,6 +3482,12 @@ async function doLogin() {
         if (data.cajas) DB._cajas = data.cajas;
         else if (data.caja) DB._cajas = { principal: data.caja };
       }
+      // Fase Offline: trae la caja más fresca desde la colección con incremento atómico —
+      // puede tener cambios más recientes que el snapshot de arriba (aleze/db.cajas).
+      try {
+        const cajaSnap = await fbFS.collection('caja').get();
+        cajaSnap.forEach(doc => { DB._cajas[doc.id] = doc.data(); });
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar caja fresca:', e); }
 
       if (snapProd.exists) {
         const pd = snapProd.data();
