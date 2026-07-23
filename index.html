@@ -4820,6 +4820,7 @@ function eliminarProducto(id) {
   const tieneFiado = DB.fiados.some(f => f.items.some(i => i.prodId === id));
   if (tieneFiado) { alert('Este producto tiene fiados pendientes. Salda los fiados antes de eliminarlo.'); return; }
   DB.productos = DB.productos.filter(p => p.id !== id); fbGuardarProductos();
+  if (fbFS) fbFS.collection('stock').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar stock/'+id, e));
   renderInvTable();
 }
 
@@ -5517,6 +5518,11 @@ function eliminarProveedor(id) {
   } else {
     if (!confirm('¿Eliminar proveedor?')) return;
   }
+  const prov = DB.proveedores.find(p => p.id === id);
+  // Limpia tambien las boletas de este proveedor en su coleccion propia — si no, quedan huerfanas.
+  if (fbFS && prov && prov.boletas) {
+    prov.boletas.forEach(b => fbFS.collection('boletas').doc(String(b.id)).delete().catch(()=>{}));
+  }
   DB.proveedores = DB.proveedores.filter(p => p.id !== id);
   fbGuardar(); renderProveedores();
 }
@@ -6021,6 +6027,7 @@ function eliminarCliente(id) {
   if (c && c.deuda > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(c.deuda) + '. Salda los fiados antes de eliminarlo.'); return; }
   if (!confirm('¿Eliminar cliente?')) return;
   DB.clientes = DB.clientes.filter(c => c.id !== id);
+  if (fbFS) fbFS.collection('clientes').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar clientes/'+id, e));
   fbGuardar();
   renderClientes();
   updatePosClientes();
