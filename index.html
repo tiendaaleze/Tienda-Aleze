@@ -3876,11 +3876,23 @@ currentRole = role;
   fbEscucharPedidosOnline();
   if (currentRole === 'admin') iniciarBackupAutomatico();
 }
+let _logoutEsperando = 0;
 function doLogout() {
-  // ── PASO -1: Si hay un guardado pendiente (fbSaveTimer o escritura en curso), esperar en silencio ──
+  // ── PASO -1: Si hay un guardado pendiente (fbSaveTimer o escritura en curso), esperar ──
+  // Protección extra: si algo deja esta bandera trabada (como el bug real que se encontró y
+  // corrigió en guardarPromocion), no se espera en silencio para siempre — después de ~6
+  // segundos se avisa y se sale igual, en vez de que el botón "no haga nada" sin explicación.
   if (_fbEscribiendo || _fbSaveTimer) {
-    setTimeout(doLogout, 200);
-    return;
+    _logoutEsperando += 200;
+    if (_logoutEsperando > 6000) {
+      _logoutEsperando = 0;
+      console.warn('doLogout: guardado pendiente no se resolvió a tiempo, saliendo de todas formas');
+    } else {
+      setTimeout(doLogout, 200);
+      return;
+    }
+  } else {
+    _logoutEsperando = 0;
   }
   // ── PASO 0: Reset total — ningún estado de sesión persiste ──
   resetAppState();
@@ -6976,26 +6988,43 @@ function compartirFiadoWhatsapp() {
 
 let historialClienteId = null;
 
-function abrirHistorialCliente(cid, e) {
+async function abrirHistorialCliente(cid, e) {
   if (e) e.stopPropagation();
   historialClienteId = cid;
   const cli = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Anónimo';
+
+  abrirModal('modal-historial-cliente');
+  document.getElementById('hcli-titulo').textContent = '📋 Historial — ' + nombre;
+  document.getElementById('hcli-resumen').innerHTML = '⏳ Trayendo historial completo...';
+  document.getElementById('hcli-filtro-tipo').value = 'todo';
+  document.getElementById('hcli-desde').value = '';
+  document.getElementById('hcli-hasta').value = '';
+
+  // "Historial completo" de verdad: la vista local puede tener recortado lo ya pagado más
+  // viejo de 90 días (poda de escalabilidad) — acá se consulta fiados/{id} directo por este
+  // cliente puntual, trayendo lo que falte sin tener que cargar la colección entera cada vez.
+  if (fbFS) {
+    try {
+      const snap = await fbFS.collection('fiados').where('clienteId', '==', cid).get();
+      const idsLocales = new Set(DB.fiados.map(f => f.id));
+      snap.forEach(doc => {
+        const id = parseInt(doc.id);
+        if (!idsLocales.has(id)) DB.fiados.push({ id, ...doc.data() });
+      });
+    } catch(e) { console.warn('abrirHistorialCliente: no se pudo traer historial completo, mostrando lo local', e); }
+  }
+
   const fiados = DB.fiados.filter(f => f.clienteId === cid);
   const totalCli = fiados.reduce((s, f) => s + f.total, 0);
   const pagadoCli = fiados.reduce((s, f) => s + f.pagado, 0);
   const pendienteCli = totalCli - pagadoCli;
-  document.getElementById('hcli-titulo').textContent = '📋 Historial — ' + nombre;
   document.getElementById('hcli-resumen').innerHTML = `
     <span>🛒 <strong>${fiados.length}</strong> venta(s)</span>
     <span>💰 Total acumulado: <strong>${sol(totalCli)}</strong></span>
     <span style="color:var(--accent)">✅ Pagado: <strong>${sol(pagadoCli)}</strong></span>
 <span style="color:${pendienteCli>0?'var(--danger)':'var(--accent)'}">${pendienteCli>0?'⏳ Pendiente':'✅ Sin deuda'}: <strong>${sol(pendienteCli)}</strong></span>`;
-  document.getElementById('hcli-filtro-tipo').value = 'todo';
-  document.getElementById('hcli-desde').value = '';
-  document.getElementById('hcli-hasta').value = '';
   renderHistorialCliente();
-  abrirModal('modal-historial-cliente');
 }
 
 function renderHistorialCliente() {
@@ -9608,8 +9637,12 @@ function guardarPromocion() {
       codigo: packCodigo, prov: null,
       esCombo: true, componentes, imagen, promoActiva: true
     });
+    // Bug real encontrado: este flag se ponía en true y NUNCA se apagaba — cualquier intento
+    // de "Salir" después de crear un combo/pack quedaba trabado en silencio, reintentando cada
+    // 200ms para siempre (doLogout espera a que este flag baje antes de cerrar sesión).
     _fbEscribiendo = true;
     fbGuardarProductos();
+    setTimeout(() => { _fbEscribiendo = false; }, 300);
     document.getElementById('promo-qr-wrap').style.display = 'block';
     document.getElementById('promo-qr-label').textContent = nombre;
     const el = document.getElementById('promo-qr-preview');
