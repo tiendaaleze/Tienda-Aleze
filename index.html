@@ -2050,9 +2050,39 @@ background: #F5F3FF;
 
       <!-- FRECUENTES -->
       <div id="page-frecuentes" class="page">
-        <div class="page-title">⭐ Programa de Clientes Frecuentes</div>
+        <div class="page-title">⭐ Fidelización — Programa de Puntos</div>
+
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-title">⚙️ Configuración de puntos</div>
+          <div class="grid-2">
+            <div class="form-group"><label>Puntos por sol gastado (base)</label><input type="number" class="form-control" id="fid-tasa-base" step="0.1" min="0.1" /></div>
+            <div class="form-group"><label>Avisar cuando falten (puntos)</label><input type="number" class="form-control" id="fid-ventana-aviso" step="10" min="0" /></div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="guardarFidelizacionConfig()">Guardar configuración</button>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-title">🎁 Premios canjeables</div>
+          <div id="fid-premios-list"></div>
+          <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap">
+            <input type="number" class="form-control" id="fid-nuevo-premio-puntos" placeholder="Puntos" style="max-width:110px" />
+            <input type="text" class="form-control" id="fid-nuevo-premio-nombre" placeholder="Nombre del premio (ej: S/10 de descuento)" style="flex:1;min-width:180px" />
+            <button type="button" class="btn btn-outline btn-sm" onclick="agregarPremioFidelizacion()">+ Agregar</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-title">🏷️ Multiplicador de puntos por categoría <span style="font-size:.72rem;color:var(--gray-400);font-weight:400">(1x = base, para categorías de mayor margen)</span></div>
+          <div id="fid-multiplicadores-list"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-title">📋 Historial de canjes recientes</div>
+          <div id="fid-canjes-historial"></div>
+        </div>
+
         <div class="card" style="background:linear-gradient(135deg,var(--primary-light),#fff);margin-bottom:1rem">
-          <div class="card-title">🎁 Niveles de premio (editables en Configuración)</div>
+          <div class="card-title">🎁 Niveles de premio (editables en Configuración) <span style="font-size:.72rem;color:var(--gray-400);font-weight:400">— sistema anterior, en revisión</span></div>
           <div class="grid-4" id="niveles-display"></div>
         </div>
         <div class="card" style="margin-bottom:1rem"><div class="card-title">🎄 Canasta Navideña — Top clientes del año</div><div id="ranking-navidad"></div></div>
@@ -8059,7 +8089,88 @@ function fallbackWA() {
 }
 
 // ===================== FRECUENTES =====================
+// ── Fidelización: configuración de puntos, premios, multiplicadores y su historial ──
+function renderFidelizacionConfig() {
+  document.getElementById('fid-tasa-base').value = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaBase) || 1;
+  document.getElementById('fid-ventana-aviso').value = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.ventanaAviso) || 300;
+  renderPremiosFidelizacion();
+  renderMultiplicadoresCategorias();
+  renderCanjesHistorial();
+}
+
+function guardarFidelizacionConfig() {
+  const tasaBase = parseFloat(document.getElementById('fid-tasa-base').value) || 1;
+  const ventanaAviso = parseFloat(document.getElementById('fid-ventana-aviso').value) || 300;
+  DB_EXT.fidelizacion = { tasaBase, ventanaAviso };
+  fbGuardarExt();
+  alert('✅ Configuración guardada.');
+}
+
+function renderPremiosFidelizacion() {
+  const el = document.getElementById('fid-premios-list');
+  const premios = DB_EXT.premiosFidelizacion || [];
+  if (!premios.length) { el.innerHTML = '<div style="color:var(--gray-400);padding:.5rem">Sin premios configurados — agrega el primero abajo.</div>'; return; }
+  el.innerHTML = [...premios].sort((a,b)=>a.puntos-b.puntos).map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-bottom:1px solid var(--gray-100)">
+      <span><strong>${p.puntos} pts</strong> — ${p.nombre}</span>
+      <button type="button" class="btn btn-xs btn-danger" onclick="eliminarPremioFidelizacion(${p.id})">✕</button>
+    </div>`).join('');
+}
+
+function agregarPremioFidelizacion() {
+  const puntos = parseInt(document.getElementById('fid-nuevo-premio-puntos').value);
+  const nombre = document.getElementById('fid-nuevo-premio-nombre').value.trim();
+  if (!puntos || puntos <= 0 || !nombre) { alert('Completa puntos y nombre del premio.'); return; }
+  if (!DB_EXT.premiosFidelizacion) DB_EXT.premiosFidelizacion = [];
+  DB_EXT.premiosFidelizacion.push({ id: getId(), puntos, nombre });
+  fbGuardarExt();
+  document.getElementById('fid-nuevo-premio-puntos').value = '';
+  document.getElementById('fid-nuevo-premio-nombre').value = '';
+  renderPremiosFidelizacion();
+}
+
+function eliminarPremioFidelizacion(id) {
+  if (!confirm('¿Eliminar este premio?')) return;
+  DB_EXT.premiosFidelizacion = (DB_EXT.premiosFidelizacion||[]).filter(p => p.id !== id);
+  fbGuardarExt();
+  renderPremiosFidelizacion();
+}
+
+function renderMultiplicadoresCategorias() {
+  const el = document.getElementById('fid-multiplicadores-list');
+  el.innerHTML = DB.categorias.map(c => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;border-bottom:1px solid var(--gray-100)">
+      <span>${c.emoji||''} ${c.nombre}</span>
+      <input type="number" class="form-control" style="width:70px" value="${c.multiplicadorPuntos||1}" step="0.5" min="0"
+        onchange="cambiarMultiplicadorCategoria(${c.id}, this.value)" />
+    </div>`).join('');
+}
+
+function cambiarMultiplicadorCategoria(catId, valor) {
+  const cat = DB.categorias.find(c => c.id === catId);
+  if (!cat) return;
+  cat.multiplicadorPuntos = parseFloat(valor) || 1;
+  fbGuardarProductos();
+}
+
+function renderCanjesHistorial() {
+  const el = document.getElementById('fid-canjes-historial');
+  if (!el) return;
+  if (!fbFS) { el.innerHTML = ''; return; }
+  el.innerHTML = '⏳ Cargando...';
+  fbFS.collection('canjes').orderBy('fecha', 'desc').limit(20).get().then(snap => {
+    if (snap.empty) { el.innerHTML = '<div style="color:var(--gray-400);padding:.5rem">Sin canjes todavía.</div>'; return; }
+    el.innerHTML = snap.docs.map(d => {
+      const c = d.data();
+      return `<div style="padding:.35rem 0;border-bottom:1px solid var(--gray-100);font-size:.85rem">
+        📅 ${formatDate(c.fecha)} — <strong>${getClienteNombre(c.clienteId)}</strong> canjeó <strong>${c.premioNombre}</strong> (${c.puntosUsados} pts)
+      </div>`;
+    }).join('');
+  }).catch(() => { el.innerHTML = 'Error cargando canjes.'; });
+}
+
 function renderFrecuentes() {
+  renderFidelizacionConfig();
   // Niveles
   document.getElementById('niveles-display').innerHTML = DB_EXT.niveles.map(n => `
     <div class="card" style="text-align:center;border-top:4px solid var(--primary)">
