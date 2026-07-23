@@ -2339,6 +2339,46 @@ background: #F5F3FF;
       </div>
       <input type="hidden" id="prod-img-data" />
     </div>
+
+    <div class="form-group" style="border-top:1px solid var(--gray-200);padding-top:.75rem">
+      <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+        <input type="checkbox" id="prod-tiene-detalle" onchange="_toggleDetalleProducto()" />
+        <span>🔍 Este producto necesita más información en la tienda pública</span>
+      </label>
+      <div style="font-size:.72rem;color:var(--gray-400);margin-top:.2rem">Para ropa, electrodomésticos, licores — algo que un cliente necesite ver en detalle antes de comprar. Un ajo suelto o una gaseosa no lo necesitan — déjalo apagado.</div>
+    </div>
+    <div id="prod-detalle-wrap" style="display:none;background:var(--gray-50);border-radius:8px;padding:.75rem;margin-top:.5rem">
+      <div class="form-group">
+        <label>Descripción extendida</label>
+        <textarea class="form-control" id="prod-desc-extendida" rows="3" placeholder="Detalle completo que verá el cliente al abrir el producto..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>📷 Fotos adicionales (hasta 2)</label>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <div>
+            <div id="prod-img-extra-1-preview" style="width:64px;height:64px;border:2px dashed var(--gray-300);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;background:#fff;overflow:hidden;cursor:pointer" onclick="document.getElementById('prod-img-extra-1-file').click()">🖼️</div>
+            <input type="file" id="prod-img-extra-1-file" accept="image/*" style="display:none" onchange="onProdImgExtraSelect(event, 1)" />
+          </div>
+          <div>
+            <div id="prod-img-extra-2-preview" style="width:64px;height:64px;border:2px dashed var(--gray-300);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;background:#fff;overflow:hidden;cursor:pointer" onclick="document.getElementById('prod-img-extra-2-file').click()">🖼️</div>
+            <input type="file" id="prod-img-extra-2-file" accept="image/*" style="display:none" onchange="onProdImgExtraSelect(event, 2)" />
+          </div>
+        </div>
+        <input type="hidden" id="prod-img-extra-1-data" />
+        <input type="hidden" id="prod-img-extra-2-data" />
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" id="prod-tiene-mayor" onchange="document.getElementById('prod-mayor-wrap').style.display=this.checked?'flex':'none'" />
+          <span>Ofrece precio por mayor</span>
+        </label>
+        <div id="prod-mayor-wrap" style="display:none;gap:.5rem;margin-top:.4rem">
+          <input type="number" class="form-control" id="prod-mayor-cant" placeholder="Cantidad mínima" style="flex:1" />
+          <input type="number" class="form-control" id="prod-mayor-precio" placeholder="Precio por mayor (S/, c/u)" step="0.1" style="flex:1" />
+        </div>
+      </div>
+    </div>
+
     <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem">
       <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-producto')">Cancelar</button>
       <button type="button" class="btn btn-primary" onclick="guardarProducto()">Guardar Producto</button>
@@ -4911,6 +4951,19 @@ function abrirModalProducto() {
   document.getElementById('prod-img-file').value = '';
   const _prevImg = document.getElementById('prod-img-preview');
   if (_prevImg) { _prevImg.innerHTML = '🖼️'; _prevImg.style.fontSize='2rem'; }
+  // Resetear seccion de detalle
+  document.getElementById('prod-tiene-detalle').checked = false;
+  document.getElementById('prod-detalle-wrap').style.display = 'none';
+  document.getElementById('prod-desc-extendida').value = '';
+  document.getElementById('prod-tiene-mayor').checked = false;
+  document.getElementById('prod-mayor-wrap').style.display = 'none';
+  document.getElementById('prod-mayor-cant').value = '';
+  document.getElementById('prod-mayor-precio').value = '';
+  ['1','2'].forEach(slot => {
+    document.getElementById(`prod-img-extra-${slot}-data`).value = '';
+    const p = document.getElementById(`prod-img-extra-${slot}-preview`);
+    if (p) p.innerHTML = '🖼️';
+  });
   updateModalCats(); updateModalProvs();
   abrirModal('modal-producto');
 }
@@ -4951,6 +5004,38 @@ function editarProducto(id) {
   } else {
     preview.innerHTML = '🖼️';
     preview.style.fontSize = '2rem';
+  }
+  // Detalle: se lee de su colección propia solo si el producto la usa — no en cada carga del catálogo.
+  document.getElementById('prod-tiene-detalle').checked = !!p.tieneDetalle;
+  document.getElementById('prod-detalle-wrap').style.display = p.tieneDetalle ? 'block' : 'none';
+  document.getElementById('prod-desc-extendida').value = '';
+  document.getElementById('prod-tiene-mayor').checked = false;
+  document.getElementById('prod-mayor-wrap').style.display = 'none';
+  document.getElementById('prod-mayor-cant').value = '';
+  document.getElementById('prod-mayor-precio').value = '';
+  ['1','2'].forEach(slot => {
+    document.getElementById(`prod-img-extra-${slot}-data`).value = '';
+    const pv = document.getElementById(`prod-img-extra-${slot}-preview`);
+    if (pv) pv.innerHTML = '🖼️';
+  });
+  if (p.tieneDetalle && fbFS) {
+    fbFS.collection('productos_detalle').doc(String(id)).get().then(doc => {
+      if (!doc.exists) return;
+      const d = doc.data();
+      document.getElementById('prod-desc-extendida').value = d.descripcion || '';
+      (d.imagenesExtra || []).forEach((url, i) => {
+        if (i > 1) return;
+        document.getElementById(`prod-img-extra-${i+1}-data`).value = url;
+        const pv = document.getElementById(`prod-img-extra-${i+1}-preview`);
+        if (pv) pv.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:6px"/>`;
+      });
+      if (d.precioMayor) {
+        document.getElementById('prod-tiene-mayor').checked = true;
+        document.getElementById('prod-mayor-wrap').style.display = 'flex';
+        document.getElementById('prod-mayor-cant').value = d.precioMayor.cantidadMin || '';
+        document.getElementById('prod-mayor-precio').value = d.precioMayor.precio || '';
+      }
+    }).catch(e => console.warn('No se pudo cargar el detalle:', e));
   }
   abrirModal('modal-producto');
 }
@@ -4999,6 +5084,64 @@ function onProdImgSelect(e) {
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+// ── Detalle de producto (tienda pública): datos pesados, colección propia (productos_detalle),
+// separada del catálogo base — así un ajo suelto nunca paga por esto, ni en tamaño ni en lecturas.
+function _toggleDetalleProducto() {
+  document.getElementById('prod-detalle-wrap').style.display =
+    document.getElementById('prod-tiene-detalle').checked ? 'block' : 'none';
+}
+
+// Fotos extra: mismo patrón que la imagen principal — sube a Storage, guarda solo la URL.
+function onProdImgExtraSelect(e, slot) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    const img = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 200; canvas.height = 200;
+      const ctx = canvas.getContext('2d');
+      const scale = Math.max(200/img.width, 200/img.height);
+      const sw = 200/scale, sh = 200/scale;
+      const sx = (img.width - sw)/2, sy = (img.height - sh)/2;
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 200, 200);
+      const previewData = canvas.toDataURL('image/webp', 0.78);
+      const preview = document.getElementById(`prod-img-extra-${slot}-preview`);
+      if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:6px"/>`;
+      if (!fbStorage) {
+        document.getElementById(`prod-img-extra-${slot}-data`).value = previewData;
+        return;
+      }
+      canvas.toBlob(async (blob) => {
+        try {
+          const fileName = `productos_detalle/${editingProductId || Date.now()}_${slot}.webp`;
+          const ref = fbStorage.ref(fileName);
+          await ref.put(blob, { contentType: 'image/webp' });
+          const url = await ref.getDownloadURL();
+          document.getElementById(`prod-img-extra-${slot}-data`).value = url;
+        } catch(err) {
+          document.getElementById(`prod-img-extra-${slot}-data`).value = previewData;
+        }
+      }, 'image/webp', 0.78);
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Escribe/borra el registro de detalle — colección aparte, lectura pública (la tienda no
+// tiene login), escritura solo admin.
+function fbGuardarDetalleProducto(prodId, detalle) {
+  if (!fbFS) return;
+  fbFS.collection('productos_detalle').doc(String(prodId)).set(detalle)
+    .catch(e => console.warn('fbGuardarDetalleProducto: no se pudo escribir productos_detalle/' + prodId, e));
+}
+function fbBorrarDetalleProducto(prodId) {
+  if (!fbFS) return;
+  fbFS.collection('productos_detalle').doc(String(prodId)).delete().catch(()=>{});
 }
 
 function limpiarImgProd() {
@@ -5279,6 +5422,7 @@ function guardarProducto() {
 
   const existente = editingProductId ? DB.productos.find(p => p.id === editingProductId) : null;
 
+  const tieneDetalle = document.getElementById('prod-tiene-detalle')?.checked || false;
   const prod = {
     id: editingProductId || getId(),
     nombre, cat,
@@ -5289,7 +5433,8 @@ function guardarProducto() {
     venc: document.getElementById('prod-venc').value,
     codigo: document.getElementById('prod-codigo').value || '7' + getId().toString().slice(-12),
     prov: parseInt(document.getElementById('prod-prov').value) || null,
-    imagen: document.getElementById('prod-img-data').value || ''
+    imagen: document.getElementById('prod-img-data').value || '',
+    tieneDetalle
   };
 
   if (existente) {
@@ -5312,6 +5457,24 @@ function guardarProducto() {
     if (stockInicial > 0) ajustarStockSede(prod, stockInicial, sede);
   }
   fbGuardarProductos();
+
+  // Detalle: colección aparte (productos_detalle) — solo se escribe/lee si el producto la usa.
+  if (tieneDetalle) {
+    const tieneMayor = document.getElementById('prod-tiene-mayor')?.checked || false;
+    const detalle = {
+      descripcion: document.getElementById('prod-desc-extendida')?.value.trim() || '',
+      imagenesExtra: [document.getElementById('prod-img-extra-1-data')?.value, document.getElementById('prod-img-extra-2-data')?.value].filter(Boolean),
+      precioMayor: tieneMayor ? {
+        cantidadMin: parseFloat(document.getElementById('prod-mayor-cant')?.value) || 0,
+        precio: parseFloat(document.getElementById('prod-mayor-precio')?.value) || 0
+      } : null
+    };
+    fbGuardarDetalleProducto(prod.id, detalle);
+  } else if (existente && existente.tieneDetalle) {
+    // Se desactivó — limpia el registro huérfano, no lo deja abandonado.
+    fbBorrarDetalleProducto(prod.id);
+  }
+
   cerrarModal('modal-producto');
   renderInvTable();
   updateAlertCount();
