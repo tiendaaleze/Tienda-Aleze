@@ -1912,6 +1912,7 @@ background: #F5F3FF;
               <option value="mermas">Mermas</option>
               <option value="fiados">Fiados</option>
               <option value="gastos">Gastos</option>
+              <option value="fidelizacion">Fidelización (canjes)</option>
             </select>
          <select class="form-control" id="rep-periodo" style="width:150px" onchange="setPeriodoReporte()">
               <option value="todos">Todos</option>
@@ -7264,6 +7265,7 @@ async function generarReporte() {
   if (tipo === 'mermas') { reporteMermas(desde, hasta, sede); return; }
   if (tipo === 'fiados') { reporteFiados(sede); return; }
   if (tipo === 'gastos') { reporteGastos(desde, hasta, sede); return; }
+  if (tipo === 'fidelizacion') { reporteFidelizacion(desde, hasta, sede); return; }
 
   // Solo ventas/productos/rentabilidad consultan ventas/{id}
   const diasRango = Math.round((new Date(hasta) - new Date(desde)) / 86400000);
@@ -7489,6 +7491,51 @@ function reporteGastos(desde, hasta, sede) {
     <tbody>${gastos.map(g=>`<tr><td>${formatDate(g.fecha)}</td><td><span class="badge badge-orange">${g.tipo}</span></td><td>${g.desc}</td><td style="font-weight:700;color:var(--danger)">${sol(g.monto)}</td></tr>`).join('')}</tbody>
     <tfoot><tr style="background:var(--gray-50);font-weight:700"><td colspan="3">TOTAL</td><td style="color:var(--danger)">${sol(total)}</td></tr></tfoot>
     </table>`;
+}
+
+// ── Reporte de Fidelización: costo real del programa en el período, no solo el historial suelto.
+// canjes vive únicamente en Firestore (colección propia) — se trae ahí, no de un array local.
+function reporteFidelizacion(desde, hasta, sede) {
+  document.getElementById('rep-stats').innerHTML = '⏳ Cargando...';
+  document.getElementById('rep-tabla-wrap').innerHTML = '';
+  if (!fbFS) { document.getElementById('rep-stats').innerHTML = 'Sin conexión.'; return; }
+  fbFS.collection('canjes').where('fecha', '>=', desde).where('fecha', '<=', hasta).get().then(snap => {
+    let canjes = snap.docs.map(d => d.data());
+    if (sede) canjes = canjes.filter(c => (c.sedeId||'principal') === sede);
+
+    const totalCanjes = canjes.length;
+    const puntosCanjeados = canjes.reduce((s,c) => s + (c.puntosUsados||0), 0);
+    const costoProductos = canjes.filter(c=>c.tipo==='producto').reduce((s,c) => s + (c.costoAsociado||0), 0);
+    const costoDescuentos = canjes.filter(c=>c.tipo==='descuento').reduce((s,c) => s + (c.montoDescuento||0), 0);
+    const costoTotal = Math.round((costoProductos + costoDescuentos) * 100) / 100;
+
+    // Contexto: cuánto representa este costo sobre lo vendido en el mismo período — la pregunta
+    // real de negocio ("¿el programa se está comiendo el margen?"), no solo un número suelto.
+    const ventasPeriodo = (DB.historialVentas||[]).filter(v => v.fecha>=desde && v.fecha<=hasta && v.estado!=='fiado' && (!sede || (v.sedeId||'principal')===sede)).reduce((s,v)=>s+(v.total||0),0);
+    const pctSobreVentas = ventasPeriodo > 0 ? (costoTotal / ventasPeriodo * 100) : 0;
+
+    if (chartReporte) chartReporte.destroy();
+    chartReporte = new Chart(document.getElementById('chart-reporte').getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: ['Productos canjeados', 'Descuentos aplicados'], datasets: [{ data: [costoProductos, costoDescuentos], backgroundColor: ['#7C3AED','#F59E0B'] }] },
+      options: { plugins: { legend: { position: 'bottom' } }, responsive: true }
+    });
+
+    document.getElementById('rep-stats').innerHTML = `
+      <div class="stat-card"><div class="stat-label">Canjes realizados</div><div class="stat-value">${totalCanjes}</div></div>
+      <div class="stat-card orange"><div class="stat-label">Puntos canjeados</div><div class="stat-value">${puntosCanjeados}</div></div>
+      <div class="stat-card red"><div class="stat-label">Costo total S/</div><div class="stat-value">${sol(costoTotal)}</div></div>
+      <div class="stat-card ${pctSobreVentas > 3 ? 'red' : 'green'}"><div class="stat-label">% sobre ventas del período</div><div class="stat-value">${pctSobreVentas.toFixed(2)}%</div></div>`;
+    document.getElementById('rep-tabla-titulo').textContent = 'Canjes del período';
+    document.getElementById('rep-tabla-wrap').innerHTML = `
+      <table><thead><tr><th>Fecha</th><th>Cliente</th><th>Premio</th><th>Tipo</th><th>Puntos</th><th>Costo S/</th></tr></thead>
+      <tbody>${canjes.map(c=>`<tr><td>${formatDate(c.fecha)}</td><td>${getClienteNombre(c.clienteId)}</td><td>${c.premioNombre}</td><td>${c.tipo==='producto'?'📦 Producto':'💰 Descuento'}</td><td>${c.puntosUsados}</td><td style="font-weight:700;color:var(--danger)">${sol((c.costoAsociado||0)+(c.montoDescuento||0))}</td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--gray-400)">Sin canjes en este período</td></tr>'}</tbody>
+      <tfoot><tr style="background:var(--gray-50);font-weight:700"><td colspan="5">TOTAL</td><td style="color:var(--danger)">${sol(costoTotal)}</td></tr></tfoot>
+      </table>`;
+  }).catch(e => {
+    document.getElementById('rep-stats').innerHTML = 'Error cargando canjes.';
+    console.warn('reporteFidelizacion:', e);
+  });
 }
 async function exportReporte() {
   const desde = document.getElementById('rep-desde').value || '2000-01-01';
