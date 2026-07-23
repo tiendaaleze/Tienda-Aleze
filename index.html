@@ -11840,6 +11840,34 @@ function _semillaDemo(hoy) {
 
 // ===================== RESET DE DATOS — SOLO ADMIN =====================
 
+// ── Vacía una colección completa via batches (Firestore no tiene "borrar todo" en una sola llamada) ──
+// Sin esto, Reset limpia lo local pero deja el historial completo intacto en Firestore — un
+// reset que no resetea de verdad. No bloqueante — si falla, el reset local ya ocurrió igual.
+async function _vaciarColeccion(nombreColeccion) {
+  if (!fbFS) return;
+  try {
+    const snap = await fbFS.collection(nombreColeccion).get();
+    if (snap.empty) return;
+    const docs = snap.docs;
+    for (let i = 0; i < docs.length; i += 450) {
+      const batch = fbFS.batch();
+      docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+  } catch (e) {
+    console.warn('_vaciarColeccion: no se pudo vaciar ' + nombreColeccion, e);
+  }
+}
+// Reinicia caja de TODAS las sedes conocidas, no solo la de la sesión actual — un reset de
+// dashboard es del negocio completo, no de una sola sede.
+function _reiniciarCajaTodasLasSedes() {
+  const vacia = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
+  ['principal', 'Tienda Aleze II'].forEach(sede => {
+    DB._cajas[sede] = _crearCajaProxy(sede, { ...vacia });
+    if (fbFS) fbFS.collection('caja').doc(sede).set(vacia).catch(()=>{});
+  });
+}
+
 const RESET_CONFIG = {
   dashboard: {
     nombre: 'Dashboard (todos los datos operativos)',
@@ -11850,11 +11878,12 @@ const RESET_CONFIG = {
       DB.mermas = [];
       DB.movimientos = [];
       DB.historialVentas = [];
-      DB.caja = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '' };
+      _reiniciarCajaTodasLasSedes();
       DB.clientes.forEach(c => { c.compras = 0; c.total = 0; c.deuda = 0; });
       DB_EXT.gastos = [];
    DB_EXT.capital = { total: 0, cuota: 0, meta: 0, recuperado: 0, prestamo: 0, prestamoPagado: 0, hist: [] };
-      const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; _payload._resetToken = true; _fbLastWriteTs = Date.now(); fbDocRef().set(_payload); fbGuardarExt();
+      const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); fbDocRef().set(_payload); fbGuardarExt();
+      ['ventas','fiados','mermas','movimientos','gastos'].forEach(_vaciarColeccion);
       try { renderDashboard(); } catch(e) {}
       try { updateAlertCount(); } catch(e) {}
     }
@@ -11866,6 +11895,7 @@ const RESET_CONFIG = {
       DB.fiados = [];
       DB.clientes.forEach(c => { c.deuda = 0; });
       fbGuardar();
+      _vaciarColeccion('fiados');
       try { renderFiados(); } catch(e) {}
       try { renderDashboard(); } catch(e) {}
     }
@@ -11876,6 +11906,7 @@ const RESET_CONFIG = {
     accion: () => {
       DB.mermas = [];
       fbGuardar();
+      _vaciarColeccion('mermas');
       try { renderMermas(); } catch(e) {}
     }
   },
@@ -11885,6 +11916,7 @@ const RESET_CONFIG = {
     accion: () => {
       DB_EXT.gastos = [];
       fbGuardarExt();
+      _vaciarColeccion('gastos');
       try { renderGastos(); } catch(e) {}
       try { renderDashboard(); } catch(e) {}
     }
@@ -11907,6 +11939,7 @@ const RESET_CONFIG = {
       DB_EXT.gastos = [];
       DB.clientes.forEach(c => { c.compras = 0; c.total = 0; });
       fbGuardar(); fbGuardarExt();
+      ['ventas','gastos'].forEach(_vaciarColeccion);
       try { generarReporte(); } catch(e) {}
       try { renderDashboard(); } catch(e) {}
     }
