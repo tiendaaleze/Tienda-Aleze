@@ -6670,7 +6670,7 @@ function eliminarConceptoFiado(fiadoId, conceptoId) {
   if (!fiado || !fiado.conceptosAdicionales) return;
   const concepto = fiado.conceptosAdicionales.find(c => c.id === conceptoId);
   if (!concepto) return;
-  if (!confirm(`¿Quitar "${concepto.desc}" (${sol(concepto.monto)}) de esta cuenta?`)) return;
+  if (!confirm(`¿Quitar "${concepto.desc}" (${sol(concepto.monto)}) de esta cuenta?\n\n⚠️ Esto NO registra un pago — solo borra la deuda como si nunca se hubiera cargado (por error, cancelación, etc.), sin sumar nada a caja.\n\nSi el cliente ya pagó esto, cierra esta ventana y usa "Registrar pago" o "Pago global" en su lugar.`)) return;
   fiado.conceptosAdicionales = fiado.conceptosAdicionales.filter(c => c.id !== conceptoId);
   fiado.total = Math.round((fiado.total - concepto.monto) * 100) / 100;
   const cli = DB.clientes.find(c => c.id === fiado.clienteId);
