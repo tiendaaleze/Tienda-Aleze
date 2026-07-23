@@ -1772,8 +1772,8 @@ background: #F5F3FF;
             <input type="date" class="form-control" id="fi-desde" style="width:150px" onchange="renderFiados()"/>
             <input type="date" class="form-control" id="fi-hasta" style="width:150px" onchange="renderFiados()"/>
             <select class="form-control" id="fi-estado" style="width:160px" onchange="renderFiados()">
+              <option value="pendiente" selected>Con pendiente</option>
               <option value="">Todos</option>
-              <option value="pendiente">Con pendiente</option>
               <option value="pagado">Pagados</option>
             </select>
             <select class="form-control" id="fi-cliente" style="width:180px" onchange="renderFiados()">
@@ -6450,12 +6450,16 @@ function renderFiados() {
   const estado   = document.getElementById('fi-estado')?.value || '';
   const cliFilter = parseInt(document.getElementById('fi-cliente')?.value) || 0;
 
-  // Poblar selector de clientes con los que tienen fiados
+  // Poblar selector de clientes — respeta el filtro de estado actual (por defecto "pendiente"),
+  // así no lista clientes que la tarjeta de abajo ya está ocultando.
   const selCli = document.getElementById('fi-cliente');
   if (selCli) {
     const valorActual = selCli.value;
     selCli.innerHTML = '<option value="">Todos los clientes</option>';
-    const cidsConFiados = [...new Set(DB.fiados.map(f => f.clienteId))];
+    let fiadosParaSelector = DB.fiados;
+    if (estado === 'pendiente') fiadosParaSelector = fiadosParaSelector.filter(f => (f.total - f.pagado) > 0.01);
+    if (estado === 'pagado')    fiadosParaSelector = fiadosParaSelector.filter(f => (f.total - f.pagado) <= 0.01);
+    const cidsConFiados = [...new Set(fiadosParaSelector.map(f => f.clienteId))];
     cidsConFiados.forEach(cid => {
       const cli = DB.clientes.find(c => c.id === cid);
       if (cli) selCli.innerHTML += `<option value="${cli.id}">${cli.alias||cli.nombre}</option>`;
@@ -6502,12 +6506,15 @@ function renderFiados() {
     return;
   }
 
+  const _hace30dias = new Date(); _hace30dias.setDate(_hace30dias.getDate() - 30);
+  const _hace30diasStr = _hace30dias.toISOString().split('T')[0];
   document.getElementById('fiados-list').innerHTML = clienteIds.map(cid => {
     const cli = DB.clientes.find(c => c.id === cid);
     const nombre = cli ? (cli.alias || cli.nombre) : 'Anónimo';
     const tel = cli ? cli.tel : '';
     let fiados = porCliente[cid];
-    if (desde || hasta) fiados = fiados.filter(f => (!desde || f.fecha >= desde) && (!hasta || f.fecha <= hasta));
+    if (desde || hasta) fiados = fiados.filter(f => ((!desde || f.fecha >= desde) && (!hasta || f.fecha <= hasta)) || (f.total - f.pagado) > 0.01);
+    else fiados = fiados.filter(f => f.fecha >= _hace30diasStr || (f.total - f.pagado) > 0.01);
     const totalCli = Math.round(fiados.reduce((s, f) => s + f.total, 0) * 100) / 100;
     const pagadoCli = Math.round(fiados.reduce((s, f) => s + f.pagado, 0) * 100) / 100;
     const pendienteCli = Math.round((totalCli - pagadoCli) * 100) / 100;
@@ -6553,7 +6560,7 @@ function renderFiados() {
             <option value="pendiente">Solo pendientes</option>
             <option value="pagado">Solo pagados</option>
           </select>
-          <input type="date" class="form-control" id="fi-int-desde-${cid}" style="width:140px;font-size:.78rem" onchange="renderDetalleFiado(${cid})"/>
+          <input type="date" class="form-control" id="fi-int-desde-${cid}" value="${_hace30diasStr}" style="width:140px;font-size:.78rem" onchange="renderDetalleFiado(${cid})"/>
           <input type="date" class="form-control" id="fi-int-hasta-${cid}" style="width:140px;font-size:.78rem" onchange="renderDetalleFiado(${cid})"/>
           <button class="btn btn-outline btn-xs" onclick="limpiarFiltrosInternosFiado(${cid})">✕</button>
         </div>
@@ -6597,8 +6604,10 @@ function renderDetalleFiado(cid) {
   const desde = document.getElementById('fi-int-desde-' + cid)?.value || '';
   const hasta = document.getElementById('fi-int-hasta-' + cid)?.value || '';
   let fiados  = DB.fiados.filter(f => f.clienteId === cid);
-  if (desde) fiados = fiados.filter(f => f.fecha >= desde);
-  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
+  // Un pendiente nunca desaparece por el filtro de fecha (sigue siendo deuda real) — el
+  // filtro de fecha solo acota lo YA PAGADO.
+  if (desde) fiados = fiados.filter(f => f.fecha >= desde || (f.total - f.pagado) > 0.01);
+  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta || (f.total - f.pagado) > 0.01);
   if (tipo === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
   if (tipo === 'pagado')    fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
   const html = [...fiados].sort((a,b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.id - a.id).map(f => {
@@ -6689,8 +6698,10 @@ function compartirResumenFiadoCliente(cid) {
   const desde = document.getElementById('fi-int-desde-' + cid)?.value || '';
   const hasta = document.getElementById('fi-int-hasta-' + cid)?.value || '';
   let fiados  = DB.fiados.filter(f => f.clienteId === cid);
-  if (desde) fiados = fiados.filter(f => f.fecha >= desde);
-  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
+  // Un pendiente nunca desaparece por el filtro de fecha (sigue siendo deuda real) — el
+  // filtro de fecha solo acota lo YA PAGADO.
+  if (desde) fiados = fiados.filter(f => f.fecha >= desde || (f.total - f.pagado) > 0.01);
+  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta || (f.total - f.pagado) > 0.01);
   if (tipo === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
   if (tipo === 'pagado')    fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
   const totalPend = Math.round(fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
@@ -10240,6 +10251,15 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
       const _limitePodaMov = new Date(); _limitePodaMov.setDate(_limitePodaMov.getDate() - 30);
       const _limitePodaMovStr = _limitePodaMov.toISOString().split('T')[0];
       DB.movimientos = DB.movimientos.filter(m => m.fecha >= _limitePodaMovStr);
+    }
+    // Mismo criterio para fiados, con una diferencia importante: un fiado PENDIENTE nunca se
+    // poda sin importar su antigüedad (sigue siendo deuda real por cobrar) — solo se recorta
+    // lo YA PAGADO más viejo de 90 días. El historial completo, pagado o no, ya vive en
+    // fiados/{id}; "traer historial completo" en la pantalla lo consulta ahí cuando hace falta.
+    if (DB.fiados && DB.fiados.length) {
+      const _limitePodaFiados = new Date(); _limitePodaFiados.setDate(_limitePodaFiados.getDate() - 90);
+      const _limitePodaFiadosStr = _limitePodaFiados.toISOString().split('T')[0];
+      DB.fiados = DB.fiados.filter(f => (f.total - f.pagado) > 0.01 || f.fecha >= _limitePodaFiadosStr);
     }
     // Excluir productos y categorias — tienen su propio documento
     const payload = JSON.parse(JSON.stringify(DB));
