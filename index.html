@@ -1749,7 +1749,7 @@ background: #F5F3FF;
         <div class="flex-between" style="margin-bottom:1rem">
           <div class="page-title" style="margin:0">Control de Fiados</div>
           <div style="display:flex;gap:.5rem">
-            <button type="button" class="btn btn-outline btn-sm" onclick="agregarConceptoFiado()" style="font-size:0.78rem">📝 + Concepto adicional</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="agregarNotaFiado()" style="font-size:0.78rem" title="Nota informativa — no suma a la deuda ni se puede pagar">📝 + Nota</button>
             <button type="button" class="btn btn-danger btn-sm" onclick="abrirReset('fiados')" style="font-size:0.78rem">🗑️ Limpiar fiados</button>
           </div>
         </div>
@@ -6524,10 +6524,6 @@ function renderFiados() {
         <div style="font-size:.8rem;margin-bottom:.3rem">
           ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join(' · ')}
         </div>
-        ${(f.conceptosAdicionales||[]).map(c => `<div style="font-size:.78rem;color:var(--gray-600);display:flex;justify-content:space-between;align-items:center;background:var(--gray-50);border-radius:5px;padding:.25rem .5rem;margin-bottom:.25rem">
-          <span>📝 ${c.desc} — ${sol(c.monto)}</span>
-          ${currentRole === 'admin' ? `<button onclick="eliminarConceptoFiado(${f.id},${c.id})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.85rem">✕</button>` : ''}
-        </div>`).join('')}
         <div style="font-size:.72rem;color:var(--gray-500)">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
         <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
           ${pend > 0 ? `<button class="btn btn-accent btn-xs" onclick="abrirPagoFiado(${f.id})">💰 Registrar pago</button>` : ''}
@@ -6562,6 +6558,17 @@ function renderFiados() {
           <button class="btn btn-outline btn-xs" onclick="limpiarFiltrosInternosFiado(${cid})">✕</button>
         </div>
         <div id="fi-detalle-content-${cid}">${detalle}</div>
+        ${(cli && cli.notasFiado && cli.notasFiado.length) ? `
+        <div style="margin-top:.75rem;padding-top:.5rem;border-top:1px dashed var(--gray-300)">
+          <div style="font-size:.75rem;font-weight:700;color:var(--gray-500);margin-bottom:.4rem">📝 Notas (solo informativas — no afectan la deuda)</div>
+          ${cli.notasFiado.map(n => `<div style="display:flex;justify-content:space-between;align-items:center;background:var(--gray-50);border-radius:6px;padding:.4rem .6rem;margin-bottom:.3rem;font-size:.8rem">
+            <span>${n.desc}${n.monto ? ` <span style="color:var(--gray-400)">(ref. ${sol(n.monto)})</span>` : ''} <span style="color:var(--gray-400);font-size:.72rem">— ${formatDate(n.fecha)}</span></span>
+            <span style="display:flex;gap:.3rem">
+              <button onclick="editarNotaFiado(${cid},${n.id})" style="background:none;border:none;color:var(--gray-500);cursor:pointer">✏️</button>
+              <button onclick="eliminarNotaFiado(${cid},${n.id})" style="background:none;border:none;color:var(--danger);cursor:pointer">✕</button>
+            </span>
+          </div>`).join('')}
+        </div>` : ''}
       </div>
       <div style="margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--warning);text-align:right;display:flex;gap:.5rem;justify-content:flex-end">
         <button class="btn btn-outline btn-sm" onclick="abrirPagoGlobal(${cid})">💳 Pago global</button>
@@ -6621,7 +6628,12 @@ function renderDetalleFiado(cid) {
 // fiado para el cobro y el WhatsApp, pero vive en un campo APARTE de "items". Rentabilidad,
 // reportes y puntos de fidelización solo miran "items" — nunca tocan esto, tal como se pidió.
 // No aplica a tienda pública — es exclusivo del flujo interno de Fiados.
-function agregarConceptoFiado() {
+// ── Notas de fiado: PURA información, cero acciones ──────────────────────────────────────
+// A diferencia del diseño anterior (retirado tras probarlo): esto NO suma al total de ningún
+// fiado, NO se puede pagar, NO llega a caja, y NO aparece en los mensajes de WhatsApp
+// automáticos — el staff la copia a mano si quiere avisarle al cliente. Vive en el CLIENTE
+// (no en un fiado específico), porque no tiene relación con ningún ciclo de pago.
+function agregarNotaFiado() {
   const query = prompt('Nombre del cliente (o parte del nombre):');
   if (!query || !query.trim()) return;
   const matches = DB.clientes.filter(c => _norm(c.nombre).includes(_norm(query)) || _norm(c.alias||'').includes(_norm(query)));
@@ -6634,49 +6646,38 @@ function agregarConceptoFiado() {
     if (!idx || idx < 1 || idx > matches.length) return;
     cli = matches[idx-1];
   }
-  const desc = prompt(`¿Qué se le vendió a ${cli.alias||cli.nombre}? (ej: "Arreglo floral a pedido")`);
+  const desc = prompt(`Nota sobre ${cli.alias||cli.nombre} (describe completo, ej: "Arreglo floral con rosas y girasoles a pedido"):`);
   if (!desc || !desc.trim()) return;
-  const monto = parseFloat(prompt('Monto (S/):'));
-  if (!monto || isNaN(monto) || monto <= 0) { alert('Monto inválido.'); return; }
+  const montoRaw = prompt('Monto de referencia (S/) — opcional, solo para recordar cuánto cobrar, no se suma a nada:');
+  const monto = parseFloat(montoRaw);
 
-  // Se suma al fiado pendiente más reciente de este cliente (varios conceptos pueden
-  // acumularse en la misma cuenta durante los días previos al pago), o crea uno nuevo si no tiene.
-  let fiado = DB.fiados.filter(f => f.clienteId === cli.id && (f.total - f.pagado) > 0.01)
-    .sort((a,b) => a.fecha < b.fecha ? 1 : -1)[0];
-  const concepto = { id: getId(), desc: desc.trim(), monto: Math.round(monto*100)/100, fecha: today() };
-  if (fiado) {
-    if (!fiado.conceptosAdicionales) fiado.conceptosAdicionales = [];
-    fiado.conceptosAdicionales.push(concepto);
-    fiado.total = Math.round((fiado.total + concepto.monto) * 100) / 100;
-  } else {
-    fiado = {
-      id: getId(), clienteId: cli.id, items: [],
-      conceptosAdicionales: [concepto],
-      total: concepto.monto, pagado: 0, fecha: today(),
-      descuentoCombo: 0, descuentoManual: 0,
-      sedeId: currentUserSedeId || 'principal'
-    };
-    DB.fiados.push(fiado);
-  }
-  cli.deuda = Math.round(((cli.deuda||0) + concepto.monto) * 100) / 100;
-  fbSincronizarFiado(fiado);
-  fbGuardar();
+  if (!cli.notasFiado) cli.notasFiado = [];
+  cli.notasFiado.push({ id: getId(), desc: desc.trim(), monto: (!isNaN(monto) && monto > 0) ? Math.round(monto*100)/100 : null, fecha: today() });
+  fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
-  alert(`✅ Agregado a la cuenta de ${cli.alias||cli.nombre}: "${concepto.desc}" — ${sol(concepto.monto)}`);
+  alert(`✅ Nota guardada para ${cli.alias||cli.nombre}. No afecta su deuda ni su caja — es solo para recordarlo.`);
 }
 
-function eliminarConceptoFiado(fiadoId, conceptoId) {
-  const fiado = DB.fiados.find(f => f.id === fiadoId);
-  if (!fiado || !fiado.conceptosAdicionales) return;
-  const concepto = fiado.conceptosAdicionales.find(c => c.id === conceptoId);
-  if (!concepto) return;
-  if (!confirm(`¿Quitar "${concepto.desc}" (${sol(concepto.monto)}) de esta cuenta?\n\n⚠️ Esto NO registra un pago — solo borra la deuda como si nunca se hubiera cargado (por error, cancelación, etc.), sin sumar nada a caja.\n\nSi el cliente ya pagó esto, cierra esta ventana y usa "Registrar pago" o "Pago global" en su lugar.`)) return;
-  fiado.conceptosAdicionales = fiado.conceptosAdicionales.filter(c => c.id !== conceptoId);
-  fiado.total = Math.round((fiado.total - concepto.monto) * 100) / 100;
-  const cli = DB.clientes.find(c => c.id === fiado.clienteId);
-  if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda||0) - concepto.monto) * 100) / 100);
-  fbSincronizarFiado(fiado);
-  fbGuardar();
+function editarNotaFiado(clienteId, notaId) {
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  const nota = cli?.notasFiado?.find(n => n.id === notaId);
+  if (!nota) return;
+  const desc = prompt('Editar nota:', nota.desc);
+  if (desc === null || !desc.trim()) return;
+  const montoRaw = prompt('Monto de referencia (S/) — opcional:', nota.monto ?? '');
+  const monto = parseFloat(montoRaw);
+  nota.desc = desc.trim();
+  nota.monto = (!isNaN(monto) && monto > 0) ? Math.round(monto*100)/100 : null;
+  fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
+  renderFiados();
+}
+
+function eliminarNotaFiado(clienteId, notaId) {
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  if (!cli || !cli.notasFiado) return;
+  if (!confirm('¿Eliminar esta nota?')) return;
+  cli.notasFiado = cli.notasFiado.filter(n => n.id !== notaId);
+  fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
 }
 
@@ -6698,12 +6699,7 @@ function compartirResumenFiadoCliente(cid) {
   msg += '\n';
   fiados.forEach(f => {
     const pend = Math.round((f.total - f.pagado) * 100) / 100;
-    const totalConceptos = (f.conceptosAdicionales||[]).reduce((s,c) => s + c.monto, 0);
-    const descItems = [
-      ...f.items.map(i => i.nombre + ' x' + i.cant),
-      ...(totalConceptos > 0 ? [`Otros: ${sol(totalConceptos)}`] : [])
-    ].join(', ');
-    msg += `📌 ${formatDate(f.fecha)}: ${descItems} → ${sol(f.total)}`;
+    msg += `📌 ${formatDate(f.fecha)}: ${f.items.map(i => i.nombre + ' x' + i.cant).join(', ')} → ${sol(f.total)}`;
     msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
   });
   msg += `\n*Total pendiente: ${sol(totalPend)}*\nGracias 🙏`;
@@ -6961,11 +6957,7 @@ function compartirFiadoWhatsapp() {
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
   const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
-  const totalConceptosF = (f.conceptosAdicionales||[]).reduce((s,c) => s + c.monto, 0);
-  const itemsPend = [
-    ...f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`),
-    ...(totalConceptosF > 0 ? [`• Otros = ${sol(totalConceptosF)}`] : [])
-  ].join('\n');
+  const itemsPend = f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join('\n');
   const msg = `Hola ${nombre}, le recordamos su deuda en *${DB.config.nombre||'Tienda Aleze'}*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
   const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   window.open(url, '_blank');
