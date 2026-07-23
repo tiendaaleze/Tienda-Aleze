@@ -2600,6 +2600,14 @@ background: #F5F3FF;
           <label>Límite de unidades <span style="font-size:.75rem;color:var(--gray-400)">(pausa automática al llegar)</span></label>
           <input type="number" class="form-control" id="promo-limite" value="100" min="1" step="1" />
         </div>
+        <div class="form-group">
+          <label>Sede <span style="font-size:.75rem;color:var(--gray-400)">(para liquidar stock concentrado en un solo local, sin traslado)</span></label>
+          <select class="form-control" id="promo-sede">
+            <option value="">Todas las sedes</option>
+            <option value="principal">Solo Principal</option>
+            <option value="Tienda Aleze II">Solo Tienda Aleze II</option>
+          </select>
+        </div>
       </div>
       <div>
         <div style="background:var(--gray-50);border-radius:10px;padding:1rem;margin-bottom:.75rem">
@@ -3183,6 +3191,11 @@ let _sedeAdminOverride = null;
 function sedeAdminEfectiva() {
   if (currentRole === 'admin' && _sedeAdminOverride) return _sedeAdminOverride;
   return currentUserSedeId || 'principal';
+}
+// Promo por sede: liquidar stock concentrado en un local sin forzar traslado innecesario.
+// sedeId vacio = todas las sedes (default, compatible con promos ya creadas).
+function _promoAplicaSede(promo, sede) {
+  return !promo.sedeId || promo.sedeId === sede;
 }
 function cambiarSedeAdmin(sede) {
   _sedeAdminOverride = sede || null;
@@ -4011,7 +4024,7 @@ function renderPosGrid(search = '') {
   let prods = DB.productos.filter(p => (p.esCombo || stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
  if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)));
   if (posFilterCat) prods = prods.filter(p => p.cat == posFilterCat);
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today());
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   document.getElementById('pos-grid').innerHTML = prods.map(p => {
     const promoTag = p.esCombo
       ? `<span class="promo-tag" style="background:var(--accent)">OFERTA</span>`
@@ -4101,7 +4114,7 @@ function addToCart(prodId) {
       }
     }
   }
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today());
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == prodId && !pr.prod2);
   const precio = promo ? promo.precioPromo : prod.precio;
   const existing = cart.find(i => i.prodId === prodId);
@@ -4178,7 +4191,7 @@ function getCatIcono(catId, size) {
 function aplicarPreciosProporcionales(cartRef, comboInfo) {
   const result = cartRef.map(i => ({ ...i }));
   if (!comboInfo || comboInfo.total === 0) return result;
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2);
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   promoActivas.forEach(promo => {
     const idx1 = result.findIndex(i => i.prodId == promo.prod1);
     const idx2 = result.findIndex(i => i.prodId == promo.prod2);
@@ -4238,7 +4251,7 @@ function checkAutoAbrirCaja() {
 function calcComboDescuento(cartRef) {
   // Returns { total: number, lineas: [{nombre, sets, descuento}] }
   cartRef = cartRef || cart;
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2);
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   let totalDesc = 0;
   const lineas = [];
   promoActivas.forEach(promo => {
@@ -8747,7 +8760,7 @@ let editingPromoId = null;
 function renderPromociones() {
   generarSugerenciasPromo();
   document.getElementById('promo-tbody').innerHTML = DB.promociones.map(p => `<tr>
-    <td><strong>${p.nombre}</strong></td>
+    <td><strong>${p.nombre}</strong>${p.sedeId ? `<div style="font-size:.68rem;color:var(--warning);font-weight:600">📍 Solo ${p.sedeId}</div>` : ''}</td>
     <td><span class="badge badge-${p.tipo==='combo'?'blue':'purple'}">${p.tipo}</span></td>
     <td style="font-size:0.8rem">${p.prod1nombre||''}${p.prod2nombre?' + '+p.prod2nombre:''}</td>
     <td>${sol(p.precioOrig)}</td>
@@ -8884,6 +8897,7 @@ function editarPromocion(id) {
   document.getElementById('promo-desde').value = pr.desde;
   document.getElementById('promo-hasta').value = pr.hasta;
   document.getElementById('promo-limite').value = pr.limite || 100;
+  document.getElementById('promo-sede').value = pr.sedeId || '';
   const margen = pr.precioOrig > 0 ? Math.round((pr.precioPromo/pr.precioOrig-1)*100) : 20;
   document.getElementById('promo-margen-num').value = Math.max(0, margen);
   document.getElementById('promo-margen-slider').value = Math.max(0, margen);
@@ -8923,6 +8937,7 @@ function abrirModalPromocion() {
   document.getElementById('promo-calc-detalle').textContent = 'Selecciona al menos un producto';
   document.getElementById('promo-aviso').textContent = '';
   document.getElementById('promo-limite').value = 100;
+  document.getElementById('promo-sede').value = '';
   document.getElementById('promo-img-data').value = '';
   document.getElementById('promo-img-file').value = '';
   const preview = document.getElementById('promo-img-preview');
@@ -9001,7 +9016,8 @@ function guardarPromocion() {
     desde: document.getElementById('promo-desde').value,
     hasta: document.getElementById('promo-hasta').value,
     activa: true, limite, vendidos: 0,
-    imagen, packProdId, packCodigo
+    imagen, packProdId, packCodigo,
+    sedeId: document.getElementById('promo-sede')?.value || ''
   };
   if (editingPromoId) {
     const idx = DB.promociones.findIndex(x => x.id === editingPromoId);
@@ -9187,7 +9203,7 @@ function renderMobPosGrid(prods) {
    prods = prods || DB.productos.filter(p => (p.esCombo || stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
   const grid = document.getElementById('mob-pos-grid');
   if (!grid) return;
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today());
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   grid.innerHTML = prods.map(p => {
     const tag = p.esCombo
       ? `<span class="promo-tag" style="position:absolute;top:4px;right:4px;font-size:.6rem;background:var(--accent)">OFERTA</span>`
@@ -9227,7 +9243,7 @@ function mobAddToCart(prodId) {
       }
     }
   }
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today());
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == prodId && !pr.prod2);
   const precio = promo ? promo.precioPromo : prod.precio;
   const existing = cart.find(i => i.prodId === prodId);
@@ -11132,7 +11148,7 @@ function _getStockBadge(p) {
 
 function _getPromoTienda(p) {
   const hoy = today();
-  const promoActivas = (DB.promociones||[]).filter(pr => pr.activa && pr.hasta >= hoy);
+  const promoActivas = (DB.promociones||[]).filter(pr => pr.activa && pr.hasta >= hoy && !pr.sedeId);
   return promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
 }
 function _renderTienda() {
@@ -11339,7 +11355,7 @@ const grid  = document.getElementById('tnd-grid');
  ? '<div onclick="'+_bannerClick+'" style="cursor:'+_bannerCursor+';border-radius:14px;overflow:hidden;margin-bottom:1rem;background:#f5f3ff"><img src="'+cfg.bannerUrl+'" style="width:75%;margin:0 auto;height:auto;object-fit:contain;display:block" alt="Banner"/></div>'
     : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">${cfg.eslogan||'Todo lo que necesitas, cerca de ti'}</div></div>`;
   const hoy = new Date().toISOString().slice(0,10);
-  const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy);
+  const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
   const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
   const promosHtml = prodsPromo.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">🔥 Promociones activas</div><div style="display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;-webkit-overflow-scrolling:touch;scrollbar-width:none">${prodsPromo.slice(0,6).map(p => `<div onclick="tndSetCat(${p.cat})" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:90px;object-fit:cover">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+p.precio).toFixed(2)}</div></div></div>`).join('')}</div></div>` : '';
   const cats2 = (DB.categorias||[]).filter(c => c.nombre);
