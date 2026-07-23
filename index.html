@@ -3334,7 +3334,7 @@ function procesarCanje(clienteId, premioId) {
     }
   } else if (premio.tipo === 'descuento') {
     canje.montoDescuento = premio.monto || 0;
-    const descInput = document.getElementById('pos-descuento') || document.getElementById('mob-pos-descuento');
+    const descInput = document.getElementById('pos-descuento'); // campo unico, compartido entre desktop y movil
     if (descInput) descInput.value = (parseFloat(descInput.value) || 0) + canje.montoDescuento;
   }
 
