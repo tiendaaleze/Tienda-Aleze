@@ -3197,6 +3197,48 @@ function sedeAdminEfectiva() {
 function _promoAplicaSede(promo, sede) {
   return !promo.sedeId || promo.sedeId === sede;
 }
+// ── Fidelización: puntos ganados por ítem, respetando el multiplicador de su categoría ──
+// (categorías sin multiplicadorPuntos configurado usan 1x — no rompe nada existente).
+function calcularPuntosGanados(items) {
+  if (!items || !items.length) return 0;
+  const tasaBase = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaBase) || 1;
+  const total = items.reduce((s, item) => {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    const cat = prod ? DB.categorias.find(c => c.id === prod.cat) : null;
+    const mult = (cat && cat.multiplicadorPuntos) || 1;
+    return s + ((item.precio || 0) * (item.cant || 0) * tasaBase * mult);
+  }, 0);
+  return Math.floor(total);
+}
+
+// ── Fidelización: estado de progreso para un cliente — 3 estados, no siempre se muestra ──
+// 'lejos' = silencio (no abruma). 'cerca' = dentro de la ventana de aviso, se muestra progreso
+// sin revelar el valor en soles. 'premio_disponible' = ya cruzó el umbral, aviso fuerte + acción.
+function estadoFidelizacion(clienteId) {
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  if (!cli) return { estado: 'sin_cliente' };
+  const saldo = cli.puntos || 0;
+  const premios = [...(DB_EXT.premiosFidelizacion || [])].sort((a, b) => a.puntos - b.puntos);
+  const disponibles = premios.filter(p => p.puntos <= saldo);
+  if (disponibles.length) {
+    return { saldo, estado: 'premio_disponible', premio: disponibles[disponibles.length - 1] };
+  }
+  const siguiente = premios.find(p => p.puntos > saldo);
+  if (!siguiente) return { saldo, estado: 'lejos' }; // sin premios configurados aun, o ninguno alcanzable
+  const ventana = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.ventanaAviso) || 300;
+  const faltan = siguiente.puntos - saldo;
+  if (faltan <= ventana) return { saldo, estado: 'cerca', faltan, premio: siguiente };
+  return { saldo, estado: 'lejos' };
+}
+
+// ── Fidelización: colección propia para canjes, mismo patrón que boletas/fiados/mermas ──
+function fbSincronizarCanje(canje) {
+  if (!fbFS || !canje || canje.id == null) return;
+  const data = { ...canje, sedeId: canje.sedeId || currentUserSedeId || 'principal' };
+  fbFS.collection('canjes').doc(String(canje.id)).set(data)
+    .catch(e => console.warn('fbSincronizarCanje: no se pudo escribir canjes/' + canje.id, e));
+}
+
 function cambiarSedeAdmin(sede) {
   _sedeAdminOverride = sede || null;
   try {
@@ -3210,6 +3252,11 @@ function cambiarSedeAdmin(sede) {
 const DB_EXT = {
   sueldos: {'Jose Carlos':0,'Shessira':0,'José Luis':0},
   navidad: {n:3, valor:50},
+  // ── Fidelización (puntos canjeables) — vive junto a niveles por ahora, sin tocarlo.
+  // tasaBase: puntos por sol gastado. ventanaAviso: cuántos puntos antes del premio se avisa
+  // ("cerca"), para no abrumar con el aviso en cada venta. premios: lista configurable.
+  fidelizacion: { tasaBase: 1, ventanaAviso: 300 },
+  premiosFidelizacion: [],
   niveles: [
     {umbral:100, max:1, desc:'Nivel 1 — hasta S/1'},
     {umbral:250, max:3, desc:'Nivel 2 — hasta S/3'},
@@ -4431,7 +4478,7 @@ function procesarVenta() {
 
   if (clienteId) {
     const cli = DB.clientes.find(c => c.id === clienteId);
-    if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos=(cli.puntos||0)+Math.floor(total); }
+    if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos=(cli.puntos||0)+calcularPuntosGanados(itemsConPrecioReal); }
   }
 
   ensureCajaAbierta();
@@ -4518,7 +4565,7 @@ function cobrarFiado() {
     cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
     cli.compras = (cli.compras||0) + 1;
     cli.total = (cli.total||0) + total;
-    cli.puntos = (cli.puntos||0) + Math.floor(total);
+    cli.puntos = (cli.puntos||0) + calcularPuntosGanados(itemsConPrecioReal);
   }
 
   ensureCajaAbierta();
@@ -9365,7 +9412,7 @@ if (cli) {
   cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
   cli.compras = (cli.compras||0) + 1;
   cli.total = Math.round(((cli.total||0) + total) * 100) / 100;
-  cli.puntos = (cli.puntos||0) + Math.floor(total);
+  cli.puntos = (cli.puntos||0) + calcularPuntosGanados(itemsConPrecioReal);
 }
 
   // Always register movement with ensureCajaAbierta
@@ -9427,7 +9474,7 @@ function mobProcesarVenta(){
   });
   if (clienteId) {
     const cli = DB.clientes.find(c => c.id === clienteId);
-    if (cli) { cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+Math.floor(total); cli.compras=(cli.compras||0)+1; }
+    if (cli) { cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+calcularPuntosGanados(itemsConPrecioReal); cli.compras=(cli.compras||0)+1; }
   }
   // Register caja movement always
   ensureCajaAbierta();
