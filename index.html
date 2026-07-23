@@ -1748,7 +1748,10 @@ background: #F5F3FF;
       <div id="page-fiados" class="page">
         <div class="flex-between" style="margin-bottom:1rem">
           <div class="page-title" style="margin:0">Control de Fiados</div>
-          <button type="button" class="btn btn-danger btn-sm" onclick="abrirReset('fiados')" style="font-size:0.78rem">🗑️ Limpiar fiados</button>
+          <div style="display:flex;gap:.5rem">
+            <button type="button" class="btn btn-outline btn-sm" onclick="agregarConceptoFiado()" style="font-size:0.78rem">📝 + Concepto adicional</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="abrirReset('fiados')" style="font-size:0.78rem">🗑️ Limpiar fiados</button>
+          </div>
         </div>
         <div class="grid-3" style="margin-bottom:1rem">
           <div class="stat-card red">
@@ -6521,6 +6524,10 @@ function renderFiados() {
         <div style="font-size:.8rem;margin-bottom:.3rem">
           ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join(' · ')}
         </div>
+        ${(f.conceptosAdicionales||[]).map(c => `<div style="font-size:.78rem;color:var(--gray-600);display:flex;justify-content:space-between;align-items:center;background:var(--gray-50);border-radius:5px;padding:.25rem .5rem;margin-bottom:.25rem">
+          <span>📝 ${c.desc} — ${sol(c.monto)}</span>
+          ${currentRole === 'admin' ? `<button onclick="eliminarConceptoFiado(${f.id},${c.id})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.85rem">✕</button>` : ''}
+        </div>`).join('')}
         <div style="font-size:.72rem;color:var(--gray-500)">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
         <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
           ${pend > 0 ? `<button class="btn btn-accent btn-xs" onclick="abrirPagoFiado(${f.id})">💰 Registrar pago</button>` : ''}
@@ -6609,6 +6616,70 @@ function renderDetalleFiado(cid) {
   document.getElementById('fi-detalle-content-' + cid).innerHTML = html;
 }
 
+// ── Conceptos adicionales en fiados: para lo que se vende fuera del catálogo (arreglos a
+// pedido, preparaciones puntuales) — se anota como texto libre + monto, suma al total del
+// fiado para el cobro y el WhatsApp, pero vive en un campo APARTE de "items". Rentabilidad,
+// reportes y puntos de fidelización solo miran "items" — nunca tocan esto, tal como se pidió.
+// No aplica a tienda pública — es exclusivo del flujo interno de Fiados.
+function agregarConceptoFiado() {
+  const query = prompt('Nombre del cliente (o parte del nombre):');
+  if (!query || !query.trim()) return;
+  const matches = DB.clientes.filter(c => _norm(c.nombre).includes(_norm(query)) || _norm(c.alias||'').includes(_norm(query)));
+  let cli;
+  if (matches.length === 0) { alert('No se encontró ningún cliente con ese nombre. Créalo primero en Clientes.'); return; }
+  if (matches.length === 1) {
+    cli = matches[0];
+  } else {
+    const idx = parseInt(prompt('Varios clientes coinciden:\n' + matches.map((c,i)=>`${i+1}. ${c.alias||c.nombre}`).join('\n') + '\n\nEscribe el número:'));
+    if (!idx || idx < 1 || idx > matches.length) return;
+    cli = matches[idx-1];
+  }
+  const desc = prompt(`¿Qué se le vendió a ${cli.alias||cli.nombre}? (ej: "Arreglo floral a pedido")`);
+  if (!desc || !desc.trim()) return;
+  const monto = parseFloat(prompt('Monto (S/):'));
+  if (!monto || isNaN(monto) || monto <= 0) { alert('Monto inválido.'); return; }
+
+  // Se suma al fiado pendiente más reciente de este cliente (varios conceptos pueden
+  // acumularse en la misma cuenta durante los días previos al pago), o crea uno nuevo si no tiene.
+  let fiado = DB.fiados.filter(f => f.clienteId === cli.id && (f.total - f.pagado) > 0.01)
+    .sort((a,b) => a.fecha < b.fecha ? 1 : -1)[0];
+  const concepto = { id: getId(), desc: desc.trim(), monto: Math.round(monto*100)/100, fecha: today() };
+  if (fiado) {
+    if (!fiado.conceptosAdicionales) fiado.conceptosAdicionales = [];
+    fiado.conceptosAdicionales.push(concepto);
+    fiado.total = Math.round((fiado.total + concepto.monto) * 100) / 100;
+  } else {
+    fiado = {
+      id: getId(), clienteId: cli.id, items: [],
+      conceptosAdicionales: [concepto],
+      total: concepto.monto, pagado: 0, fecha: today(),
+      descuentoCombo: 0, descuentoManual: 0,
+      sedeId: currentUserSedeId || 'principal'
+    };
+    DB.fiados.push(fiado);
+  }
+  cli.deuda = Math.round(((cli.deuda||0) + concepto.monto) * 100) / 100;
+  fbSincronizarFiado(fiado);
+  fbGuardar();
+  renderFiados();
+  alert(`✅ Agregado a la cuenta de ${cli.alias||cli.nombre}: "${concepto.desc}" — ${sol(concepto.monto)}`);
+}
+
+function eliminarConceptoFiado(fiadoId, conceptoId) {
+  const fiado = DB.fiados.find(f => f.id === fiadoId);
+  if (!fiado || !fiado.conceptosAdicionales) return;
+  const concepto = fiado.conceptosAdicionales.find(c => c.id === conceptoId);
+  if (!concepto) return;
+  if (!confirm(`¿Quitar "${concepto.desc}" (${sol(concepto.monto)}) de esta cuenta?`)) return;
+  fiado.conceptosAdicionales = fiado.conceptosAdicionales.filter(c => c.id !== conceptoId);
+  fiado.total = Math.round((fiado.total - concepto.monto) * 100) / 100;
+  const cli = DB.clientes.find(c => c.id === fiado.clienteId);
+  if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda||0) - concepto.monto) * 100) / 100);
+  fbSincronizarFiado(fiado);
+  fbGuardar();
+  renderFiados();
+}
+
 function compartirResumenFiadoCliente(cid) {
   const cli   = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
@@ -6627,7 +6698,11 @@ function compartirResumenFiadoCliente(cid) {
   msg += '\n';
   fiados.forEach(f => {
     const pend = Math.round((f.total - f.pagado) * 100) / 100;
-    msg += `📌 ${formatDate(f.fecha)}: ${f.items.map(i => i.nombre + ' x' + i.cant).join(', ')} → ${sol(f.total)}`;
+    const descItems = [
+      ...f.items.map(i => i.nombre + ' x' + i.cant),
+      ...(f.conceptosAdicionales||[]).map(c => c.desc)
+    ].join(', ');
+    msg += `📌 ${formatDate(f.fecha)}: ${descItems} → ${sol(f.total)}`;
     msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
   });
   msg += `\n*Total pendiente: ${sol(totalPend)}*\nGracias 🙏`;
@@ -6885,7 +6960,10 @@ function compartirFiadoWhatsapp() {
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
   const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
-  const itemsPend = f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join('\n');
+  const itemsPend = [
+    ...f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`),
+    ...(f.conceptosAdicionales||[]).map(c => `• ${c.desc} = ${sol(c.monto)}`)
+  ].join('\n');
   const msg = `Hola ${nombre}, le recordamos su deuda en *${DB.config.nombre||'Tienda Aleze'}*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
   const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   window.open(url, '_blank');
