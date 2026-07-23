@@ -610,6 +610,12 @@ background: #F5F3FF;
     #sidebar-toggle-btn { display: none; }
     .header-brand { font-size: 0.85rem; }
     #header-role { display: none; }
+    /* Bug real: sin esto, con pantalla angosta el header no encoge ni hace scroll — "Salir"
+       es lo ultimo de la fila y queda fuera del area visible, invisible sin estarlo realmente. */
+    .avatar { display: none; }
+    #header-username { max-width: 45px; }
+    header { overflow-x: auto; gap: .5rem; padding: 0 .6rem; }
+    .btn-logout { flex-shrink: 0; padding: .35rem .6rem; }
 
     /* --- SIDEBAR: oculto por defecto, desliza desde izq como overlay --- */
     aside {
