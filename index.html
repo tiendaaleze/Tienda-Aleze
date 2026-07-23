@@ -11783,6 +11783,13 @@ function initTienda() {
     tndLoadCart();
     tndUpdateCartBadge();
     _renderTienda();
+    // Link directo a un producto (#/producto/123) — mismo catálogo ya cargado, cero lecturas
+    // adicionales al detectar el hash; solo el detalle (si lo tiene) se trae bajo demanda.
+    const _hashMatch = window.location.hash.match(/^#\/producto\/(\d+)/);
+    if (_hashMatch) {
+      const _prodIdHash = parseInt(_hashMatch[1]);
+      if (DB.productos.find(p => p.id === _prodIdHash)) tndVerDetalle(_prodIdHash);
+    }
   }
 
   // Siempre cargar desde Firebase — sin condición de caché para garantizar datos frescos
@@ -12138,7 +12145,9 @@ function tndFiltrar() {
     const precioCat = p.costo ? Math.ceil(p.costo * (1 + ((DB.categorias||[]).find(c=>c.id===p.cat)?.margen||0)/100) * 10) / 10 : null;
     const sugerido = precioCat && precioCat !== p.precio ? precioCat : null;
 
-    return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${agotado?'':('tndAgregarCarrito('+p.id+')')}">
+    const accionClic = agotado ? '' : (p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`);
+    return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${accionClic}" style="position:relative">
+      ${p.tieneDetalle ? `<div style="position:absolute;top:6px;left:6px;background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px;z-index:2">🔍 +Detalle</div>` : ''}
       <div class="tnd-prod-badge">${badge}</div>
   ${p.esCombo ? `<div class="tnd-prod-promo" style="background:var(--accent)">OFERTA</div>` : promo ? `<div class="tnd-prod-promo">PROMO</div>` : ''}
       <div class="tnd-prod-icon">${icon}</div>
@@ -12197,6 +12206,52 @@ function tndAbrirMisPuntos() {
   document.getElementById('tnd-panel').classList.add('open');
 }
 
+// ── Vista de detalle de producto — carga la colección aparte SOLO acá, nunca en la grilla.
+let _tndDetalleProdId = null, _tndDetalleData = null, _tndDetalleCant = 1;
+function tndVerDetalle(prodId) {
+  _tndDetalleProdId = prodId;
+  _tndDetalleData = null;
+  _tndDetalleCant = 1;
+  _tndStep = 'detalle-producto';
+  window.location.hash = '#/producto/' + prodId;
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+  if (fbFS) {
+    fbFS.collection('productos_detalle').doc(String(prodId)).get().then(doc => {
+      _tndDetalleData = doc.exists ? doc.data() : {};
+      if (_tndStep === 'detalle-producto' && _tndDetalleProdId === prodId) tndRenderPanel();
+    }).catch(() => { _tndDetalleData = {}; });
+  } else {
+    _tndDetalleData = {};
+  }
+}
+function tndDetalleCambiarCant(delta) {
+  _tndDetalleCant = Math.max(1, _tndDetalleCant + delta);
+  tndRenderPanel();
+}
+function tndDetalleAgregarCarrito() {
+  const p = DB.productos.find(x => x.id === _tndDetalleProdId);
+  if (!p) return;
+  const cant = _tndDetalleCant;
+  if (cant > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
+  const promo = _getPromoTienda(p);
+  let precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
+  const mayor = _tndDetalleData?.precioMayor;
+  if (mayor && mayor.cantidadMin > 0 && cant >= mayor.cantidadMin) precio = mayor.precio;
+  const cat = (DB.categorias||[]).find(c => c.id === p.cat);
+  const existing = _tiendaCart.find(i => i.prodId === p.id);
+  if (existing) {
+    existing.cant += cant;
+    existing.precio = precio;
+  } else {
+    _tiendaCart.push({ prodId: p.id, nombre: p.nombre, precio, cant, icon: cat?.emoji||'📦', tipo: p.tipo });
+  }
+  tndSaveCart();
+  tndUpdateCartBadge();
+  tndCerrarPanel();
+}
+
 // Identificación mínima para ver puntos — mismo mecanismo real usado al pedir (teléfono = llave).
 function tndIdentificarParaPuntos() {
   const nombre = document.getElementById('tnd-puntos-nombre')?.value.trim();
@@ -12214,6 +12269,9 @@ function tndIdentificarParaPuntos() {
 function tndCerrarPanel() {
   document.getElementById('tnd-overlay').classList.remove('open');
   document.getElementById('tnd-panel').classList.remove('open');
+  if (_tndStep === 'detalle-producto' && window.location.hash.startsWith('#/producto/')) {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
 }
 
 function tndRenderPanel() {
@@ -12277,6 +12335,39 @@ function tndRenderPanel() {
       const target = document.getElementById('tnd-sms-paso2');
       if (target) obs.observe(target, { attributes: true, attributeFilter: ['style'] });
     }, 0);
+  }
+
+  if (_tndStep === 'detalle-producto') {
+    const p = DB.productos.find(x => x.id === _tndDetalleProdId);
+    if (!p) { titulo.textContent = 'Producto'; body.innerHTML = '<p>Producto no encontrado.</p>'; footer.innerHTML = ''; }
+    else {
+      titulo.textContent = p.nombre;
+      const cat = (DB.categorias||[]).find(c => c.id === p.cat);
+      const imgPrincipal = p.imagen || cat?.imagen || '';
+      const cargando = _tndDetalleData === null;
+      const extra = _tndDetalleData?.imagenesExtra || [];
+      const desc = _tndDetalleData?.descripcion || '';
+      const mayor = _tndDetalleData?.precioMayor;
+      const agotado = stockTotal(p) <= 0;
+      body.innerHTML = `
+        <div style="text-align:center;margin-bottom:1rem">
+          ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:160px;height:160px;object-fit:contain;border-radius:12px">` : `<div style="font-size:3rem">${cat?.emoji||'📦'}</div>`}
+        </div>
+        ${extra.length ? `<div style="display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem">${extra.map(u=>`<img src="${u}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb">`).join('')}</div>` : ''}
+        <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${p.precio.toFixed(2)}</div>
+        ${cargando ? '<p style="text-align:center;color:#9ca3af;font-size:.82rem">⏳ Cargando detalle...</p>' : ''}
+        ${desc ? `<p style="font-size:.85rem;color:#4b5563;line-height:1.5;margin-bottom:1rem">${desc}</p>` : ''}
+        ${mayor && mayor.cantidadMin > 0 ? `<div style="background:#EDE9FE;border-radius:8px;padding:.6rem;font-size:.8rem;color:#5B21B6;margin-bottom:1rem">💰 Desde ${mayor.cantidadMin} unidades: <strong>S/ ${mayor.precio.toFixed(2)} c/u</strong></div>` : ''}
+        ${agotado ? '<p style="text-align:center;color:#ef4444;font-weight:700">Sin stock por el momento</p>' : `
+          <div style="display:flex;align-items:center;justify-content:center;gap:1rem;margin-top:1rem">
+            <button class="tnd-btn tnd-btn-outline" style="width:44px" onclick="tndDetalleCambiarCant(-1)">−</button>
+            <span style="font-size:1.2rem;font-weight:700;min-width:30px;text-align:center">${_tndDetalleCant}</span>
+            <button class="tnd-btn tnd-btn-outline" style="width:44px" onclick="tndDetalleCambiarCant(1)">+</button>
+          </div>`}`;
+      footer.innerHTML = agotado
+        ? `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`
+        : `<button class="tnd-btn tnd-btn-primary" onclick="tndDetalleAgregarCarrito()">Agregar al carrito</button>`;
+    }
   }
 
   if (_tndStep === 'puntos') {
