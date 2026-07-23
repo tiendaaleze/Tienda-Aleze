@@ -12372,17 +12372,31 @@ function aplicarCambiosExcel() {
     return id;
   };
 
+  // sedeAdminEfectiva(): el Excel exporta el TOTAL entre sedes, no un valor por sede — el
+  // cambio detectado en Stock_Actual se aplica como un AJUSTE (delta) a la sede administrativa
+  // efectiva, no como una sobreescritura directa. Así stockPorSede y la colección stock/{id}
+  // (incremento atómico offline-seguro) no quedan huérfanos ni desincronizados, como pasaba antes.
+  const _sedeExcel = sedeAdminEfectiva();
   aceptados.forEach(c => {
     if (c.tipo === 'mod') {
       const idx = DB.productos.findIndex(p => String(p.id) === String(c.prodId));
       if (idx === -1) return;
-      c.diffs.forEach(d => { DB.productos[idx][d.campo] = d.nuevo; });
+      const prod = DB.productos[idx];
+      c.diffs.forEach(d => {
+        if (d.campo === 'stock') {
+          const delta = Math.round((d.nuevo - (prod.stock || 0)) * 1000) / 1000;
+          if (delta !== 0) ajustarStockSede(prod, delta, _sedeExcel);
+        } else {
+          prod[d.campo] = d.nuevo;
+        }
+      });
       modCount++;
     } else if (c.tipo === 'nuevo') {
       const f = c.fila;
       const codigoIngresado = f['Codigo_Barras'] ? f['Codigo_Barras'].toString().trim() : '';
   const codigoFinal = codigoIngresado || ('7' + _getUniqueId().toString().slice(-12));
       const autoGenerado = !codigoIngresado;
+      const stockInicial = parseFloat(f['Stock_Actual']) || 0;
       const nuevoProd = {
        id: _getUniqueId(),
         nombre:   f['Nombre'].toString().trim(),
@@ -12391,7 +12405,7 @@ function aplicarCambiosExcel() {
         unidad:   f['Unidad'] || 'und',
         costo:    parseFloat(f['Precio_Costo']) || 0,
         precio:   parseFloat(f['Precio_Venta']) || 0,
-        stock:    parseFloat(f['Stock_Actual']) || 0,
+        stockPorSede: {}, stock: 0,
         stockMin: parseFloat(f['Stock_Minimo']) || 5,
         venc:     f['Vencimiento'] ? excelSerialToDate(f['Vencimiento'].toString().trim()) : '',
         codigo:   codigoFinal,
@@ -12405,6 +12419,7 @@ function aplicarCambiosExcel() {
         }
       }
       DB.productos.push(nuevoProd);
+      if (stockInicial > 0) ajustarStockSede(nuevoProd, stockInicial, _sedeExcel);
       if (autoGenerado) prodsSinCodigo.push({ nombre: nuevoProd.nombre, codigo: codigoFinal });
       newCount++;
     }
