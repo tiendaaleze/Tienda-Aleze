@@ -1487,11 +1487,13 @@ background: #F5F3FF;
                   <button type="button" class="btn btn-outline btn-sm" onclick="cerrarCartDrawer()" title="Cerrar">✕</button>
                 </div>
               </div>
-              <div style="margin-top:0.5rem;display:flex;gap:.4rem">
-                <select id="pos-cliente" class="form-control" style="font-size:0.8rem;padding:0.4rem" onchange="onClienteChange()">
+              <div style="margin-top:0.5rem;display:flex;gap:.4rem;position:relative">
+                <input type="text" id="pos-cliente-buscar" class="form-control" placeholder="👤 Cliente anónimo — buscar..." style="font-size:0.8rem;padding:0.4rem" oninput="_posClienteBuscar()" onfocus="_posClienteBuscar()" onblur="setTimeout(()=>{const s=document.getElementById('pos-cliente-sugerencias');if(s)s.style.display='none';},150)" autocomplete="off" />
+                <select id="pos-cliente" style="display:none" onchange="onClienteChange()">
                   <option value="">👤 Cliente anónimo</option>
                 </select>
                 <button type="button" class="btn btn-outline btn-sm" onclick="abrirCliRapido()" title="Registrar nuevo cliente rápido">+ Cliente</button>
+                <div id="pos-cliente-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:180px;overflow-y:auto;font-size:.8rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
               </div>
               <div id="pos-cli-info" style="display:none;background:var(--primary-light);border-radius:8px;padding:.4rem .65rem;margin-top:.4rem;font-size:.75rem">
                 <span id="pos-cli-nombre" style="font-weight:700;color:var(--primary)"></span>
@@ -1542,11 +1544,13 @@ background: #F5F3FF;
               🛒<span id="mob-pos-cart-badge-btn" style="display:none;background:#EF4444;color:white;border-radius:10px;font-size:.65rem;font-weight:700;padding:1px 5px;min-width:18px;position:absolute;top:-6px;right:-6px;">0</span>
             </button>
           </div>
-          <div class="mob-pos-topbar-row2">
-            <select id="mob-pos-cliente" class="form-control" onchange="mobOnClienteChange()">
+          <div class="mob-pos-topbar-row2" style="position:relative">
+            <input type="text" id="mob-pos-cliente-buscar" class="form-control" placeholder="👤 Cliente anónimo — buscar..." oninput="_mobPosClienteBuscar()" onfocus="_mobPosClienteBuscar()" onblur="setTimeout(()=>{const s=document.getElementById('mob-pos-cliente-sugerencias');if(s)s.style.display='none';},150)" autocomplete="off" />
+            <select id="mob-pos-cliente" style="display:none" onchange="mobOnClienteChange()">
               <option value="">👤 Cliente anónimo</option>
             </select>
             <button type="button" class="mob-add-cliente-btn" onclick="abrirCliRapido()">+ Cliente</button>
+            <div id="mob-pos-cliente-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
           </div>
           <div id="mob-pos-cli-info" style="display:none;background:var(--primary-light);border-radius:8px;padding:.35rem .65rem;font-size:.75rem">
             <span id="mob-pos-cli-nombre" style="font-weight:700;color:var(--primary)"></span>
@@ -4289,6 +4293,72 @@ function updatePosClientes() {
   updateMobPosClientes();
 }
 
+// ── Buscador de cliente (POS desktop) — clientes son compartidos entre sedes, un select
+// plano se vuelve inmanejable con muchos. El <select> oculto sigue siendo la fuente de verdad
+// que el resto del código ya lee (pos-cliente.value) — el buscador solo lo alimenta.
+function _posClienteBuscar() {
+  const q = (document.getElementById('pos-cliente-buscar')?.value || '').trim();
+  const sug = document.getElementById('pos-cliente-sugerencias');
+  if (!sug) return;
+  const matches = (q ? DB.clientes.filter(c => _norm(c.nombre).includes(_norm(q)) || _norm(c.alias||'').includes(_norm(q)) || (c.tel||'').includes(q)) : DB.clientes).slice(0, 8);
+  if (!matches.length) {
+    sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
+  } else {
+    sug.innerHTML = matches.map(c =>
+      `<div onclick="_posClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+        ${c.alias || c.nombre}${c.deuda>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(c.deuda)})</span>` : ''}
+       </div>`
+    ).join('');
+  }
+  sug.style.display = 'block';
+}
+function _posClienteSeleccionar(id) {
+  const c = DB.clientes.find(x => x.id === id);
+  const sel = document.getElementById('pos-cliente');
+  const buscar = document.getElementById('pos-cliente-buscar');
+  if (sel) sel.value = id;
+  if (buscar) buscar.value = c ? (c.alias || c.nombre) : '';
+  const sug = document.getElementById('pos-cliente-sugerencias'); if (sug) sug.style.display = 'none';
+  onClienteChange();
+}
+function resetPosCliente() {
+  const sel = document.getElementById('pos-cliente'); if (sel) sel.value = '';
+  const buscar = document.getElementById('pos-cliente-buscar'); if (buscar) buscar.value = '';
+  onClienteChange();
+}
+
+// ── Mismo patrón para POS móvil ──
+function _mobPosClienteBuscar() {
+  const q = (document.getElementById('mob-pos-cliente-buscar')?.value || '').trim();
+  const sug = document.getElementById('mob-pos-cliente-sugerencias');
+  if (!sug) return;
+  const matches = (q ? DB.clientes.filter(c => _norm(c.nombre).includes(_norm(q)) || _norm(c.alias||'').includes(_norm(q)) || (c.tel||'').includes(q)) : DB.clientes).slice(0, 8);
+  if (!matches.length) {
+    sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
+  } else {
+    sug.innerHTML = matches.map(c =>
+      `<div onclick="_mobPosClienteSeleccionar(${c.id})" style="padding:.5rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)">
+        ${c.alias || c.nombre}${c.deuda>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(c.deuda)})</span>` : ''}
+       </div>`
+    ).join('');
+  }
+  sug.style.display = 'block';
+}
+function _mobPosClienteSeleccionar(id) {
+  const c = DB.clientes.find(x => x.id === id);
+  const sel = document.getElementById('mob-pos-cliente');
+  const buscar = document.getElementById('mob-pos-cliente-buscar');
+  if (sel) sel.value = id;
+  if (buscar) buscar.value = c ? (c.alias || c.nombre) : '';
+  const sug = document.getElementById('mob-pos-cliente-sugerencias'); if (sug) sug.style.display = 'none';
+  mobOnClienteChange();
+}
+function resetMobPosCliente() {
+  const sel = document.getElementById('mob-pos-cliente'); if (sel) sel.value = '';
+  const buscar = document.getElementById('mob-pos-cliente-buscar'); if (buscar) buscar.value = '';
+  mobOnClienteChange();
+}
+
 let _ventaPendiente = null; // recuerda un intento de venta fallido para reintentar con el mismo id
 
 function _firmaCarrito(items, metodo, clienteId) {
@@ -4329,7 +4399,7 @@ function procesarVenta() {
     _ventaPendiente = null;
     mostrarTicket(venta);
     clearCart();
-    const _pc = document.getElementById('pos-cliente'); if (_pc) { _pc.value = ''; onClienteChange(); }
+    resetPosCliente();
     return;
   }
 
@@ -4368,7 +4438,7 @@ function procesarVenta() {
   try { generarReporte(); } catch(e){}
   mostrarTicket(venta);
   clearCart();
-  const _pc = document.getElementById('pos-cliente'); if (_pc) { _pc.value = ''; onClienteChange(); }
+  resetPosCliente();
   updateAlertCount();
 }
 
@@ -4410,7 +4480,7 @@ function cobrarFiado() {
     _fiadoPendiente = null;
     alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
     clearCart();
-    const _pc2 = document.getElementById('pos-cliente'); if (_pc2) { _pc2.value = ''; onClienteChange(); }
+    resetPosCliente();
     return;
   }
 
@@ -4452,7 +4522,7 @@ function cobrarFiado() {
   try { renderCaja(); } catch(e){}
   alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
   clearCart();
-  const _pc2 = document.getElementById('pos-cliente'); if (_pc2) { _pc2.value = ''; onClienteChange(); }
+  resetPosCliente();
   updateAlertCount();
 }
 
@@ -7988,7 +8058,14 @@ function guardarCliRapido() {
   fbGuardar();
   updatePosClientes();
   document.getElementById('pos-cliente').value = c.id;
+  const _bd = document.getElementById('pos-cliente-buscar'); if (_bd) _bd.value = c.alias || c.nombre;
   onClienteChange();
+  const _selMob = document.getElementById('mob-pos-cliente');
+  if (_selMob) {
+    _selMob.value = c.id;
+    const _bm = document.getElementById('mob-pos-cliente-buscar'); if (_bm) _bm.value = c.alias || c.nombre;
+    mobOnClienteChange();
+  }
   cerrarModal('modal-cli-rapido');
 }
 
@@ -9285,7 +9362,7 @@ delete _vPayload.productos; delete _vPayload.categorias; delete _vPayload.pedido
   mobRenderCart(); mobCalcTotal(); mobUpdateBar();
  const descEl = document.getElementById('pos-descuento');
   if (descEl) descEl.value = '';
-  const _mc = document.getElementById('mob-pos-cliente'); if (_mc) { _mc.value = ''; mobOnClienteChange(); }
+  resetMobPosCliente();
   renderMobPosGrid(); toggleMobCart(); updateAlertCount();
 }
 
@@ -9346,7 +9423,7 @@ function mobProcesarVenta(){
   mobRenderCart(); mobCalcTotal(); mobUpdateBar();
   const descEl2 = document.getElementById('pos-descuento');
   if (descEl2) descEl2.value = '';
-  const _mc2 = document.getElementById('mob-pos-cliente'); if (_mc2) { _mc2.value = ''; mobOnClienteChange(); }
+  resetMobPosCliente();
   renderMobPosGrid();
   updateAlertCount();
   mostrarTicket(venta);
