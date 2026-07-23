@@ -3180,10 +3180,28 @@ let DB = {
   promociones: [],
   movimientos: [],
  config: { nombre: 'Tienda Aleze', direccion: 'Jr. Tigrillo Mz. Ll4 Lt. 5 Asoc. Percin Deza SJL', telefono: '', ticketMsg: '¡Gracias por su compra!', diasVenc: 7, whatsappTienda: '980037284', montoAperturaAuto: 0, eslogan: 'Todo lo que necesitas, cerca de ti', bannerUrl: '', bannerLink: '', bannerVisible: true, usuariosStaff: [], tiendasExternas: [{id:'efe',nombre:'Tienda Efe',imagen:'',url:'',visible:true,waCatalogo:false},{id:'curacao',nombre:'Curacao',imagen:'',url:'',visible:true,waCatalogo:false},{id:'juntoz',nombre:'Juntoz',imagen:'',url:'',visible:true,waCatalogo:false},{id:'bata',nombre:'Bata',imagen:'',url:'',visible:true,waCatalogo:true}], serviciosWa: [{id:'impresiones',nombre:'Impresiones y copias',emoji:'🖨️',visible:true},{id:'recargas',nombre:'Recargas celular',emoji:'📱',visible:true},{id:'pagos',nombre:'Pago de servicios',emoji:'💡',visible:true},{id:'escaneos',nombre:'Escaneos',emoji:'📋',visible:true}], serviciosBannerUrl: '', tiendasTexto: '', alertasIgnoradas: {} },
-  caja: { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' },
+  _cajas: { principal: { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' } },
   historialVentas: [],
   pedidosOnline: []
-};  
+};
+
+// ── Caja por sede (más allá de offline: 2 sedes reales no pueden compartir 1 sola caja) ──
+// DB.caja sigue funcionando en las 64+ referencias existentes sin tocarlas — el getter/setter
+// rutea automáticamente a la sede de la sesión actual. La sede se separa recién acá; el
+// incremento atómico offline-seguro (como se hizo con stock) queda para una siguiente pasada.
+Object.defineProperty(DB, 'caja', {
+  get() {
+    const sede = (typeof currentUserSedeId !== 'undefined' && currentUserSedeId) || 'principal';
+    if (!DB._cajas[sede]) DB._cajas[sede] = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
+    return DB._cajas[sede];
+  },
+  set(v) {
+    const sede = (typeof currentUserSedeId !== 'undefined' && currentUserSedeId) || 'principal';
+    DB._cajas[sede] = v;
+    try { fbGuardar(); } catch(e) {}
+  },
+  configurable: true
+});
 
 let cart = [];
 
@@ -3408,10 +3426,13 @@ async function doLogin() {
       if (snapOp.exists) {
         const data = snapOp.data();
         const camposOp = ['ventas','clientes','fiados','mermas','movimientos',
-                          'proveedores','promociones','caja','config',
+                          'proveedores','promociones','config',
                           'inventariosMensuales','historialVentas'];
         camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
         if (data.config && data.config.passwords) Object.assign(PASSWORDS, data.config.passwords);
+        // Caja por sede: formato nuevo (cajas) si existe, si no migra el formato viejo (caja unica -> principal)
+        if (data.cajas) DB._cajas = data.cajas;
+        else if (data.caja) DB._cajas = { principal: data.caja };
       }
 
       if (snapProd.exists) {
@@ -9334,6 +9355,9 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
   delete payload.productos;
     delete payload.categorias;
     delete payload.pedidosOnline;
+    // Caja por sede: mandar TODAS las sedes (payload.caja solo trae la de la sesión actual, vía el getter)
+    delete payload.caja;
+    payload.cajas = DB._cajas;
     fbDocRef().set(payload)
       .then(() => { _fbWritingDB = false; setTimeout(() => { _fbEscribiendo = false; }, 300); })
       .catch(e => { _fbWritingDB = false; _fbEscribiendo = false; console.warn('Firestore write error:', e); });
@@ -9410,9 +9434,12 @@ function fbEscuchar() {
     if (!data) return;
     // Solo campos operativos (no productos/categorias que vienen de db_productos)
     const camposOp = ['ventas','clientes','fiados','mermas','movimientos',
-                      'proveedores','promociones','caja','inventariosMensuales','historialVentas'];
+                      'proveedores','promociones','inventariosMensuales','historialVentas'];
     camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
     if (data.config) DB.config = { ...DB.config, ...data.config };
+    // Caja por sede: mismo criterio que en doLogin
+    if (data.cajas) DB._cajas = data.cajas;
+    else if (data.caja) DB._cajas = { principal: data.caja };
     try { renderDashboard(); }    catch(e){}
     try { updateAlertCount(); }   catch(e){}
     const activePage = document.querySelector('.page.active');
@@ -9481,8 +9508,9 @@ function fbEscuchar() {
 // ── Patch DB: interceptar asignaciones de array para auto-guardar ──
 // Solo las colecciones que el usuario modifica activamente
 // Columnas que van al doc 'db' (operaciones)
+// caja NO va aquí — tiene su propio getter/setter por sede, definido junto a la declaración de DB.
 const _fbPatchColsOp   = ['ventas','clientes','fiados','mermas','movimientos',
-                           'proveedores','promociones','caja','inventariosMensuales'];
+                           'proveedores','promociones','inventariosMensuales'];
 // Columnas que van al doc 'db_productos' (catálogo)
 const _fbPatchColsProd = ['productos','categorias'];
 
