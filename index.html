@@ -6698,9 +6698,10 @@ function compartirResumenFiadoCliente(cid) {
   msg += '\n';
   fiados.forEach(f => {
     const pend = Math.round((f.total - f.pagado) * 100) / 100;
+    const totalConceptos = (f.conceptosAdicionales||[]).reduce((s,c) => s + c.monto, 0);
     const descItems = [
       ...f.items.map(i => i.nombre + ' x' + i.cant),
-      ...(f.conceptosAdicionales||[]).map(c => c.desc)
+      ...(totalConceptos > 0 ? [`Otros: ${sol(totalConceptos)}`] : [])
     ].join(', ');
     msg += `📌 ${formatDate(f.fecha)}: ${descItems} → ${sol(f.total)}`;
     msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
@@ -6960,9 +6961,10 @@ function compartirFiadoWhatsapp() {
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
   const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
+  const totalConceptosF = (f.conceptosAdicionales||[]).reduce((s,c) => s + c.monto, 0);
   const itemsPend = [
     ...f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`),
-    ...(f.conceptosAdicionales||[]).map(c => `• ${c.desc} = ${sol(c.monto)}`)
+    ...(totalConceptosF > 0 ? [`• Otros = ${sol(totalConceptosF)}`] : [])
   ].join('\n');
   const msg = `Hola ${nombre}, le recordamos su deuda en *${DB.config.nombre||'Tienda Aleze'}*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
   const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
