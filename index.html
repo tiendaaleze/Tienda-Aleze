@@ -4613,10 +4613,43 @@ function mostrarTicket(venta) {
     ${descManual > 0 ? `<div class="ticket-row"><span>Descuento:</span><span>-${sol(descManual)}</span></div>` : ''}
     <div class="ticket-row"><strong>TOTAL</strong><strong>${sol(venta.total)}</strong></div>
     <div class="ticket-line"></div>
+    ${_fidelizacionTicketHtml(venta.clienteId)}
     <div class="ticket-center" style="color:#666">${cfgMsg}</div>
   </div>`;
   document.getElementById('ticket-content').innerHTML = html;
+  _actualizarPremioBoxTicket(venta.clienteId);
   abrirModal('modal-ticket');
+}
+
+// Opción B acordada: progreso visible, nunca la conversión a soles — usa el saldo YA actualizado
+// (mostrarTicket se llama después de sumar los puntos de esta venta, no antes).
+function _fidelizacionTicketHtml(clienteId) {
+  if (!clienteId) return '';
+  const est = estadoFidelizacion(clienteId);
+  if (est.estado === 'premio_disponible') {
+    return `<div class="ticket-center" style="font-weight:700">🎉 ¡Ya puedes canjear: ${est.premio.nombre}!</div><div class="ticket-line"></div>`;
+  }
+  if (est.estado === 'cerca') {
+    return `<div class="ticket-center">🎁 Te faltan <strong>${est.faltan} puntos</strong> para tu próximo premio</div><div class="ticket-line"></div>`;
+  }
+  return '';
+}
+
+// Misma info que en el ticket impreso, pero en la caja destacada que ve el cajero en pantalla.
+function _actualizarPremioBoxTicket(clienteId) {
+  const pb = document.getElementById('premio-box');
+  if (!pb) return;
+  if (!clienteId) { pb.style.display = 'none'; return; }
+  const est = estadoFidelizacion(clienteId);
+  if (est.estado === 'premio_disponible') {
+    pb.style.display = 'block';
+    document.getElementById('premio-txt').innerHTML = `<strong>${getClienteNombre(clienteId)}</strong> ya puede canjear: <strong>${est.premio.nombre}</strong>`;
+  } else if (est.estado === 'cerca') {
+    pb.style.display = 'block';
+    document.getElementById('premio-txt').innerHTML = `<strong>${getClienteNombre(clienteId)}</strong> está a <strong>${est.faltan} puntos</strong> de su próximo premio`;
+  } else {
+    pb.style.display = 'none';
+  }
 }
 
 function imprimirTicket() { window.print(); }
@@ -8136,21 +8169,6 @@ function guardarCliRapido() {
   cerrarModal('modal-cli-rapido');
 }
 
-// Premio en ticket
-function mostrarPremioEnTicket(clienteId) {
-  const pb = document.getElementById('premio-box');
-  if (!clienteId) { pb.style.display = 'none'; return; }
-  const pr = getPremioSugerido(clienteId);
-  if (pr && pr.nivel) {
-    pb.style.display = 'block';
-    document.getElementById('premio-txt').innerHTML = pr.producto
-      ? `🎁 <strong>${getClienteNombre(clienteId)}</strong> tiene premio por alcanzar S/${pr.nivel.umbral} en compras. Sugerido: <strong>${pr.producto.nombre}</strong> (S/${pr.producto.precio}) — Premio máximo S/${pr.nivel.max}`
-      : `🎁 <strong>${getClienteNombre(clienteId)}</strong> tiene premio hasta S/${pr.nivel.max}. Sin producto candidato en stock.`;
-  } else {
-    pb.style.display = 'none';
-  }
-}
-
 // ===================== GASTOS =====================
 let chartGastos = null;
 
@@ -9133,11 +9151,18 @@ function actualizarPremioAlertPOS() {
   const alertDiv = document.getElementById('pos-premio-alert');
   const alertTxt = document.getElementById('pos-premio-txt');
   if (!cliId||!alertDiv) { if(alertDiv) alertDiv.style.display='none'; return; }
-  const pr = getPremioSugerido(cliId);
-  if (pr&&pr.nivel) {
+  const est = estadoFidelizacion(cliId);
+  if (est.estado === 'premio_disponible') {
     alertDiv.style.display='block';
-    alertTxt.textContent = `${getClienteNombre(cliId)} tiene premio hasta S/${pr.nivel.max}${pr.producto?' — Sugerido: '+pr.producto.nombre+' (S/'+pr.producto.precio+')':''}`;
-  } else { alertDiv.style.display='none'; }
+    alertDiv.style.background = 'var(--accent-light)';
+    alertTxt.textContent = `🎉 ${getClienteNombre(cliId)} puede canjear: ${est.premio.nombre}`;
+  } else if (est.estado === 'cerca') {
+    alertDiv.style.display='block';
+    alertDiv.style.background = '';
+    alertTxt.textContent = `${getClienteNombre(cliId)} está cerca de su próximo premio — le faltan ${est.faltan} puntos`;
+  } else {
+    alertDiv.style.display='none';
+  }
 }
 
 // ===================== MOBILE SIDEBAR OVERLAY =====================
@@ -9220,6 +9245,8 @@ function mobOnClienteChange() {
     if (posCliNombre) posCliNombre.textContent = cli.alias || cli.nombre;
     if (posCliConsumo) posCliConsumo.textContent = ' — Total: S/' + (cli.total || 0).toFixed(2);
   } else if (posCliInfo) { posCliInfo.style.display = 'none'; }
+  // El aviso de fidelización no se llamaba desde móvil — quedaba solo en desktop.
+  actualizarPremioAlertPOS();
 }
 
 function mobFilterPos() {
