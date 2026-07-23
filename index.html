@@ -6,6 +6,9 @@
 <title>Tienda Aleze</title>
 <meta name="description" content="Sistema de ventas e inventario — Tienda Aleze, San Juan de Lurigancho">
 <meta name="theme-color" content="#7C3AED">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&display=swap" rel="stylesheet">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -176,7 +179,7 @@ background: #F5F3FF;
     margin: 0 auto 1rem;
     font-size: 2rem;
   }
-  .login-card h1 { font-size: 1.5rem; font-weight: 700; color: #601EF9; margin-bottom: 0.25rem; }
+  .login-card h1 { font-family: 'Baloo 2', 'Segoe UI', system-ui, sans-serif; font-size: 1.7rem; font-weight: 700; color: #601EF9; margin-bottom: 0.25rem; letter-spacing: .02em; }
   .login-card p { color: var(--gray-500); font-size: 0.875rem; margin-bottom: 1.5rem; }
   .login-card select, .login-card input {
     width: 100%; padding: 0.75rem 1rem;
@@ -217,6 +220,7 @@ background: #F5F3FF;
   .stat-item { flex:1;padding:.5rem .75rem;text-align:center; }
   .stat-item:first-child { border-right:.5px solid #EDE9FE; }
   .stat-num { display:block;font-size:1.1rem;font-weight:600;color:var(--primary); }
+  .stat-num.warm { color:#B45309; }
   .stat-lbl { display:block;font-size:.7rem;color:var(--gray-500); }
   .btn-personal {
     width:100%;padding:.6rem 1rem;background:transparent;color:#6D28D9;
@@ -1265,8 +1269,8 @@ background: #F5F3FF;
       <span style="font-size:.78rem;opacity:.75;display:block;font-weight:400">Ver productos · Pedir delivery →</span>
     </button>
     <div class="stats-row">
-      <div class="stat-item"><span class="stat-num">480+</span><span class="stat-lbl">Productos</span></div>
-      <div class="stat-item"><span class="stat-num">4.9</span><span class="stat-lbl">Calificación</span></div>
+      <div class="stat-item"><span class="stat-num warm" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
+      <div class="stat-item"><span class="stat-num">2</span><span class="stat-lbl">Sedes</span></div>
     </div>
     <button type="button" class="btn-personal" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">🔒 Acceso personal</button>
     <div style="color:var(--gray-400);font-size:.7rem;margin-top:.5rem">v1.0.1</div>
@@ -10540,6 +10544,14 @@ window.onload = async function() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // Numero real de la pantalla de bienvenida (antes fijo en el codigo) — redondeado hacia
+      // abajo a la decena, "480+" significa "al menos esto", nunca exagera.
+      try {
+        const _elStatProd = document.getElementById('welcome-stat-productos');
+        if (_elStatProd && DB.productos && DB.productos.length) {
+          _elStatProd.textContent = (Math.floor(DB.productos.length / 10) * 10) + '+';
+        }
+      } catch(e) {}
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
