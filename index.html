@@ -9078,13 +9078,11 @@ function guardarCliRapido() {
   updatePosClientes();
   document.getElementById('pos-cliente').value = c.id;
   const _bd = document.getElementById('pos-cliente-buscar'); if (_bd) _bd.value = c.alias || c.nombre;
+  // onClienteChange() ya sincroniza mob-pos-cliente por dentro (puente agregado al unificar
+  // el selector) — el bloque que llamaba a mobOnClienteChange() por separado quedó redundante
+  // y además pisaba la info de puntos recién mostrada con el formato viejo (solo total, sin
+  // puntos) porque esa función todavía no se había actualizado. Se retira, no hace falta.
   onClienteChange();
-  const _selMob = document.getElementById('mob-pos-cliente');
-  if (_selMob) {
-    _selMob.value = c.id;
-    const _bm = document.getElementById('mob-pos-cliente-buscar'); if (_bm) _bm.value = c.alias || c.nombre;
-    mobOnClienteChange();
-  }
   cerrarModal('modal-cli-rapido');
 }
 
