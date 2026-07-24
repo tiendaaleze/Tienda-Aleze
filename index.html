@@ -97,6 +97,73 @@ function _loadHtml5QrCode(cb) {
     });
   }
 })();
+
+// ── Invitación a instalar + notificaciones — SOLO tienda pública ────────
+// beforeinstallprompt puede disparar antes de que termine de cargar la página,
+// así que se captura acá, temprano, junto al resto de la detección de ruta.
+var _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  _tryMostrarInstallInvite();
+});
+window.addEventListener('appinstalled', function() {
+  _deferredInstallPrompt = null;
+  var el = document.getElementById('install-invite'); if (el) el.style.display = 'none';
+});
+
+function _yaEsAppInstalada() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+function _esIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+}
+function _tryMostrarInstallInvite() {
+  if (!window.__rutaTienda) return; // solo tienda pública — staff entra por PC
+  if (_yaEsAppInstalada()) return;
+  if (localStorage.getItem('aleze_install_dismissed') === '1') return;
+  var esIOS = _esIOS();
+  if (!_deferredInstallPrompt && !esIOS) return; // Chrome/Android sin evento aun capturado — nada que ofrecer todavia
+  setTimeout(function() {
+    var el = document.getElementById('install-invite');
+    if (!el || el.dataset.shown === '1') return;
+    el.dataset.shown = '1';
+    if (esIOS) {
+      document.getElementById('install-invite-desc').textContent = 'Toca el ícono de compartir 🔗 y elige "Agregar a pantalla de inicio".';
+      document.getElementById('install-invite-btn').style.display = 'none';
+    } else {
+      document.getElementById('install-invite-btn').style.display = 'inline-flex';
+    }
+    el.style.display = 'block';
+  }, 2500);
+}
+
+async function _instalarApp() {
+  if (!_deferredInstallPrompt) return;
+  _deferredInstallPrompt.prompt();
+  var choice = await _deferredInstallPrompt.userChoice;
+  _deferredInstallPrompt = null;
+  document.getElementById('install-invite').style.display = 'none';
+  if (choice && choice.outcome === 'accepted') {
+    // Notificaciones recién después de instalar — para que funcionen nativas, no antes de dar algo a cambio.
+    setTimeout(function() {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }, 1200);
+  }
+}
+
+function _descartarInstallInvite(permanente) {
+  var el = document.getElementById('install-invite'); if (el) el.style.display = 'none';
+  if (permanente) localStorage.setItem('aleze_install_dismissed', '1');
+}
+
+// iOS nunca dispara beforeinstallprompt — se intenta mostrar igual, tras el mismo delay,
+// una vez que el documento esta listo (para no competir con el resto de la carga inicial).
+if (_esIOS()) {
+  document.addEventListener('DOMContentLoaded', function() { _tryMostrarInstallInvite(); });
+}
 </script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
@@ -222,6 +289,18 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   .stat-item:first-child { border-right:.5px solid #EDE9FE; }
   .stat-num { display:block;font-size:1.1rem;font-weight:600;color:var(--primary); }
   .stat-lbl { display:block;font-size:.7rem;color:var(--gray-500); }
+  #install-invite {
+    display:none;position:fixed;bottom:16px;left:16px;right:16px;
+    max-width:380px;margin:0 auto;background:white;border-radius:16px;
+    box-shadow:0 10px 32px rgba(0,0,0,.16);padding:1rem 1.1rem;
+    z-index:9997;border:1px solid var(--gray-200);
+    animation:installSlideUp .35s ease;
+  }
+  @keyframes installSlideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+  #install-invite-close {
+    position:absolute;top:.6rem;right:.7rem;background:none;border:none;
+    font-size:1rem;color:var(--gray-400);cursor:pointer;padding:.2rem;line-height:1;
+  }
   .btn-personal-icon {
     width:32px;height:32px;margin:1rem auto 0;
     border-radius:50%;background:rgba(0,0,0,.03);
@@ -1249,6 +1328,23 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
 
 <!-- MOBILE SIDEBAR OVERLAY -->
 <div class="mob-sidebar-overlay" id="mob-sidebar-overlay" onclick="closeMobSidebar()"></div>
+
+<!-- Invitacion a instalar + notificaciones — solo tienda publica, no bloqueante -->
+<div id="install-invite" role="dialog" aria-label="Instalar aplicación">
+  <button type="button" id="install-invite-close" onclick="_descartarInstallInvite(false)" aria-label="Cerrar">✕</button>
+  <div style="display:flex;gap:.75rem;align-items:flex-start;padding-right:1rem">
+    <div style="font-size:1.7rem;flex-shrink:0">📲</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;font-size:.88rem;color:var(--gray-900)">Instala Tienda Aleze</div>
+      <div id="install-invite-desc" style="font-size:.76rem;color:var(--gray-500);margin-top:.15rem;line-height:1.4">Acceso más rápido y notificaciones de tus pedidos.</div>
+      <div style="display:flex;gap:.5rem;margin-top:.65rem;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary btn-sm" id="install-invite-btn" onclick="_instalarApp()" style="display:none">Instalar</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="_descartarInstallInvite(false)">Ahora no</button>
+      </div>
+      <div style="margin-top:.45rem"><a href="#" onclick="_descartarInstallInvite(true);return false;" style="font-size:.71rem;color:var(--gray-400);text-decoration:underline">No volver a mostrar</a></div>
+    </div>
+  </div>
+</div>
 
 <!-- LOGIN -->
 <!-- ── SPLASH SCREEN ── -->
