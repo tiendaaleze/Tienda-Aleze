@@ -210,7 +210,7 @@ if (_esIOS()) {
     --gray-800: #1F2937;
     --gray-900: #111827;
     --sidebar-w: 210px;
-    --header-h: 60px;
+    --header-h: 52px;
     --radius: 10px;
     --shadow: 0 1px 3px rgba(0,0,0,0.1);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
@@ -376,8 +376,8 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     height: var(--header-h);
     background: var(--primary);
     display: flex; align-items: center;
-    padding: 0 1rem;
-    gap: 1rem;
+    padding: 0 .75rem;
+    gap: .6rem;
     position: relative;
     z-index: 100;
     flex-shrink: 0;
@@ -1427,7 +1427,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     <div class="header-brand"><img id="header-logo-img" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> <span id="header-nombre">Tienda Aleze</span></div>
     <div class="header-spacer"></div>
     <div id="bday-banner" style="display:none;background:rgba(255,255,255,.2);border-radius:8px;padding:.3rem .7rem;font-size:.75rem;color:#fff;cursor:pointer;margin-right:.5rem" onclick="showAlerts()">🎂 <span id="bday-msg"></span></div>
-    <span id="sync-badge" title="Sincronizando con la nube" style="display:none;width:8px;height:8px;border-radius:50%;background:#FBBF24;margin-right:.4rem;flex-shrink:0"></span>
+    <span id="sync-badge" style="display:none;align-items:center;gap:.2rem;background:rgba(255,255,255,.18);border-radius:12px;padding:.15rem .45rem;font-size:.68rem;color:#fff;margin-right:.4rem;white-space:nowrap;flex-shrink:0"></span>
     <div class="alert-badge" onclick="showAlerts()" id="alert-count" title="Alertas">0</div>
     <div class="header-user">
       <div class="avatar" id="header-avatar">JC</div>
@@ -4081,10 +4081,10 @@ currentRole = role;
       _barraSede.style.display = 'flex';
       // El sidebar y el alto del contenido dependen de --header-h — si la barra de sede se
       // suma arriba, hay que avisarle a ese cálculo o el sidebar queda mal posicionado.
-      document.documentElement.style.setProperty('--header-h', '84px');
+      document.documentElement.style.setProperty('--header-h', '76px');
     } else {
       _barraSede.style.display = 'none';
-      document.documentElement.style.setProperty('--header-h', '60px');
+      document.documentElement.style.setProperty('--header-h', '52px');
     }
   }
 
@@ -10608,14 +10608,15 @@ setInterval(() => {
 }, 5000);
 
 function _actualizarBadgeSync() {
-  // Reducido a un punto — sin texto ni número que cambie, mucho menos ancho y menos
-  // distractor. El detalle (cuántos, cuáles) sigue disponible en el title al pasar el mouse.
+  // Con la causa real corregida (App Check/reCAPTCHA), esto ya no debería quedar trabado —
+  // vuelve a mostrar el número, para que un vendedor entienda qué es de un vistazo.
   ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
     const el = document.getElementById(elId);
     if (!el) return;
     if (_pendingSyncCount > 0) {
       clearTimeout(_syncBadgeHideTimer);
-      el.style.display = 'inline-block';
+      el.style.display = 'inline-flex';
+      el.textContent = '↻ ' + _pendingSyncCount;
       el.title = _pendingSyncCount + ' cambio(s) guardados en este equipo, sincronizando con la nube...';
     } else {
       clearTimeout(_syncBadgeHideTimer);
@@ -10632,7 +10633,7 @@ let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
 // ── Inicializar Firestore ──
 // RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
 // Si aún no tienes clave, usa 'debug' temporalmente solo en localhost
-const RECAPTCHA_SITE_KEY = '6Lcd8QctAAAAAIiLY3GPfFFP7U6K9ff4gON8TsE3'; // ← REEMPLAZAR con tu clave real
+const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
 
 function iniciarFirebase() {
   try {
@@ -12629,7 +12630,7 @@ function _renderTienda() {
 <div class="tnd-header">
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.5rem;align-items:center">
-    <span id="sync-badge-tienda" title="Sincronizando con la nube" style="display:none;width:8px;height:8px;border-radius:50%;background:#7C3AED;flex-shrink:0"></span>
+    <span id="sync-badge-tienda" style="display:none;align-items:center;gap:.2rem;background:#EDE9FE;border-radius:12px;padding:.15rem .4rem;font-size:.66rem;color:#7C3AED;white-space:nowrap;flex-shrink:0"></span>
     <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
       🛒 Carrito
