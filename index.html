@@ -126,7 +126,6 @@ function _esIOS() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
 }
 function _tryMostrarInstallInvite() {
-  if (!window.__rutaTienda) return; // solo tienda pública — staff entra por PC
   if (_yaEsAppInstalada()) return;
   if (localStorage.getItem('aleze_install_dismissed') === '1') return;
   var esIOS = _esIOS();
@@ -135,10 +134,17 @@ function _tryMostrarInstallInvite() {
     var el = document.getElementById('install-invite');
     if (!el || el.dataset.shown === '1') return;
     el.dataset.shown = '1';
+    // Texto adaptado segun contexto: cliente (tienda) vs staff (admin/vendedor).
+    const _descEl = document.getElementById('install-invite-desc');
     if (esIOS) {
-      document.getElementById('install-invite-desc').textContent = 'Toca el ícono de compartir 🔗 y elige "Agregar a pantalla de inicio".';
+      _descEl.textContent = window.__rutaTienda
+        ? 'Toca el ícono de compartir 🔗 y elige "Agregar a pantalla de inicio".'
+        : 'Toca el ícono de compartir 🔗 y elige "Agregar a pantalla de inicio" para acceso rápido y notificaciones de pedidos nuevos.';
       document.getElementById('install-invite-btn').style.display = 'none';
     } else {
+      _descEl.textContent = window.__rutaTienda
+        ? 'Acceso más rápido y notificaciones de tus pedidos.'
+        : 'Acceso más rápido y notificaciones de pedidos nuevos.';
       document.getElementById('install-invite-btn').style.display = 'inline-flex';
     }
     el.style.display = 'block';
@@ -2126,7 +2132,12 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
                 <option value="admin">Admin</option>
               </select>
             </div>
-            <div class="form-group"><label>Sede</label><input type="text" class="form-control" id="nuevo-usr-sede" placeholder="principal" /></div>
+            <div class="form-group"><label>Sede</label>
+              <select class="form-control" id="nuevo-usr-sede">
+                <option value="principal">Sede I (Principal)</option>
+                <option value="Tienda Aleze II">Sede II (Tienda Aleze II)</option>
+              </select>
+            </div>
             <button type="button" class="btn btn-primary" onclick="agregarUsuarioStaff()">➕ Agregar usuario</button>
           </div>
           <div class="card">
@@ -8332,7 +8343,10 @@ function renderUsuariosStaff() {
         <option value="admin" ${u.rol==='admin'?'selected':''}>Admin</option>
         <option value="cajero" ${u.rol==='cajero'?'selected':''}>Cajero</option>
       </select>
-      <input type="text" class="form-control" style="width:90px;font-size:.75rem" value="${u.sedeId||'principal'}" onchange="cambiarSedeUsuarioStaff(${i}, this.value)" title="Sede" />
+      <select class="form-control" style="width:100px;font-size:.75rem" onchange="cambiarSedeUsuarioStaff(${i}, this.value)" title="Sede">
+        <option value="principal" ${(u.sedeId||'principal')==='principal'?'selected':''}>Sede I</option>
+        <option value="Tienda Aleze II" ${u.sedeId==='Tienda Aleze II'?'selected':''}>Sede II</option>
+      </select>
       <button type="button" class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarUsuarioStaff(${i})">🗑️</button>
     </div>`).join('');
 }
@@ -12345,7 +12359,6 @@ function _renderTienda() {
 <div class="tnd-header">
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.75rem;align-items:center">
-    <span style="font-size:.78rem;opacity:.8">${dir}</span>
     <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
       🛒 Carrito
