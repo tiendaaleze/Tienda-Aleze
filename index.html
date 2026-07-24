@@ -1440,9 +1440,9 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   <!-- Barra propia para la sede administrativa — antes vivía apretada en el header junto al
        badge de sincronización, causaba el mismo problema de espacio que ya se corrigió ahí.
        Solo se muestra para admin. -->
-  <div id="sede-context-bar" style="display:none;align-items:center;gap:.5rem;background:#EDE9FE;border-bottom:1px solid #DDD6FE;padding:.4rem 1rem;font-size:.8rem">
-    <span style="color:#5B21B6;font-weight:600">📍 Operando en:</span>
-    <select id="sede-admin-selector" style="font-size:.78rem;padding:.25rem .5rem;border-radius:6px;border:1px solid #C4B5FD;background:#fff;color:#5B21B6" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos, caja e inventario se registran/muestran ahí">
+  <div id="sede-context-bar" style="display:none;align-items:center;gap:.4rem;background:#EDE9FE;border-bottom:1px solid #DDD6FE;padding:.15rem .75rem;font-size:.72rem;min-height:0;line-height:1.2">
+    <span style="color:#5B21B6;font-weight:600">📍</span>
+    <select id="sede-admin-selector" style="font-size:.7rem;padding:.1rem .35rem;border-radius:5px;border:1px solid #C4B5FD;background:#fff;color:#5B21B6" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos, caja e inventario se registran/muestran ahí">
       <option value="">Mi sede</option>
     </select>
   </div>
@@ -4081,7 +4081,7 @@ currentRole = role;
       _barraSede.style.display = 'flex';
       // El sidebar y el alto del contenido dependen de --header-h — si la barra de sede se
       // suma arriba, hay que avisarle a ese cálculo o el sidebar queda mal posicionado.
-      document.documentElement.style.setProperty('--header-h', '96px');
+      document.documentElement.style.setProperty('--header-h', '84px');
     } else {
       _barraSede.style.display = 'none';
       document.documentElement.style.setProperty('--header-h', '60px');
@@ -10542,7 +10542,7 @@ function _esErrorPermanente(e) {
 
 function _sincIniciar(tipo, id) {
   _pendingSyncCount++;
-  _pendingSyncDetalle.push({ tipo, id });
+  _pendingSyncDetalle.push({ tipo, id, ts: Date.now() });
   _actualizarBadgeSync();
 }
 function _sincTerminar(tipo, id) {
@@ -10571,6 +10571,25 @@ Código: ${e.code || e.message || 'desconocido'}`;
 }
 
 let _syncBadgeHideTimer = null;
+// Red de seguridad: con conexión activa, ningún pendiente debería tardar más de 15s en
+// confirmarse o fallar. Si algo queda atascado ahí (mismo patrón que el bug de _fbEscribiendo
+// que ya encontramos con las promociones), esto lo destraba solo y deja rastro en consola en
+// vez de dejar el indicador prendido para siempre sin explicación.
+setInterval(() => {
+  if (!_pendingSyncDetalle.length) return;
+  const ahora = Date.now();
+  const atascados = _pendingSyncDetalle.filter(x => (ahora - x.ts) > 15000);
+  if (atascados.length) {
+    console.warn('[Sync] Pendientes atascados más de 15s, limpiando y dejando rastro:', atascados);
+    atascados.forEach(x => {
+      const idx = _pendingSyncDetalle.indexOf(x);
+      if (idx >= 0) _pendingSyncDetalle.splice(idx, 1);
+    });
+    _pendingSyncCount = Math.max(0, _pendingSyncCount - atascados.length);
+    _actualizarBadgeSync();
+  }
+}, 5000);
+
 function _actualizarBadgeSync() {
   // Reducido a un punto — sin texto ni número que cambie, mucho menos ancho y menos
   // distractor. El detalle (cuántos, cuáles) sigue disponible en el title al pasar el mouse.
