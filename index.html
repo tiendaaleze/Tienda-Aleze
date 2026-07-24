@@ -718,6 +718,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     #header-username { max-width: 45px; }
     header { overflow-x: auto; gap: .5rem; padding: 0 .6rem; }
     .btn-logout { flex-shrink: 0; padding: .35rem .6rem; }
+  #sync-badge { flex-shrink: 0; padding: .15rem .4rem !important; font-size: .68rem !important; }
 
     /* --- SIDEBAR: oculto por defecto, desliza desde izq como overlay --- */
     aside {
@@ -1422,6 +1423,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     <div class="header-brand"><img id="header-logo-img" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> <span id="header-nombre">Tienda Aleze</span></div>
     <div class="header-spacer"></div>
     <div id="bday-banner" style="display:none;background:rgba(255,255,255,.2);border-radius:8px;padding:.3rem .7rem;font-size:.75rem;color:#fff;cursor:pointer;margin-right:.5rem" onclick="showAlerts()">🎂 <span id="bday-msg"></span></div>
+    <span id="sync-badge" style="display:none;background:rgba(255,255,255,.2);border-radius:20px;padding:.2rem .55rem;font-size:.7rem;color:#fff;margin-right:.5rem;white-space:nowrap"></span>
     <div class="alert-badge" onclick="showAlerts()" id="alert-count" title="Alertas">0</div>
     <div class="header-user">
       <select id="sede-admin-selector" style="display:none;font-size:.75rem;padding:.25rem .4rem;border-radius:6px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;margin-right:.5rem" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos y caja se registran ahí">
@@ -3402,15 +3404,19 @@ const _CLIENTE_CAMPOS_INCREMENTALES = ['deuda', 'compras', 'total', 'puntos'];
 const _clienteProxiesCreados = new WeakSet();
 function fbAjustarCliente(id, campo, delta) {
   if (!fbFS || id == null || !delta) return;
+  _sincIniciar('cliente', id);
   fbFS.collection('clientes').doc(String(id)).set(
     { [campo]: firebase.firestore.FieldValue.increment(delta) },
     { merge: true }
-  ).catch(e => console.warn('fbAjustarCliente: no se pudo ajustar clientes/' + id, e));
+  ).then(() => _sincTerminar('cliente', id))
+   .catch(e => _sincError('cliente', id, e, 'los datos del cliente (puntos/deuda/compras)'));
 }
 function fbSincronizarClienteCampo(id, campo, valor) {
   if (!fbFS || id == null) return;
+  _sincIniciar('cliente', id);
   fbFS.collection('clientes').doc(String(id)).set({ [campo]: valor }, { merge: true })
-    .catch(e => console.warn('fbSincronizarClienteCampo: no se pudo actualizar clientes/' + id, e));
+    .then(() => _sincTerminar('cliente', id))
+    .catch(e => _sincError('cliente', id, e, 'los datos del cliente'));
 }
 function _envolverCliente(c) {
   if (!c || _clienteProxiesCreados.has(c)) return c;
@@ -3485,8 +3491,10 @@ function estadoFidelizacion(clienteId) {
 function fbSincronizarCanje(canje) {
   if (!fbFS || !canje || canje.id == null) return;
   const data = { ...canje, sedeId: canje.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('canje', canje.id);
   fbFS.collection('canjes').doc(String(canje.id)).set(data)
-    .catch(e => console.warn('fbSincronizarCanje: no se pudo escribir canjes/' + canje.id, e));
+    .then(() => _sincTerminar('canje', canje.id))
+    .catch(e => _sincError('canje', canje.id, e, 'el canje de fidelización'));
 }
 
 // Todos los premios que el saldo actual alcanza a cubrir — no solo el más caro (para elegir).
@@ -3657,15 +3665,19 @@ const _cajaProxiesCreados = new WeakSet();
 
 function fbAjustarCaja(sede, campo, delta) {
   if (!fbFS || !sede || !delta) return;
+  _sincIniciar('caja', sede);
   fbFS.collection('caja').doc(String(sede)).set(
     { [campo]: firebase.firestore.FieldValue.increment(delta) },
     { merge: true }
-  ).catch(e => console.warn('fbAjustarCaja: no se pudo ajustar caja/' + sede, e));
+  ).then(() => _sincTerminar('caja', sede))
+   .catch(e => _sincError('caja', sede, e, 'el movimiento de caja'));
 }
 function fbSincronizarCajaCampo(sede, campo, valor) {
   if (!fbFS || !sede) return;
+  _sincIniciar('caja', sede);
   fbFS.collection('caja').doc(String(sede)).set({ [campo]: valor }, { merge: true })
-    .catch(e => console.warn('fbSincronizarCajaCampo: no se pudo actualizar caja/' + sede, e));
+    .then(() => _sincTerminar('caja', sede))
+    .catch(e => _sincError('caja', sede, e, 'el estado de caja'));
 }
 function _crearCajaProxy(sede, cajaObj) {
   const proxy = new Proxy(cajaObj, {
@@ -5112,10 +5124,12 @@ function stockTotal(prod) {
 function fbIncrementarStock(prodId, sede, delta) {
   if (!fbFS || prodId == null || !delta) return;
   const campo = `stockPorSede.${sede}`;
+  _sincIniciar('stock', prodId);
   fbFS.collection('stock').doc(String(prodId)).set(
     { [campo]: firebase.firestore.FieldValue.increment(delta) },
     { merge: true }
-  ).catch(e => console.warn('fbIncrementarStock: no se pudo incrementar stock/' + prodId, e));
+  ).then(() => _sincTerminar('stock', prodId))
+   .catch(e => _sincError('stock', prodId, e, 'el stock del producto'));
 }
 
 function ajustarStockSede(prod, delta, sede) {
@@ -5331,8 +5345,10 @@ function onProdImgExtraSelect(e, slot) {
 // tiene login), escritura solo admin.
 function fbGuardarDetalleProducto(prodId, detalle) {
   if (!fbFS) return;
+  _sincIniciar('detalle_producto', prodId);
   fbFS.collection('productos_detalle').doc(String(prodId)).set(detalle)
-    .catch(e => console.warn('fbGuardarDetalleProducto: no se pudo escribir productos_detalle/' + prodId, e));
+    .then(() => _sincTerminar('detalle_producto', prodId))
+    .catch(e => _sincError('detalle_producto', prodId, e, 'el detalle del producto'));
 }
 function fbBorrarDetalleProducto(prodId) {
   if (!fbFS) return;
@@ -6471,29 +6487,40 @@ async function guardarBoleta() {
 
 // ── Fase 5 arquitectura multi-sede: escritura doble en colección boletas/{id} ──
 // No bloqueante, mismo criterio que fbSincronizarVenta/fbSincronizarMovimiento.
+// Fiados: prioridad máxima de visibilidad — un fiado que no se guarda de verdad es
+// deuda real que el negocio pierde el rastro de cobrar. Mismo mecanismo que el resto,
+// pero es el caso donde más importa que la alerta llegue si el error es permanente.
 function fbSincronizarFiado(fiado) {
   if (!fbFS || !fiado || fiado.id == null) return;
   const data = { ...fiado, sedeId: fiado.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('fiado', fiado.id);
   fbFS.collection('fiados').doc(String(fiado.id)).set(data)
-    .catch(e => console.warn('fbSincronizarFiado: no se pudo escribir fiados/' + fiado.id, e));
+    .then(() => _sincTerminar('fiado', fiado.id))
+    .catch(e => _sincError('fiado', fiado.id, e, 'el fiado — esta deuda podría no quedar registrada'));
 }
 function fbSincronizarMerma(merma) {
   if (!fbFS || !merma || merma.id == null) return;
   const data = { ...merma, sedeId: merma.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('merma', merma.id);
   fbFS.collection('mermas').doc(String(merma.id)).set(data)
-    .catch(e => console.warn('fbSincronizarMerma: no se pudo escribir mermas/' + merma.id, e));
+    .then(() => _sincTerminar('merma', merma.id))
+    .catch(e => _sincError('merma', merma.id, e, 'la merma'));
 }
 function fbSincronizarGasto(gasto) {
   if (!fbFS || !gasto || gasto.id == null) return;
   const data = { ...gasto, sedeId: gasto.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('gasto', gasto.id);
   fbFS.collection('gastos').doc(String(gasto.id)).set(data)
-    .catch(e => console.warn('fbSincronizarGasto: no se pudo escribir gastos/' + gasto.id, e));
+    .then(() => _sincTerminar('gasto', gasto.id))
+    .catch(e => _sincError('gasto', gasto.id, e, 'el gasto'));
 }
 function fbSincronizarBoleta(boleta, proveedorId) {
   if (!fbFS || !boleta || boleta.id == null) return;
   const data = { ...boleta, proveedorId, sedeId: boleta.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('boleta', boleta.id);
   fbFS.collection('boletas').doc(String(boleta.id)).set(data)
-    .catch(e => console.warn('fbSincronizarBoleta: no se pudo escribir boletas/' + boleta.id, e));
+    .then(() => _sincTerminar('boleta', boleta.id))
+    .catch(e => _sincError('boleta', boleta.id, e, 'la boleta del proveedor'));
 }
 
 // ── Pago a proveedor (cuentas por pagar) — mismo patrón que confirmarPagoFiado, del otro lado del libro ──
@@ -10370,6 +10397,76 @@ let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ven
 let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
 let fbAuth = null; // Firebase Authentication
 let fbFunctions = null; // Cloud Functions — pasarela de pago, dormida hasta activarse
+
+// ══════════════════════════════════════════════════════════════════════════
+// Visibilidad real de sincronización — camino completo, no un parche.
+//
+// El problema que resuelve: con persistencia offline activada, Firestore acepta
+// cada escritura en una cola local y la reintenta solo cuando vuelve la señal —
+// eso significa que, si NO hay conexión, la Promise de .set()/.update() queda
+// simplemente PENDIENTE (ni resuelta ni rechazada), no falla. Por eso un
+// .catch() nunca debería tratarse como "seguro, ya se resuelve solo" ni como
+// "listo, ignoralo" — hay que distinguir 2 situaciones muy distintas:
+//   1. Sigue pendiente (sin señal, o el servidor tarda) → normal, se resuelve
+//      solo, no amerita interrumpir a nadie. Se refleja en un badge chico.
+//   2. Falló de verdad (permisos, datos invalidos, cuota) → NUNCA se va a
+//      resolver reintentando — el cajero tiene que enterarse ya, con una
+//      alerta real, no una línea en la consola que nadie lee.
+// ══════════════════════════════════════════════════════════════════════════
+let _pendingSyncCount = 0;
+let _pendingSyncDetalle = []; // [{tipo, id}] — para depuración si hace falta
+
+const _ERRORES_PERMANENTES = new Set([
+  'permission-denied', 'invalid-argument', 'not-found', 'resource-exhausted',
+  'failed-precondition', 'out-of-range', 'unauthenticated', 'already-exists'
+]);
+function _esErrorPermanente(e) {
+  return !!(e && _ERRORES_PERMANENTES.has(e.code));
+}
+
+function _sincIniciar(tipo, id) {
+  _pendingSyncCount++;
+  _pendingSyncDetalle.push({ tipo, id });
+  _actualizarBadgeSync();
+}
+function _sincTerminar(tipo, id) {
+  _pendingSyncCount = Math.max(0, _pendingSyncCount - 1);
+  const idx = _pendingSyncDetalle.findIndex(x => x.tipo === tipo && x.id === id);
+  if (idx >= 0) _pendingSyncDetalle.splice(idx, 1);
+  _actualizarBadgeSync();
+}
+// descripcionUsuario: texto legible para el cajero ("la venta", "el fiado") — solo se usa
+// si el error es permanente, para que la alerta diga qué NO se guardó, no un código técnico solo.
+function _sincError(tipo, id, e, descripcionUsuario, contextoPublico) {
+  _sincTerminar(tipo, id);
+  console.warn(`[Sync] ${tipo}/${id}:`, e);
+  if (_esErrorPermanente(e)) {
+    const msg = contextoPublico
+      ? `⚠️ No se pudo guardar ${descripcionUsuario || tipo}. Intenta de nuevo en unos minutos.`
+      : `⚠️ No se pudo guardar ${descripcionUsuario || tipo}.
+
+Este error no se resuelve solo reintentando — avisa al administrador.
+Código: ${e.code || e.message || 'desconocido'}`;
+    alert(msg);
+  }
+  // Si NO es permanente (típico: sin señal), Firestore ya lo tiene en su cola offline y lo
+  // reintenta solo — el badge ya venía reflejando "pendiente" desde _sincIniciar, no hace
+  // falta nada más acá.
+}
+
+function _actualizarBadgeSync() {
+  ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (_pendingSyncCount > 0) {
+      el.style.display = 'inline-flex';
+      el.textContent = '🔄 ' + _pendingSyncCount;
+      el.title = _pendingSyncCount + ' cambio(s) guardados en este equipo, sincronizando con la nube...';
+    } else {
+      el.style.display = 'none';
+    }
+  });
+}
 let fbStorage = null;     // Firebase Storage — imágenes de productos  
 let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
 let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
@@ -10422,10 +10519,11 @@ function fbGuardarExt() {
   clearTimeout(window._fbExtTimer);
   window._fbExtTimer = setTimeout(() => {
     _fbEscribiendo = true;
+    _sincIniciar('db_ext', 'db_ext');
     fbFS.collection('aleze').doc('db_ext')
       .set(JSON.parse(JSON.stringify(DB_EXT)))
-      .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); })
-      .catch(e => { _fbEscribiendo = false; console.warn('Firestore db_ext write error:', e); });
+      .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
+      .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'gastos/capital/configuración extendida'); });
   }, 1200);
 }
 
@@ -10485,9 +10583,10 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
     // Caja por sede: mandar TODAS las sedes (payload.caja solo trae la de la sesión actual, vía el getter)
     delete payload.caja;
     payload.cajas = DB._cajas;
+    _sincIniciar('aleze_db', 'db');
     fbDocRef().set(payload)
-      .then(() => { _fbWritingDB = false; setTimeout(() => { _fbEscribiendo = false; }, 300); })
-      .catch(e => { _fbWritingDB = false; _fbEscribiendo = false; console.warn('Firestore write error:', e); });
+      .then(() => { _fbWritingDB = false; setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('aleze_db', 'db'); })
+      .catch(e => { _fbWritingDB = false; _fbEscribiendo = false; _sincError('aleze_db', 'db', e, 'los datos generales (ventas, fiados, movimientos, caja, clientes)'); });
   }, 1200);
 }
 
@@ -10507,24 +10606,29 @@ function fbGuardarProductos() {
       categorias: JSON.parse(JSON.stringify(DB.categorias)),
       config:     JSON.parse(JSON.stringify(DB.config))
     };
+    _sincIniciar('db_productos', 'db_productos');
     fbProdDocRef().set(payload)
       .then(() => {
         _fbProdCacheTs = Date.now(); // actualizar timestamp caché
         _fbWritingProd = false;
         setTimeout(() => { _fbEscribiendo = false; }, 300);
+        _sincTerminar('db_productos', 'db_productos');
       })
-      .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; alert('⚠️ Error al guardar stock. Avisa al administrador.\nCódigo://' + (e.code || e.message || 'desconocido')); });
+      .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; _sincError('db_productos', 'db_productos', e, 'el catálogo de productos y el stock'); });
   }, 1200);
 }
 
 // ── Fase 1 arquitectura multi-sede: escritura doble en colección ventas/{id} ──
 // No bloqueante — un fallo acá nunca debe afectar el guardado de historialVentas.
 // sedeId por defecto 'principal' si no hay currentUserSedeId (ver Sección 3 hoja de ruta).
+// Venta: junto con fiado, la de mayor prioridad — es la transacción central del negocio.
 function fbSincronizarVenta(venta) {
   if (!fbFS || !venta || venta.id == null) return;
   const data = { ...venta, sedeId: venta.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('venta', venta.id);
   fbFS.collection('ventas').doc(String(venta.id)).set(data)
-    .catch(e => console.warn('fbSincronizarVenta: no se pudo escribir ventas/' + venta.id, e));
+    .then(() => _sincTerminar('venta', venta.id))
+    .catch(e => _sincError('venta', venta.id, e, 'la venta'));
 }
 
 // ── Fase 4 arquitectura multi-sede: escritura doble en colección movimientos/{id} ──
@@ -10532,8 +10636,10 @@ function fbSincronizarVenta(venta) {
 function fbSincronizarMovimiento(mov) {
   if (!fbFS || !mov || mov.id == null) return;
   const data = { ...mov, sedeId: mov.sedeId || currentUserSedeId || 'principal' };
+  _sincIniciar('movimiento', mov.id);
   fbFS.collection('movimientos').doc(String(mov.id)).set(data)
-    .catch(e => console.warn('fbSincronizarMovimiento: no se pudo escribir movimientos/' + mov.id, e));
+    .then(() => _sincTerminar('movimiento', mov.id))
+    .catch(e => _sincError('movimiento', mov.id, e, 'el movimiento de caja'));
 }
 // Push no-transaccional: agrega id si falta, empuja a DB.movimientos local, sincroniza a la colección nueva.
 function _pushMovimiento(mov) {
@@ -11947,8 +12053,10 @@ function tndSincronizarClientePublico(cli, esNuevo) {
   const data = esNuevo
     ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: cli.cumple||'', compras: 0, total: 0, deuda: 0, puntos: 0 }
     : { nombre: cli.nombre, alias: cli.alias };
+  _sincIniciar('cliente_publico', cli.id);
   fbFS.collection('clientes').doc(String(cli.id))[esNuevo ? 'set' : 'set'](data, esNuevo ? {} : { merge: true })
-    .catch(e => console.warn('tndSincronizarClientePublico: no se pudo escribir clientes/' + cli.id, e));
+    .then(() => _sincTerminar('cliente_publico', cli.id))
+    .catch(e => _sincError('cliente_publico', cli.id, e, 'tus datos', true));
 }
 
 // Asíncrona: DB.clientes nunca se carga entera para un visitante público (evita traer todo
@@ -12358,7 +12466,8 @@ function _renderTienda() {
 <div id="tnd-recaptcha-container"></div>
 <div class="tnd-header">
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
-  <div style="display:flex;gap:.75rem;align-items:center">
+  <div style="display:flex;gap:.5rem;align-items:center">
+    <span id="sync-badge-tienda" style="display:none;background:rgba(124,58,237,.12);border-radius:20px;padding:.2rem .5rem;font-size:.68rem;color:#7C3AED;white-space:nowrap"></span>
     <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
       🛒 Carrito
