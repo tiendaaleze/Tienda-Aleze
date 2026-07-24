@@ -1430,15 +1430,22 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     <span id="sync-badge" style="display:none;background:rgba(255,255,255,.2);border-radius:20px;padding:.2rem .55rem;font-size:.7rem;color:#fff;margin-right:.5rem;white-space:nowrap"></span>
     <div class="alert-badge" onclick="showAlerts()" id="alert-count" title="Alertas">0</div>
     <div class="header-user">
-      <select id="sede-admin-selector" style="display:none;font-size:.75rem;padding:.25rem .4rem;border-radius:6px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.15);color:#fff;margin-right:.5rem" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos y caja se registran ahí">
-        <option value="" style="color:#000">Mi sede</option>
-      </select>
       <div class="avatar" id="header-avatar">JC</div>
       <span id="header-username">Jose Carlos</span>
       <span id="header-role" style="font-size:0.75rem;opacity:0.75">(Admin)</span>
       <button type="button" class="btn-logout" onclick="doLogout()">Salir</button>
     </div>
   </header>
+
+  <!-- Barra propia para la sede administrativa — antes vivía apretada en el header junto al
+       badge de sincronización, causaba el mismo problema de espacio que ya se corrigió ahí.
+       Solo se muestra para admin. -->
+  <div id="sede-context-bar" style="display:none;align-items:center;gap:.5rem;background:#EDE9FE;border-bottom:1px solid #DDD6FE;padding:.4rem 1rem;font-size:.8rem">
+    <span style="color:#5B21B6;font-weight:600">📍 Operando en:</span>
+    <select id="sede-admin-selector" style="font-size:.78rem;padding:.25rem .5rem;border-radius:6px;border:1px solid #C4B5FD;background:#fff;color:#5B21B6" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos, caja e inventario se registran/muestran ahí">
+      <option value="">Mi sede</option>
+    </select>
+  </div>
 
   <div class="main-wrap">
     <aside id="sidebar">
@@ -4058,18 +4065,23 @@ currentRole = role;
   // Sede administrativa: solo admin la ve — sede 2 no tiene admin propio, así que el admin
   // necesita poder operar (boletas, mermas, productos nuevos, gastos, caja) para cualquier sede.
   const _selSedeAdmin = document.getElementById('sede-admin-selector');
-  if (_selSedeAdmin) {
+  const _barraSede = document.getElementById('sede-context-bar');
+  if (_selSedeAdmin && _barraSede) {
     if (role === 'admin') {
       // Etiqueta corta — el selector no entraba en el header movil sin forzar scroll.
       // El value interno (principal / Tienda Aleze II) no cambia, solo lo que se ve.
       const _sedeCorta = s => s === 'principal' ? 'Sede I' : 'Sede II';
       const _miSede = currentUserSedeId || 'principal';
       const _otrasSedes = ['principal', 'Tienda Aleze II'].filter(s => s !== _miSede);
-      _selSedeAdmin.innerHTML = `<option value="" style="color:#000">${_sedeCorta(_miSede)}</option>` +
-        _otrasSedes.map(s => `<option value="${s}" style="color:#000">${_sedeCorta(s)}</option>`).join('');
-      _selSedeAdmin.style.display = 'inline-block';
+      _selSedeAdmin.innerHTML = `<option value="">${_sedeCorta(_miSede)}</option>` +
+        _otrasSedes.map(s => `<option value="${s}">${_sedeCorta(s)}</option>`).join('');
+      _barraSede.style.display = 'flex';
+      // El sidebar y el alto del contenido dependen de --header-h — si la barra de sede se
+      // suma arriba, hay que avisarle a ese cálculo o el sidebar queda mal posicionado.
+      document.documentElement.style.setProperty('--header-h', '96px');
     } else {
-      _selSedeAdmin.style.display = 'none';
+      _barraSede.style.display = 'none';
+      document.documentElement.style.setProperty('--header-h', '60px');
     }
   }
 
@@ -5083,8 +5095,11 @@ function updateInvCatFilter() {
 function renderInvTable(prods) {
   prods = prods || DB.productos;
   const tbody = document.getElementById('inv-tbody');
+  // Bug real: stockEnSede(p) sin segundo argumento usa la sede de quien inició sesión, no la
+  // sede efectiva del selector de admin — por eso cambiar de sede no cambiaba este número.
+  const _sedeInv = sedeAdminEfectiva();
   tbody.innerHTML = prods.map(p => {
-    const _stockAqui = stockEnSede(p);
+    const _stockAqui = stockEnSede(p, _sedeInv);
     const dias = diasHasta(p.venc);
     let estado = '<span class="badge badge-green">✅ OK</span>';
     if (_stockAqui <= p.stockMin) estado = '<span class="badge badge-red">⚠️ Stock bajo</span>';
@@ -5156,7 +5171,13 @@ function exportInventario() { alert('Función de exportación: En la versión co
 // usado por reportes y donde no importa la sede) nunca se desincroniza de stockPorSede (el dato real).
 function stockEnSede(prod, sede) {
   if (!prod) return 0;
-  sede = sede || currentUserSedeId || 'principal';
+  // Corrección de raíz: el default era currentUserSedeId (la sede de LOGIN), lo que hacía
+  // que un admin cambiando de sede via el selector no viera reflejado el cambio en POS,
+  // Inventario, ni Inventario Mensual — decenas de llamadas en todo el archivo dependen de
+  // este default. sedeAdminEfectiva() ya resuelve exactamente lo mismo para un cajero (nunca
+  // tiene override), y respeta el cambio de sede para admin — un solo arreglo cubre todo,
+  // sin tener que tocar cada llamada una por una.
+  sede = sede || sedeAdminEfectiva();
   if (!prod.stockPorSede) return sede === 'principal' ? (prod.stock || 0) : 0;
   return prod.stockPorSede[sede] || 0;
 }
