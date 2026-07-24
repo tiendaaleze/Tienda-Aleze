@@ -10607,7 +10607,16 @@ setInterval(() => {
   }
 }, 5000);
 
+let _sincTraceUltimo = 0;
 function _actualizarBadgeSync() {
+  // Diagnostico definitivo: un rastro completo (que funcion llamo a que funcion) cada vez
+  // que esto se dispara, pero como maximo cada 3 segundos para no saturar la consola.
+  // Esto va a mostrar EXACTAMENTE quien esta disparando esto, sin necesidad de seguir
+  // adivinando desde el codigo estatico.
+  if (_pendingSyncCount > 0 && Date.now() - _sincTraceUltimo > 3000) {
+    _sincTraceUltimo = Date.now();
+    console.trace('🔍 [Sync-Trace] _actualizarBadgeSync disparado, pendientes:', _pendingSyncCount, _pendingSyncDetalle.map(x=>x.tipo+'/'+x.id));
+  }
   // Con la causa real corregida (App Check/reCAPTCHA), esto ya no debería quedar trabado —
   // vuelve a mostrar el número, para que un vendedor entienda qué es de un vistazo.
   ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
