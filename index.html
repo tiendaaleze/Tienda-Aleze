@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#7C3AED">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -153,7 +153,7 @@ function _loadHtml5QrCode(cb) {
   /* LOGIN */
   #login-screen {
     position: fixed; inset: 0;
-background: #F5F3FF;
+background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     display: none; align-items: center; justify-content: center;
     z-index: 9999;
     overflow: hidden;
@@ -163,12 +163,12 @@ background: #F5F3FF;
   #login-screen.visible { display: flex; }
 .login-card {
     background: white;
-    border-radius: 20px;
-    padding: 2.5rem;
+    border-radius: 24px;
+    padding: 3rem 2.5rem;
     width: 360px;
     max-width: 92vw;
     box-sizing: border-box;
-    box-shadow: 0 8px 32px rgba(96,30,249,0.15);
+    box-shadow: 0 4px 24px rgba(96,30,249,0.08);
     text-align: center;
   }
   .login-logo {
@@ -179,7 +179,8 @@ background: #F5F3FF;
     margin: 0 auto 1rem;
     font-size: 2rem;
   }
-  .login-card h1 { font-family: 'Baloo 2', 'Segoe UI', system-ui, sans-serif; font-size: 1.7rem; font-weight: 700; color: #601EF9; margin-bottom: 0.25rem; letter-spacing: .02em; }
+  .login-card h1 { font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; font-size: 1.55rem; font-weight: 700; color: #601EF9; margin-bottom: 0; letter-spacing: -.01em; }
+  .welcome-eslogan { font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; font-size: .8rem; font-weight: 400; color: var(--gray-500); margin: .35rem 0 1.5rem; }
   .login-card p { color: var(--gray-500); font-size: 0.875rem; margin-bottom: 1.5rem; }
   .login-card select, .login-card input {
     width: 100%; padding: 0.75rem 1rem;
@@ -201,21 +202,21 @@ background: #F5F3FF;
   .btn-login:hover { opacity: 0.9; }
   /* ── LOGIN REDISEÑADO ──────────────────────────── */
   .koala-circle {
-    width:130px;height:130px;border-radius:50%;overflow:hidden;
-    margin:0 auto 1rem;background:white;flex-shrink:0;
+    width:142px;height:142px;border-radius:50%;overflow:hidden;
+    margin:0 auto 1.25rem;background:white;flex-shrink:0;
    box-shadow:0 0 0 6px #601EF9;display:flex;align-items:center;
     justify-content:center;font-size:2.5rem;
   }
   .koala-circle.koala-sm { width:82px;height:82px;box-shadow:0 0 0 5px #601EF9;margin-bottom:.75rem; }
   .koala-circle img { width:100%;height:100%;object-fit:cover;border-radius:50%; }
   .btn-compra {
-    width:100%;padding:.875rem 1rem;
+    width:100%;padding:1rem 1rem;
    background:#601EF9;color:white;
-    border:1.5px solid #601EF9;border-radius:var(--radius);
-    font-size:.95rem;font-weight:600;cursor:pointer;
-    margin-bottom:.75rem;line-height:1.5;transition:background .2s;
+    border:1.5px solid #601EF9;border-radius:16px;
+    font-size:1rem;font-weight:600;cursor:pointer;
+    margin-bottom:1.5rem;margin-top:.5rem;line-height:1.5;transition:background .2s,transform .15s;
   }
-.btn-compra:hover { background:#4F0FE0; }
+.btn-compra:hover { background:#4F0FE0; transform:translateY(-1px); }
   .stats-row { display:flex;margin-bottom:.75rem;background:white;border-radius:10px;border:.5px solid #DDD6FE;overflow:hidden; }
   .stat-item { flex:1;padding:.5rem .75rem;text-align:center; }
   .stat-item:first-child { border-right:.5px solid #EDE9FE; }
@@ -223,16 +224,15 @@ background: #F5F3FF;
   .stat-num.warm { color:#B45309; }
   .stat-lbl { display:block;font-size:.7rem;color:var(--gray-500); }
   .btn-personal-icon {
-    position:fixed;top:14px;right:14px;width:38px;height:38px;
-    border-radius:50%;background:rgba(255,255,255,.65);
-    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-    border:1px solid rgba(0,0,0,.06);color:#475569;
+    width:32px;height:32px;margin:1rem auto 0;
+    border-radius:50%;background:rgba(0,0,0,.03);
+    border:1px solid rgba(0,0,0,.05);color:#94A3B8;
     display:flex;align-items:center;justify-content:center;
-    cursor:pointer;opacity:.55;z-index:50;
+    cursor:pointer;opacity:.7;
     transition:opacity .2s,transform .15s,background .2s;
   }
   .btn-personal-icon:hover, .btn-personal-icon:active {
-    opacity:1;background:rgba(255,255,255,.92);transform:scale(1.06);
+    opacity:1;background:rgba(0,0,0,.06);transform:scale(1.06);
   }
   .btn-volver { background:none;border:none;color:var(--gray-400);font-size:.8rem;margin-top:.6rem;cursor:pointer; }
 
@@ -1269,18 +1269,14 @@ background: #F5F3FF;
            onerror="this.style.display='none';this.parentNode.innerHTML='🛒'"/>
     </div>
     <h1 id="brand-nombre-1">Tienda Aleze</h1>
-    <p>Jr. Tigrillo Mz. Ll4 Lt. 5 – SJL</p>
+    <div class="welcome-eslogan">Todo lo que necesitas, cerca de ti.</div>
     <button type="button" class="btn-compra" onclick="location.hash='#/tienda';initTienda()">
-      🛍️ ¡Compra aquí!
-      <span style="font-size:.78rem;opacity:.75;display:block;font-weight:400">Ver productos · Pedir delivery →</span>
+      🛒 Comprar ahora
+      <span style="font-size:.76rem;opacity:.7;display:block;font-weight:400;margin-top:.15rem">Productos • Delivery</span>
     </button>
-    <div class="stats-row">
-      <div class="stat-item"><span class="stat-num warm" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
-      <div class="stat-item"><span class="stat-num">2</span><span class="stat-lbl">Sedes</span></div>
-    </div>
-    <div style="color:var(--gray-400);font-size:.7rem;margin-top:.5rem">v1.0.1</div>
+    <div style="color:var(--gray-400);font-size:.68rem">v1.0.1</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
         <path d="M21 2l-9.6 9.6"></path>
         <path d="M15.5 7.5L18 10"></path>
@@ -3870,10 +3866,13 @@ currentRole = role;
   const _selSedeAdmin = document.getElementById('sede-admin-selector');
   if (_selSedeAdmin) {
     if (role === 'admin') {
+      // Etiqueta corta — el selector no entraba en el header movil sin forzar scroll.
+      // El value interno (principal / Tienda Aleze II) no cambia, solo lo que se ve.
+      const _sedeCorta = s => s === 'principal' ? 'Sede I' : 'Sede II';
       const _miSede = currentUserSedeId || 'principal';
       const _otrasSedes = ['principal', 'Tienda Aleze II'].filter(s => s !== _miSede);
-      _selSedeAdmin.innerHTML = `<option value="" style="color:#000">Mi sede (${_miSede})</option>` +
-        _otrasSedes.map(s => `<option value="${s}" style="color:#000">${s}</option>`).join('');
+      _selSedeAdmin.innerHTML = `<option value="" style="color:#000">${_sedeCorta(_miSede)}</option>` +
+        _otrasSedes.map(s => `<option value="${s}" style="color:#000">${_sedeCorta(s)}</option>`).join('');
       _selSedeAdmin.style.display = 'inline-block';
     } else {
       _selSedeAdmin.style.display = 'none';
@@ -10557,14 +10556,6 @@ window.onload = async function() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
-      // Numero real de la pantalla de bienvenida (antes fijo en el codigo) — redondeado hacia
-      // abajo a la decena, "480+" significa "al menos esto", nunca exagera.
-      try {
-        const _elStatProd = document.getElementById('welcome-stat-productos');
-        if (_elStatProd && DB.productos && DB.productos.length) {
-          _elStatProd.textContent = (Math.floor(DB.productos.length / 10) * 10) + '+';
-        }
-      } catch(e) {}
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
