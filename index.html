@@ -3572,13 +3572,52 @@ async function procesarCanje(clienteId, premioId) {
   return canje;
 }
 
+// Cambiar de sede es un cambio de CONTEXTO COMPLETO — no solo dónde se crean registros
+// nuevos (boletas, mermas, gastos, caja), también qué se está VIENDO en reportes, historial
+// e inventario. Antes solo tocaba lo primero, lo que hacía parecer que "no pasaba nada" al
+// cambiar. Ahora sincroniza los filtros de sede propios de cada pantalla y refresca lo que
+// esté activo, con confirmación explícita antes de aplicar (no es un cambio menor).
 function cambiarSedeAdmin(sede) {
+  const _sedeAnterior = _sedeAdminOverride;
+  const _nombreSede = s => s === 'principal' || !s ? 'Sede I (Principal)' : 'Sede II (Tienda Aleze II)';
+
+  if (!confirm(`¿Cambiar a ${_nombreSede(sede)}?\n\nEsto cambia dónde se registran boletas, mermas, gastos y caja, Y qué estás viendo en reportes, historial e inventario — todo el contexto de la sesión.`)) {
+    // Revertir el selector visualmente si cancela — el <select> ya cambió de valor al disparar onchange.
+    const sel = document.getElementById('sede-admin-selector');
+    if (sel) sel.value = _sedeAnterior || '';
+    return;
+  }
+
   _sedeAdminOverride = sede || null;
+  const sedeEfectiva = sedeAdminEfectiva();
+
+  // Sincronizar los filtros de sede propios de cada pantalla — así, aunque el usuario
+  // navegue a otra sección después, ya la encuentra filtrada a la sede correcta.
+  ['rep-sede', 'hv-sede'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = sedeEfectiva;
+  });
+
   try {
     const activePage = document.querySelector('.page.active');
     const pageId = activePage ? activePage.id.replace('page-','') : '';
-    if (pageId === 'caja') renderCaja();
-  } catch(e) {}
+    const _refrescos = {
+      'dashboard': renderDashboard,
+      'caja': renderCaja,
+      'reportes': generarReporte,
+      'historial-ventas': renderHistorialVentas,
+      'inventario': renderInvTable,
+      'mermas': renderMermas,
+      'gastos': renderGastos,
+      'fiados': renderFiados,
+      'pos': () => { try { renderPos(); } catch(e){} try { if (isMobile()) renderMobPos(); } catch(e){} },
+      'frecuentes': renderFrecuentes,
+    };
+    if (_refrescos[pageId]) _refrescos[pageId]();
+  } catch(e) { console.warn('cambiarSedeAdmin: error al refrescar la vista', e); }
+
+  // Aviso posterior, breve — confirma que el cambio se aplicó de verdad, no solo el selector.
+  setTimeout(() => alert(`✅ Ahora estás en ${_nombreSede(sede)} — vista y registros nuevos aplican a esta sede.`), 100);
 }
 
 // Extended DB with new modules
