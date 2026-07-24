@@ -4183,6 +4183,18 @@ function navigate(page) {
   });
   if (page === 'dashboard') renderDashboard();
   if (page === 'pos') {
+    // Aviso bloqueante: si el admin sigue "operando" en una sede distinta a la de su login,
+    // conviene confirmarlo antes de vender — evita vender en Sede II sin darse cuenta porque
+    // quedó así después de revisar algo y se olvidó de volver a su sede.
+    if (currentRole === 'admin' && _sedeAdminOverride && sedeAdminEfectiva() !== currentUserSedeId) {
+      const _nombreSedeAct = sedeAdminEfectiva() === 'principal' ? 'Sede I (Principal)' : 'Sede II (Tienda Aleze II)';
+      const _volverAMiSede = confirm(`⚠️ Estás vendiendo en ${_nombreSedeAct} — no es tu sede de inicio de sesión.\n\nAceptar: volver a mi sede antes de continuar.\nCancelar: seguir vendiendo en ${_nombreSedeAct} (si estás físicamente ahí).`);
+      if (_volverAMiSede) {
+        _sedeAdminOverride = null;
+        const _selSede = document.getElementById('sede-admin-selector');
+        if (_selSede) _selSede.value = '';
+      }
+    }
     if (fbFS && DB.productos.length === 0) {
       fbProdDocRef().get().then(snap => {
         if (snap.exists) {
@@ -4867,7 +4879,7 @@ function procesarVenta() {
       id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
       items: itemsConPrecioReal, subtotal: sub,
       descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
-      total, metodo, clienteId
+      total, metodo, clienteId, sedeId: sedeAdminEfectiva()
     };
   }
   _ventaPendiente = { firma, venta };
@@ -4950,7 +4962,7 @@ function cobrarFiado() {
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }),
       total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc,
-      sedeId: currentUserSedeId || 'principal'
+      sedeId: sedeAdminEfectiva()
     };
   }
   _fiadoPendiente = { firma, fiado };
@@ -5203,7 +5215,12 @@ function fbIncrementarStock(prodId, sede, delta) {
 
 function ajustarStockSede(prod, delta, sede) {
   if (!prod) return;
-  sede = sede || currentUserSedeId || 'principal';
+  // Mismo bug de raiz que stockEnSede(), pero mas grave: esto es lo que de verdad descuenta
+  // stock al vender. Con currentUserSedeId, vender "en Sede II" via el selector en realidad
+  // descontaba el stock de Sede I sin ningun aviso — el descuento no seguia a lo que se veia
+  // en pantalla. sedeAdminEfectiva() ya es identico a currentUserSedeId para un cajero (nunca
+  // tiene override), asi que esto no cambia nada para el uso normal, solo corrige al admin.
+  sede = sede || sedeAdminEfectiva();
   if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock || 0 };
   prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0) + delta) * 1000) / 1000);
   prod.stock = stockTotal(prod);
@@ -10315,7 +10332,7 @@ function mobCobrarFiado() {
     items: itemsConPrecioReal,
     total, pagado: 0, fecha: today(),
     descuentoCombo: comboInfo.total, descuentoManual: desc,
-    sedeId: currentUserSedeId || 'principal'
+    sedeId: sedeAdminEfectiva()
   };
 DB.fiados.push(fiado);
   fbSincronizarFiado(fiado);
@@ -10390,7 +10407,7 @@ function mobProcesarVenta(){
     id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
     items: itemsConPrecioReal, subtotal: sub,
     descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
-    total, metodo, clienteId
+    total, metodo, clienteId, sedeId: sedeAdminEfectiva()
   };
   // Descontar stock
   _fbLastWriteProdTs = Date.now();
@@ -10731,6 +10748,10 @@ function fbSincronizarMovimiento(mov) {
 // Push no-transaccional: agrega id si falta, empuja a DB.movimientos local, sincroniza a la colección nueva.
 function _pushMovimiento(mov) {
   if (mov.id == null) mov.id = getId();
+  // Mismo criterio de raiz: si quien llama no especifico sede, usar la sede efectiva
+  // (respeta el cambio de sede del admin) en vez de dejar que el fallback de
+  // fbSincronizarMovimiento use la sede de login.
+  if (!mov.sedeId) mov.sedeId = sedeAdminEfectiva();
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(mov);
   fbSincronizarMovimiento(mov);
