@@ -4326,8 +4326,12 @@ function renderDashboard() {
   if (hLogoImg && !hLogoImg.src) hLogoImg.src = _LOGO_B64;
   const hoy = today();
   const mes = getMesActual();
+  // Dashboard es diario — tiene más sentido por sede que consolidado, igual que el resto de
+  // las pantallas operativas. sueldos/gastos recurrentes/capital quedan sin filtrar más abajo
+  // porque son costos compartidos de todo el negocio, no atribuibles a una sede en particular.
+  const _sedeDash = sedeAdminEfectiva();
   // Use historialVentas as source of truth (reflects annulments/returns)
-  const hvAll = DB.historialVentas || [];
+  const hvAll = (DB.historialVentas || []).filter(v => (v.sedeId || 'principal') === _sedeDash);
   const ventasHoy = hvAll.filter(v => v.fecha === hoy && v.estado !== 'anulado' && v.estado !== 'fiado' && v.origen !== 'pago_fiado');
   const fiadosCobradosHoy = hvAll.filter(v => v.fecha === hoy && v.origen === 'pago_fiado').reduce((s,v) => s + (v.total||0), 0);
   const totalHoy = ventasHoy.reduce((s, v) => s + (v.total||0), 0);
@@ -4341,10 +4345,10 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
     return ss + (p ? p.costo * i.cant : 0);
   }, 0), 0);
   // Mermas del día
-  const mermasHoy = (DB.mermas||[]).filter(m=>m.fecha===hoy).reduce((s,m)=>{
+  const mermasHoy = (DB.mermas||[]).filter(m=>m.fecha===hoy && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
     const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
   },0);
-  const gastosHoy = (DB_EXT.gastos||[]).filter(g=>g.fecha===hoy).reduce((s,g)=>s+g.monto,0);
+  const gastosHoy = (DB_EXT.gastos||[]).filter(g=>g.fecha===hoy && (g.sedeId||'principal')===_sedeDash).reduce((s,g)=>s+g.monto,0);
   const costoFiadosHoy = hvAll.filter(v => v.fecha === hoy && v.origen === 'pago_fiado').reduce((s,v) => {
     // Costo real guardado al momento del pago (exacto, por item) — si no existe, es un pago anterior a este arreglo, se aproxima por proporción.
     if (v.costoAsociado != null) return s + v.costoAsociado;
@@ -4355,8 +4359,8 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   }, 0);
   document.getElementById('dash-rent').textContent = sol(totalHoy + fiadosCobradosHoy - costoHoy - costoFiadosHoy - gastosHoy - mermasHoy);
 
-  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p) <= p.stockMin).length;
-  document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0).length;
+  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p, _sedeDash) <= p.stockMin).length;
+  document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0 && stockEnSede(p, _sedeDash) > 0).length;
 
   // Capital
   const pct = DB_EXT.capital.total > 0 ? Math.min(100, DB_EXT.capital.recuperado/DB_EXT.capital.total*100) : 0;
@@ -4365,12 +4369,13 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
 
   // Panel financiero mensual
   const ventasMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado').reduce((s,v)=>s+(v.total||0),0);
-  const gastosMes = (DB_EXT.gastos||[]).filter(g=>g.fecha&&g.fecha.startsWith(mes)).reduce((s,g)=>s+g.monto,0);
+  const gastosMes = (DB_EXT.gastos||[]).filter(g=>g.fecha&&g.fecha.startsWith(mes) && (g.sedeId||'principal')===_sedeDash).reduce((s,g)=>s+g.monto,0);
+  // Sueldos/gastos recurrentes/capital: costos compartidos de todo el negocio, no por sede — quedan sin filtrar a propósito.
   const sueldosMes = Object.values(DB_EXT.sueldos||{}).reduce((s,v)=>s+v,0);
   const gastosRec = (DB_EXT.gastosRec||[]).reduce((s,g)=>s+g.monto,0);
   const costoMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado')
     .reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
-  const mermasMes = (DB.mermas||[]).filter(m=>m.fecha&&m.fecha.startsWith(mes)).reduce((s,m)=>{
+  const mermasMes = (DB.mermas||[]).filter(m=>m.fecha&&m.fecha.startsWith(mes) && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
     const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
   },0);
   const rentReal = ventasMes - costoMes - gastosMes - sueldosMes - gastosRec - mermasMes - DB_EXT.capital.cuota;
@@ -6693,13 +6698,19 @@ function renderFiados() {
   const estado   = document.getElementById('fi-estado')?.value || '';
   const cliFilter = parseInt(document.getElementById('fi-cliente')?.value) || 0;
 
+  // Por sede, mismo criterio que el resto — solo la LISTA que se ve (de donde se originó la
+  // deuda). Cobrar, editar, o el mensaje de WhatsApp de un cliente puntual siguen sin filtrar
+  // por sede más abajo en el archivo — pagar una deuda no depende de en qué sede se originó.
+  const _sedeF = sedeAdminEfectiva();
+  const _fiadosSede = DB.fiados.filter(f => (f.sedeId||'principal') === _sedeF);
+
   // Poblar selector de clientes — respeta el filtro de estado actual (por defecto "pendiente"),
   // así no lista clientes que la tarjeta de abajo ya está ocultando.
   const selCli = document.getElementById('fi-cliente');
   if (selCli) {
     const valorActual = selCli.value;
     selCli.innerHTML = '<option value="">Todos los clientes</option>';
-    let fiadosParaSelector = DB.fiados;
+    let fiadosParaSelector = _fiadosSede;
     if (estado === 'pendiente') fiadosParaSelector = fiadosParaSelector.filter(f => (f.total - f.pagado) > 0.01);
     if (estado === 'pagado')    fiadosParaSelector = fiadosParaSelector.filter(f => (f.total - f.pagado) <= 0.01);
     const cidsConFiados = [...new Set(fiadosParaSelector.map(f => f.clienteId))];
@@ -6711,7 +6722,7 @@ function renderFiados() {
   }
 
   const porCliente = {};
-  DB.fiados.forEach(f => {
+  _fiadosSede.forEach(f => {
     if (!porCliente[f.clienteId]) porCliente[f.clienteId] = [];
     porCliente[f.clienteId].push(f);
   });
@@ -6732,12 +6743,12 @@ function renderFiados() {
     ));
   }
 
-  const totalDeuda = DB.fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
-  const clientesConDeuda = [...new Set(DB.fiados.map(f => f.clienteId))].filter(cid =>
-    DB.fiados.filter(f => f.clienteId === cid).some(f => (f.total - f.pagado) > 0)
+  const totalDeuda = _fiadosSede.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
+  const clientesConDeuda = [...new Set(_fiadosSede.map(f => f.clienteId))].filter(cid =>
+    _fiadosSede.filter(f => f.clienteId === cid).some(f => (f.total - f.pagado) > 0)
   ).length;
-  const mayor = [...new Set(DB.fiados.map(f => f.clienteId))].reduce((m, cid) => {
-    const d = DB.fiados.filter(f => f.clienteId === cid).reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
+  const mayor = [...new Set(_fiadosSede.map(f => f.clienteId))].reduce((m, cid) => {
+    const d = _fiadosSede.filter(f => f.clienteId === cid).reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
     return Math.max(m, d);
   }, 0);
   document.getElementById('fiados-total').textContent = sol(totalDeuda);
@@ -7599,16 +7610,19 @@ function crearPromoSugerida(prodId) {
 
 // ===================== MERMAS =====================
 function renderMermas() {
-  const totalPerd = DB.mermas.reduce((s, m) => { const p = DB.productos.find(x => x.id === m.prodId); return s + (p ? p.costo * m.cant : 0); }, 0);
-  const mesMermas = DB.mermas.filter(m => m.fecha.startsWith(today().substring(0,7))).length;
+  // Por sede, mismo criterio que el resto de pantallas operativas.
+  const _sedeM = sedeAdminEfectiva();
+  const _mermasSede = DB.mermas.filter(m => (m.sedeId||'principal') === _sedeM);
+  const totalPerd = _mermasSede.reduce((s, m) => { const p = DB.productos.find(x => x.id === m.prodId); return s + (p ? p.costo * m.cant : 0); }, 0);
+  const mesMermas = _mermasSede.filter(m => m.fecha.startsWith(today().substring(0,7))).length;
   const motivos = {};
-  DB.mermas.forEach(m => motivos[m.motivo] = (motivos[m.motivo]||0)+1);
+  _mermasSede.forEach(m => motivos[m.motivo] = (motivos[m.motivo]||0)+1);
   const topMotivo = Object.entries(motivos).sort((a,b)=>b[1]-a[1])[0];
   document.getElementById('merma-total').textContent = sol(totalPerd);
   document.getElementById('merma-mes').textContent = mesMermas;
   document.getElementById('merma-motivo').textContent = topMotivo ? topMotivo[0] : '-';
 
-  document.getElementById('merma-tbody').innerHTML = DB.mermas.map(m => {
+  document.getElementById('merma-tbody').innerHTML = _mermasSede.map(m => {
     const p = DB.productos.find(x => x.id === m.prodId);
     const perdida = p ? p.costo * m.cant : 0;
     return `<tr>
@@ -9001,7 +9015,11 @@ let chartGastos = null;
 
 function renderGastos() {
   const mes = getMesActual();
-  const gastosMes = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(mes));
+  // Gastos variables (DB_EXT.gastos) son por sede — sueldos/recurrentes son costos
+  // compartidos de todo el negocio, no atribuibles a una sola sede, quedan sin filtrar.
+  const _sedeG = sedeAdminEfectiva();
+  const _gastosVarSede = DB_EXT.gastos.filter(g => (g.sedeId||'principal') === _sedeG);
+  const gastosMes = _gastosVarSede.filter(g => g.fecha && g.fecha.startsWith(mes));
   const totVar = gastosMes.reduce((s, g) => s + g.monto, 0);
   const totFij = DB_EXT.gastosRec.reduce((s, g) => s + g.monto, 0);
   const totSu  = Object.values(DB_EXT.sueldos).reduce((s, v) => s + v, 0);
@@ -9022,7 +9040,7 @@ function renderGastos() {
   const fDesde  = document.getElementById('g-filtro-desde')?.value  || '';
   const fHasta  = document.getElementById('g-filtro-hasta')?.value  || '';
   const fBuscar = (document.getElementById('g-filtro-buscar')?.value || '').toLowerCase();
-  let gastosVis = [...DB_EXT.gastos].reverse();
+  let gastosVis = [..._gastosVarSede].reverse();
   if (fDesde)  gastosVis = gastosVis.filter(g => g.fecha >= fDesde);
   if (fHasta)  gastosVis = gastosVis.filter(g => g.fecha <= fHasta);
   if (fBuscar) gastosVis = gastosVis.filter(g =>
