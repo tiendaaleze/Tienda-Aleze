@@ -6951,7 +6951,10 @@ function compartirResumenFiadoCliente(cid) {
   const tipo  = document.getElementById('fi-tipo-' + cid)?.value || 'todo';
   const desde = document.getElementById('fi-int-desde-' + cid)?.value || '';
   const hasta = document.getElementById('fi-int-hasta-' + cid)?.value || '';
-  let fiados  = DB.fiados.filter(f => f.clienteId === cid);
+  // Por sede: un vendedor de Sede II no debe mandar ni ver deuda que el cliente generó en
+  // Sede I — son clientes de confianza de un local, no necesariamente conocidos en el otro.
+  const _sedeCRF = sedeAdminEfectiva();
+  let fiados  = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeCRF);
   // Un pendiente nunca desaparece por el filtro de fecha (sigue siendo deuda real) — el
   // filtro de fecha solo acota lo YA PAGADO.
   if (desde) fiados = fiados.filter(f => f.fecha >= desde || (f.total - f.pagado) > 0.01);
@@ -6975,7 +6978,8 @@ function compartirResumenFiadoCliente(cid) {
 function abrirPagoGlobal(cid) {
   const cli = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
- const pendienteTotal = Math.round(DB.fiados.filter(f => f.clienteId === cid).reduce((s,f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
+  const _sedeAPG = sedeAdminEfectiva();
+ const pendienteTotal = Math.round(DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeAPG).reduce((s,f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
   if (pendienteTotal <= 0) { alert('Este cliente no tiene deuda pendiente.'); return; }
   const monto = parseFloat(prompt(`Pago global para ${nombre}\nDeuda total: ${sol(pendienteTotal)}\n\nIngresa el monto a pagar:`));
   if (!monto || isNaN(monto) || monto <= 0) return;
@@ -7010,7 +7014,8 @@ function _asignarPagoAItems(fiado, monto) {
 function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   metodo = metodo || 'Efectivo';
   let saldo = montoTotal;
-  const fiados = DB.fiados.filter(f => f.clienteId === cid && (f.total - f.pagado) > 0).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
+  const _sedeEPG = sedeAdminEfectiva();
+  const fiados = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && (f.total - f.pagado) > 0).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
   const _hvPagosGlobal = [];
   fiados.forEach(f => {
     if (saldo <= 0) return;
