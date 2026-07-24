@@ -3,7 +3,7 @@
   "short_name": "Aleze",
   "description": "Tu tienda de confianza — Ventas e inventario Aleze SJL",
   "id": "/Tienda-Aleze/",
-  "start_url": "/Tienda-Aleze/",
+  "start_url": "/Tienda-Aleze/#/tienda",
   "scope": "/Tienda-Aleze/",
   "display": "standalone",
   "background_color": "#5B21B6",
@@ -24,21 +24,34 @@
       "purpose": "maskable"
     }
   ],
-  "categories": ["business", "productivity"],
+  "categories": [
+    "business",
+    "productivity"
+  ],
   "shortcuts": [
     {
       "name": "Punto de Venta",
       "short_name": "POS",
       "description": "Abrir caja rápida",
       "url": "/Tienda-Aleze/#pos",
-      "icons": [{ "src": "icon.svg", "sizes": "any" }]
+      "icons": [
+        {
+          "src": "icon.svg",
+          "sizes": "any"
+        }
+      ]
     },
     {
       "name": "Tienda Online",
       "short_name": "Tienda",
       "description": "Ver catálogo público",
       "url": "/Tienda-Aleze/#/tienda",
-      "icons": [{ "src": "icon.svg", "sizes": "any" }]
+      "icons": [
+        {
+          "src": "icon.svg",
+          "sizes": "any"
+        }
+      ]
     }
   ]
 }
