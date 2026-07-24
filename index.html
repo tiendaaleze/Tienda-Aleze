@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#7C3AED">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -179,8 +179,8 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     margin: 0 auto 1rem;
     font-size: 2rem;
   }
-  .login-card h1 { font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; font-size: 1.55rem; font-weight: 700; color: #601EF9; margin-bottom: 0; letter-spacing: -.01em; }
-  .welcome-eslogan { font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; font-size: .8rem; font-weight: 400; color: var(--gray-500); margin: .35rem 0 1.5rem; }
+  .login-card h1 { font-family: 'Manrope', 'Segoe UI', system-ui, sans-serif; font-size: 1.55rem; font-weight: 700; color: #601EF9; margin-bottom: 0; letter-spacing: -.01em; }
+  .welcome-eslogan { font-family: 'Manrope', 'Segoe UI', system-ui, sans-serif; font-size: .8rem; font-weight: 400; color: var(--gray-500); margin: .35rem 0 1.25rem; }
   .login-card p { color: var(--gray-500); font-size: 0.875rem; margin-bottom: 1.5rem; }
   .login-card select, .login-card input {
     width: 100%; padding: 0.75rem 1rem;
@@ -221,7 +221,6 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   .stat-item { flex:1;padding:.5rem .75rem;text-align:center; }
   .stat-item:first-child { border-right:.5px solid #EDE9FE; }
   .stat-num { display:block;font-size:1.1rem;font-weight:600;color:var(--primary); }
-  .stat-num.warm { color:#B45309; }
   .stat-lbl { display:block;font-size:.7rem;color:var(--gray-500); }
   .btn-personal-icon {
     width:32px;height:32px;margin:1rem auto 0;
@@ -1272,9 +1271,13 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     <div class="welcome-eslogan">Todo lo que necesitas, cerca de ti.</div>
     <button type="button" class="btn-compra" onclick="location.hash='#/tienda';initTienda()">
       🛒 Comprar ahora
-      <span style="font-size:.76rem;opacity:.7;display:block;font-weight:400;margin-top:.15rem">Productos • Delivery</span>
+      <span style="font-size:.78rem;opacity:.75;display:block;font-weight:400;margin-top:.15rem">Ver productos · Pedir delivery →</span>
     </button>
-    <div style="color:var(--gray-400);font-size:.68rem">v1.0.1</div>
+    <div class="stats-row">
+      <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
+      <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
+    </div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v1.0.1</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -10556,6 +10559,17 @@ window.onload = async function() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // Estadísticas reales de la pantalla de bienvenida — contadas del catálogo, no inventadas.
+      try {
+        const _elProd = document.getElementById('welcome-stat-productos');
+        if (_elProd && DB.productos && DB.productos.length) {
+          _elProd.textContent = (Math.floor(DB.productos.length / 10) * 10) + '+';
+        }
+        const _elCat = document.getElementById('welcome-stat-categorias');
+        if (_elCat && DB.categorias && DB.categorias.length) {
+          _elCat.textContent = DB.categorias.length;
+        }
+      } catch(e) {}
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
