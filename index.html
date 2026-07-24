@@ -675,7 +675,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   .cart-footer { padding: 0.75rem; border-top: 1px solid var(--gray-100); flex-shrink: 0; background: white; }
   .cart-total { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
   .cart-total-label { font-size: 0.9rem; color: var(--gray-600); }
-  .cart-total-val { font-size: 1.4rem; font-weight: 700; color: var(--gray-900); }
+  .cart-total-val { font-size: 1.75rem; font-weight: 700; color: var(--primary); }
   .premio-alert { background: var(--accent-light); border-left: 3px solid var(--accent); border-radius: 6px; padding: 0.4rem 0.6rem; margin-top: 0.4rem; font-size: 0.78rem; color: var(--accent-dark); display:none; }
   /* ===== MOBILE SIDEBAR OVERLAY ===== */
   .mob-sidebar-overlay {
@@ -1677,7 +1677,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
                 <option value="Transferencia">🏦 Transferencia</option>
               </select>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
-                <button type="button" class="btn btn-outline" id="btn-cobrar-fiado" style="padding:0.65rem;font-size:0.9rem" onclick="cobrarFiado()">📋 Fiado</button>
+                <button type="button" class="btn w-full" id="btn-cobrar-fiado" style="padding:0.65rem;font-size:0.95rem;font-weight:700;background:#57606F;color:#fff;border:none" onclick="cobrarFiado()">📋 Fiado</button>
                 <button type="button" class="btn btn-accent w-full" id="btn-cobrar-venta" style="padding:0.65rem;font-size:0.95rem;font-weight:700" onclick="procesarVenta()">✅ Cobrar</button>
               </div>
             </div>
@@ -1699,18 +1699,15 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
               🛒<span id="mob-pos-cart-badge-btn" style="display:none;background:#EF4444;color:white;border-radius:10px;font-size:.65rem;font-weight:700;padding:1px 5px;min-width:18px;position:absolute;top:-6px;right:-6px;">0</span>
             </button>
           </div>
-          <div class="mob-pos-topbar-row2" style="position:relative">
-            <input type="text" id="mob-pos-cliente-buscar" class="form-control" placeholder="👤 Cliente anónimo — buscar..." oninput="_mobPosClienteBuscar()" onfocus="_mobPosClienteBuscar()" onblur="setTimeout(()=>{const s=document.getElementById('mob-pos-cliente-sugerencias');if(s)s.style.display='none';},150)" autocomplete="off" />
-            <select id="mob-pos-cliente" style="display:none" onchange="mobOnClienteChange()">
-              <option value="">👤 Cliente anónimo</option>
-            </select>
-            <button type="button" class="mob-add-cliente-btn" onclick="abrirCliRapido()">+ Cliente</button>
-            <div id="mob-pos-cliente-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
-          </div>
-          <div id="mob-pos-cli-info" style="display:none;background:var(--primary-light);border-radius:8px;padding:.35rem .65rem;font-size:.75rem">
-            <span id="mob-pos-cli-nombre" style="font-weight:700;color:var(--primary)"></span>
-            <span id="mob-pos-cli-consumo" style="color:var(--gray-600)"></span>
-          </div>
+          <!-- Selector de cliente propio de la barra retirado — quedaba duplicado con el
+               del carrito compartido, y mobProcesarVenta()/mobCobrarFiado() podían terminar
+               leyendo un cliente distinto al que se veía seleccionado. Ahora hay uno solo,
+               dentro del carrito, y este <select> oculto se mantiene sincronizado con ese
+               desde onClienteChange() — sigue siendo lo que las funciones de venta leen,
+               solo que ya no tiene interfaz propia para evitar la duplicación. -->
+          <select id="mob-pos-cliente" style="display:none" onchange="mobOnClienteChange()">
+            <option value="">👤 Cliente anónimo</option>
+          </select>
         </div>
 
         <!-- Chips de categorías -->
@@ -5033,7 +5030,7 @@ function cobrarFiado() {
   _fiadoPendiente = null;
   try { renderDashboard(); } catch(e){}
   try { renderCaja(); } catch(e){}
-  alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
+  mostrarTicket(_ventaFiado);
   clearCart();
   resetPosCliente();
   updateAlertCount();
@@ -5055,7 +5052,9 @@ function mostrarTicket(venta) {
     <div class="ticket-row"><span>Fecha:</span><span>${formatDate(venta.fecha)}</span></div>
     <div class="ticket-row"><span>Hora:</span><span>${venta.hora}</span></div>
     <div class="ticket-row"><span>Cajero:</span><span>${venta.cajero}</span></div>
-    <div class="ticket-row"><span>Pago:</span><span>${venta.metodo}</span></div>
+    ${venta.estado === 'fiado'
+      ? '<div class="ticket-row" style="font-weight:700;color:#B45309"><span>📋 FIADO</span><span>Pendiente de pago</span></div>'
+      : `<div class="ticket-row"><span>Pago:</span><span>${venta.metodo}</span></div>`}
     <div class="ticket-line"></div>
     ${venta.items.map(i => {
       const tag = i.enCombo ? ' 🎁' : '';
@@ -9038,6 +9037,11 @@ function getPremioSugerido(clienteId) {
 // ===================== POS - Cliente info y premio =====================
 function onClienteChange() {
   const id = parseInt(document.getElementById('pos-cliente').value);
+  // Puente hacia móvil: mobProcesarVenta/mobCobrarFiado siguen leyendo de mob-pos-cliente
+  // (ahora oculto, sin interfaz propia) — esto lo mantiene sincronizado con el único
+  // selector visible, que vive acá, compartido entre PC y el carrito móvil.
+  const _selMobPuente = document.getElementById('mob-pos-cliente');
+  if (_selMobPuente) _selMobPuente.value = document.getElementById('pos-cliente').value;
   const inf = document.getElementById('pos-cli-info');
   if (!id) {
     inf.style.display = 'none';
@@ -9047,10 +9051,14 @@ function onClienteChange() {
   }
   const c = DB.clientes.find(x => x.id === id);
   if (!c) { inf.style.display = 'none'; return; }
-  const nv = getNivel(c.total);
   inf.style.display = 'block';
   document.getElementById('pos-cli-nombre').textContent = (c.alias||c.nombre) + ' ';
-  document.getElementById('pos-cli-consumo').textContent = 'Consumo año: ' + sol(c.total) + (nv ? ' | 🎁 ' + nv.desc : '');
+  // Info de puntos real, en vez del sistema de niveles viejo (mismo criterio que en Dashboard).
+  const est = estadoFidelizacion(id);
+  let fidTxt = (c.puntos||0) + ' pts';
+  if (est.estado === 'premio_disponible') fidTxt = '🎉 Premio disponible';
+  else if (est.estado === 'cerca') fidTxt = '🎁 Faltan ' + est.faltan + ' pts';
+  document.getElementById('pos-cli-consumo').textContent = 'Consumo año: ' + sol(c.total) + ' | ' + fidTxt;
   // Mostrar alerta de premio sin interrumpir
   actualizarPremioAlertPOS();
 }
@@ -10170,8 +10178,12 @@ function updateMobPosClientes() {
   mobSel.innerHTML = desktopSel.innerHTML;
 }
 
+// El selector visible de cliente en móvil se retiró (quedaba duplicado con el del carrito
+// compartido) — esta función queda con guardas por si algo residual la sigue llamando,
+// pero mob-pos-cli-info ya no existe en el HTML, así que no hace nada visible.
 function mobOnClienteChange() {
   const mobSel = document.getElementById('mob-pos-cliente');
+  if (!mobSel) return;
   const desktopSel = document.getElementById('pos-cliente');
   if (desktopSel) desktopSel.value = mobSel.value;
   // update cli info
@@ -10180,12 +10192,14 @@ function mobOnClienteChange() {
   const infoEl = document.getElementById('mob-pos-cli-info');
   const nombreEl = document.getElementById('mob-pos-cli-nombre');
   const consumoEl = document.getElementById('mob-pos-cli-consumo');
-  if (cli) {
-    infoEl.style.display = 'block';
-    nombreEl.textContent = cli.alias || cli.nombre;
-    consumoEl.textContent = ' — Total: S/' + (cli.total || 0).toFixed(2);
-  } else {
-    infoEl.style.display = 'none';
+  if (infoEl && nombreEl && consumoEl) {
+    if (cli) {
+      infoEl.style.display = 'block';
+      nombreEl.textContent = cli.alias || cli.nombre;
+      consumoEl.textContent = ' — Total: S/' + (cli.total || 0).toFixed(2);
+    } else {
+      infoEl.style.display = 'none';
+    }
   }
   // también reflejar en el panel unificado pos-cart-panel
   const posCliInfo = document.getElementById('pos-cli-info');
@@ -10409,7 +10423,7 @@ delete _vPayload.productos; delete _vPayload.categorias; delete _vPayload.pedido
   fbGuardarProductos();
   try { renderDashboard(); } catch(e){}
   try { renderCaja(); } catch(e){}
-  alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
+  mostrarTicket(_hvFiadoMob);
 
   cart = [];
   mobRenderCart(); mobCalcTotal(); mobUpdateBar();
