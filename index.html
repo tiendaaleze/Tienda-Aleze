@@ -1476,14 +1476,6 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
         <div class="nav-item" onclick="navigate('proveedores')" title="Proveedores y boletas">
           <span class="icon">🚚</span><span class="nav-label">Proveedores</span>
         </div>
-
-        <div class="nav-section-label" style="margin-top:0.5rem">Clientes</div>
-        <div class="nav-item" onclick="navigate('clientes')" title="Gestión de clientes">
-          <span class="icon">👥</span><span class="nav-label">Clientes</span>
-        </div>
-        <div class="nav-item" onclick="navigate('frecuentes')" title="Programa de puntos y premios">
-          <span class="icon">⭐</span><span class="nav-label">Frecuentes</span>
-        </div>
       <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
         <div class="nav-item" onclick="navigate('caja')" title="Apertura y cierre de caja">
           <span class="icon">💰</span><span class="nav-label">Caja</span>
@@ -1491,14 +1483,8 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
         <div class="nav-item" onclick="navigate('promociones')" title="Promociones y combos">
           <span class="icon">🎯</span><span class="nav-label">Promociones</span>
         </div>
-        <div class="nav-item" onclick="navigate('mermas')" title="Registro de mermas y pérdidas">
-          <span class="icon">📉</span><span class="nav-label">Mermas</span>
-        </div>
 
         <div class="nav-section-label" style="margin-top:0.5rem">Finanzas</div>
-        <div class="nav-item" onclick="navigate('gastos')" title="Gastos operativos">
-          <span class="icon">💸</span><span class="nav-label">Gastos</span>
-        </div>
         <div class="nav-item" onclick="navigate('capital')" title="Control de capital e inversión">
           <span class="icon">🏦</span><span class="nav-label">Capital</span>
         </div>
@@ -1511,9 +1497,26 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
           <span class="icon">⚙️</span><span class="nav-label">Configuración</span>
         </div>
       </div>
- <!-- Pedidos Online, Fiados e Historial de Ventas: visible para admin, vendedor 1 y vendedor 2 -->
+ <!-- Clientes, Frecuentes, Mermas, Gastos, Pedidos Online, Fiados e Historial de Ventas:
+      visible para admin y vendedor por igual. Vendedor puede crear/editar mermas y gastos de
+      su propia sede (una botella rota o un gasto operativo chico no debería esperar a admin),
+      pero no puede eliminar nada ya creado — eso queda gateado a admin en cada función. -->
       <div class="nav-section" id="vendedor-nav">
-        <div class="nav-section-label">Pedidos</div>
+        <div class="nav-section-label">Clientes</div>
+        <div class="nav-item" onclick="navigate('clientes')" title="Gestión de clientes">
+          <span class="icon">👥</span><span class="nav-label">Clientes</span>
+        </div>
+        <div class="nav-item" onclick="navigate('frecuentes')" title="Programa de puntos y premios">
+          <span class="icon">⭐</span><span class="nav-label">Frecuentes</span>
+        </div>
+        <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
+        <div class="nav-item" onclick="navigate('mermas')" title="Registro de mermas y pérdidas">
+          <span class="icon">📉</span><span class="nav-label">Mermas</span>
+        </div>
+        <div class="nav-item" onclick="navigate('gastos')" title="Gastos operativos">
+          <span class="icon">💸</span><span class="nav-label">Gastos</span>
+        </div>
+        <div class="nav-section-label" style="margin-top:0.5rem">Pedidos</div>
         <div class="nav-item" onclick="navigate('pedidos-online')" title="Pedidos recibidos por la tienda online">
           <span class="icon">🛍️</span>
           <span class="nav-label">Pedidos Online</span>
@@ -6711,6 +6714,7 @@ function guardarCliente() {
 }
 
 function eliminarCliente(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar clientes.'); return; }
   const c = DB.clientes.find(x => x.id === id);
   if (c && c.deuda > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(c.deuda) + '. Salda los fiados antes de eliminarlo.'); return; }
   if (!confirm('¿Eliminar cliente?')) return;
@@ -7750,7 +7754,8 @@ function editarMerma(id) {
 }
 
 function guardarMerma() {
-  if (currentRole !== 'admin') return;
+  // Vendedor puede crear/editar mermas de su propia sede sin depender de admin — una botella
+  // rota o un vencimiento no debería esperar aprobación. Solo eliminar sigue siendo de admin.
   const _sede = sedeAdminEfectiva();
   const prodId = parseInt(document.getElementById('merma-prod').value);
   const cant = parseFloat(document.getElementById('merma-cant').value) || 0;
@@ -7794,6 +7799,7 @@ fbGuardar(); fbGuardarProductos();
 let _mermaElimId = null;
 
 function eliminarMerma(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar mermas. Puedes crear y editar, pero no borrar lo ya registrado.'); return; }
   const m = DB.mermas.find(x => x.id === id);
   if (!m) return;
   _mermaElimId = id;
@@ -8851,6 +8857,7 @@ function renderFidelizacionConfig() {
 }
 
 function guardarFidelizacionConfig() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cambiar las reglas del programa de puntos.'); return; }
   const tasaBase = parseFloat(document.getElementById('fid-tasa-base').value) || 1;
   const ventanaAviso = parseFloat(document.getElementById('fid-ventana-aviso').value) || 300;
   DB_EXT.fidelizacion = { tasaBase, ventanaAviso };
@@ -8881,6 +8888,7 @@ function renderPremiosFidelizacion() {
 }
 
 function agregarPremioFidelizacion() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede agregar premios del programa de puntos.'); return; }
   const puntos = parseInt(document.getElementById('fid-nuevo-premio-puntos').value);
   const tipo = document.getElementById('fid-nuevo-premio-tipo').value;
   const nombre = document.getElementById('fid-nuevo-premio-nombre').value.trim();
@@ -8903,6 +8911,7 @@ function agregarPremioFidelizacion() {
 }
 
 function eliminarPremioFidelizacion(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar premios del programa de puntos.'); return; }
   if (!confirm('¿Eliminar este premio?')) return;
   DB_EXT.premiosFidelizacion = (DB_EXT.premiosFidelizacion||[]).filter(p => p.id !== id);
   fbGuardarExt();
@@ -8920,6 +8929,7 @@ function renderMultiplicadoresCategorias() {
 }
 
 function cambiarMultiplicadorCategoria(catId, valor) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cambiar el multiplicador de puntos por categoría.'); return; }
   const cat = DB.categorias.find(c => c.id === catId);
   if (!cat) return;
   cat.multiplicadorPuntos = parseFloat(valor) || 1;
@@ -9161,7 +9171,8 @@ function editarGasto(id) {
 }
 
 function guardarGasto() {
-  if (currentRole !== 'admin') return;
+  // Vendedor puede registrar gastos operativos chicos de su sede (pagar por instalar un foco,
+  // etc.) sin depender de admin. Solo eliminar sigue siendo de admin.
   const monto = parseFloat(document.getElementById('g-monto').value) || 0;
   if (monto <= 0) { alert('Ingresa un monto válido'); return; }
   const tipo  = document.getElementById('g-tipo').value;
@@ -9214,6 +9225,7 @@ function guardarGasto() {
 }
 
 function eliminarGasto(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar gastos. Puedes crear y editar, pero no borrar lo ya registrado.'); return; }
   const gasto = DB_EXT.gastos.find(x => x.id === id);
   if (!confirm('¿Eliminar este gasto? Se devolverá el monto al efectivo disponible como corrección.')) return;
   DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
