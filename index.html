@@ -1539,7 +1539,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
           <div class="page-title" style="margin:0">Dashboard</div>
           <button type="button" class="btn btn-danger btn-sm" onclick="abrirReset('dashboard')" style="font-size:0.78rem">🗑️ Limpiar datos</button>
         </div>
-        <div class="grid-5" style="margin-bottom:1rem;margin-top:1rem">
+        <div class="grid-3" style="margin-bottom:1rem;margin-top:1rem">
           <div class="stat-card">
             <div class="stat-label">Ventas Hoy</div>
             <div class="stat-value" id="dash-ventas">S/ 0.00</div>
@@ -1550,6 +1550,18 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
             <div class="stat-value" id="dash-rent">S/ 0.00</div>
             <div class="stat-sub">neta de costos</div>
           </div>
+          <div class="stat-card red" style="cursor:pointer" onclick="navigate('fiados')">
+            <div class="stat-label">Deuda en fiados</div>
+            <div class="stat-value" id="dash-fiados-deuda">S/ 0.00</div>
+            <div class="stat-sub" id="dash-fiados-clientes">0 clientes</div>
+          </div>
+        </div>
+        <div class="grid-3" style="margin-bottom:1rem">
+          <div class="stat-card orange" style="cursor:pointer" onclick="navigate('pedidos-online')">
+            <div class="stat-label">Pedidos online</div>
+            <div class="stat-value" id="dash-pedidos-pend">0</div>
+            <div class="stat-sub">pendientes de atender</div>
+          </div>
           <div class="stat-card orange" style="cursor:pointer" onclick="irAStockBajo()">
             <div class="stat-label">Stock bajo</div>
             <div class="stat-value" id="dash-stock-bajo">0</div>
@@ -1559,11 +1571,6 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
             <div class="stat-label">Vencimientos</div>
             <div class="stat-value" id="dash-vencimientos">0</div>
             <div class="stat-sub">próximos 7 días</div>
-          </div>
-          <div class="stat-card blue" style="border-left-color:var(--info)">
-            <div class="stat-label">Capital recuperado</div>
-            <div class="stat-value" id="dash-capital-pct">0%</div>
-            <div class="stat-sub" id="dash-capital-sub">de la inversión</div>
           </div>
         </div>
         <!-- Panel financiero rápido -->
@@ -4389,10 +4396,16 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p, _sedeDash) <= p.stockMin).length;
   document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0 && stockEnSede(p, _sedeDash) > 0).length;
 
-  // Capital
-  const pct = DB_EXT.capital.total > 0 ? Math.min(100, DB_EXT.capital.recuperado/DB_EXT.capital.total*100) : 0;
-  document.getElementById('dash-capital-pct').textContent = pct.toFixed(1)+'%';
-  document.getElementById('dash-capital-sub').textContent = sol(DB_EXT.capital.recuperado)+' / '+sol(DB_EXT.capital.total);
+  // Deuda en fiados — por sede, mismo criterio que el resto del dashboard. Capital se retiró
+  // de acá (sigue disponible en su propia pantalla) — es algo de largo plazo, no algo del día.
+  const _fiadosPendDash = (DB.fiados||[]).filter(f => (f.sedeId||'principal') === _sedeDash && (f.total - f.pagado) > 0.01);
+  const _deudaTotalDash = _fiadosPendDash.reduce((s,f) => s + (f.total - f.pagado), 0);
+  document.getElementById('dash-fiados-deuda').textContent = sol(_deudaTotalDash);
+  document.getElementById('dash-fiados-clientes').textContent = new Set(_fiadosPendDash.map(f=>f.clienteId)).size + ' cliente(s)';
+
+  // Pedidos online pendientes — no se filtra por sede: "quien despacha decide", cualquiera
+  // puede necesitar verlo antes de que se asigne a una sede especifica.
+  document.getElementById('dash-pedidos-pend').textContent = (DB.pedidosOnline||[]).filter(p => p.estado === 'pendiente').length;
 
   // Panel financiero mensual
   const ventasMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado').reduce((s,v)=>s+(v.total||0),0);
@@ -4418,12 +4431,16 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
     ? '<p style="color:var(--gray-500);font-size:0.85rem">✅ Sin alertas</p>'
     : alertas.map(a => `<div class="alert-item ${a.tipo}"><span>${icons[a.tipo]}</span><div class="alert-text"><strong>${a.titulo}</strong><span>${a.sub}</span></div></div>`).join('');
 
-  // Top clientes por gasto
+  // Top clientes por gasto — insignia de puntos real (antes usaba el sistema de niveles
+  // viejo, sin relación con Fidelización). "Cerca" muestra el mismo aviso que en POS/ticket.
   const sortedCli = [...DB.clientes].sort((a,b)=>(b.total||0)-(a.total||0)).slice(0,5);
   const crowns = ['🥇','🥈','🥉','4️⃣','5️⃣'];
   document.getElementById('dash-frecuentes').innerHTML = sortedCli.map((c,i) => {
-    const nv = getNivel(c.total||0);
-    return `<div class="flex-between" style="padding:.35rem 0;border-bottom:1px solid var(--gray-100)"><span>${crowns[i]} <strong style="font-size:.85rem">${c.alias||c.nombre}</strong></span><div style="text-align:right"><div style="font-size:.85rem;font-weight:700;color:var(--primary)">${sol(c.total||0)}</div>${nv?`<span class="badge badge-gold">${nv.desc}</span>`:''}</div></div>`;
+    const est = estadoFidelizacion(c.id);
+    let badgeFid = `<span class="badge" style="background:var(--gray-100);color:var(--gray-500)">${c.puntos||0} pts</span>`;
+    if (est.estado === 'premio_disponible') badgeFid = `<span class="badge badge-gold">🎉 Premio disponible</span>`;
+    else if (est.estado === 'cerca') badgeFid = `<span class="badge badge-gold">🎁 Faltan ${est.faltan} pts</span>`;
+    return `<div class="flex-between" style="padding:.35rem 0;border-bottom:1px solid var(--gray-100)"><span>${crowns[i]} <strong style="font-size:.85rem">${c.alias||c.nombre}</strong></span><div style="text-align:right"><div style="font-size:.85rem;font-weight:700;color:var(--primary)">${sol(c.total||0)}</div>${badgeFid}</div></div>`;
   }).join('');
 
   // Cumpleaños próximos
