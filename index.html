@@ -210,7 +210,7 @@ if (_esIOS()) {
     --gray-800: #1F2937;
     --gray-900: #111827;
     --sidebar-w: 210px;
-    --header-h: 52px;
+    --header-h: 46px;
     --radius: 10px;
     --shadow: 0 1px 3px rgba(0,0,0,0.1);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
@@ -382,18 +382,18 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     z-index: 100;
     flex-shrink: 0;
   }
-  .header-brand { color: white; font-weight: 700; font-size: 1.1rem; }
+  .header-brand { color: white; font-weight: 700; font-size: 0.95rem; }
   .header-spacer { flex: 1; }
   .header-user {
     display: flex; align-items: center; gap: 0.5rem;
     color: white; font-size: 0.875rem;
   }
   .avatar {
-    width: 32px; height: 32px;
+    width: 24px; height: 24px;
     background: rgba(255,255,255,0.25);
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.75rem; font-weight: 700; color: white;
+    font-size: 0.65rem; font-weight: 700; color: white;
   }
   .btn-logout {
     background: rgba(255,255,255,0.15);
@@ -4081,10 +4081,10 @@ currentRole = role;
       _barraSede.style.display = 'flex';
       // El sidebar y el alto del contenido dependen de --header-h — si la barra de sede se
       // suma arriba, hay que avisarle a ese cálculo o el sidebar queda mal posicionado.
-      document.documentElement.style.setProperty('--header-h', '76px');
+      document.documentElement.style.setProperty('--header-h', '70px');
     } else {
       _barraSede.style.display = 'none';
-      document.documentElement.style.setProperty('--header-h', '52px');
+      document.documentElement.style.setProperty('--header-h', '46px');
     }
   }
 
