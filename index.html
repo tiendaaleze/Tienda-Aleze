@@ -10540,7 +10540,24 @@ function _esErrorPermanente(e) {
   return !!(e && _ERRORES_PERMANENTES.has(e.code));
 }
 
+// ── Diagnóstico real: cuenta cuántas veces se dispara cada tipo por ventana de 5s. Si algo
+// se repite sospechosamente (>10 veces en 5s, mucho más que lo que una operación normal
+// generaría), lo grita en consola con el tipo/id exactos — así la próxima vez que el punto
+// parpadee, con la consola abierta (F12) se ve EXACTAMENTE qué lo está disparando, en vez
+// de seguir adivinando desde el código estático.
+let _sincDiagVentana = [];
+function _sincDiagRegistrar(tipo, id) {
+  const ahora = Date.now();
+  _sincDiagVentana.push({ tipo, id, ts: ahora });
+  _sincDiagVentana = _sincDiagVentana.filter(x => ahora - x.ts < 5000);
+  const delMismoTipo = _sincDiagVentana.filter(x => x.tipo === tipo);
+  if (delMismoTipo.length === 11) { // recien cruza el umbral, avisa una sola vez por racha
+    console.warn(`⚠️ [Sync-Diag] "${tipo}" se disparó ${delMismoTipo.length} veces en 5 segundos — esto es sospechoso, no es una venta normal. IDs recientes:`, delMismoTipo.map(x => x.id));
+  }
+}
+
 function _sincIniciar(tipo, id) {
+  _sincDiagRegistrar(tipo, id);
   _pendingSyncCount++;
   _pendingSyncDetalle.push({ tipo, id, ts: Date.now() });
   _actualizarBadgeSync();
@@ -10904,7 +10921,7 @@ function fbPatchDB() {
       nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: 'principal'
     }));
   }
-  if (!DB.caja.fecha) DB.caja.fecha = '';
+  if (DB.caja.fecha === undefined || DB.caja.fecha === null) DB.caja.fecha = '';
   if (!DB.historialVentas) DB.historialVentas = [];
   // Migrate DB.ventas into historialVentas if historialVentas is empty but ventas has data
   if (DB.historialVentas.length === 0 && DB.ventas && DB.ventas.length > 0) {
