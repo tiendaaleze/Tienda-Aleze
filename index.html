@@ -1427,7 +1427,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     <div class="header-brand"><img id="header-logo-img" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> <span id="header-nombre">Tienda Aleze</span></div>
     <div class="header-spacer"></div>
     <div id="bday-banner" style="display:none;background:rgba(255,255,255,.2);border-radius:8px;padding:.3rem .7rem;font-size:.75rem;color:#fff;cursor:pointer;margin-right:.5rem" onclick="showAlerts()">🎂 <span id="bday-msg"></span></div>
-    <span id="sync-badge" style="display:none;background:rgba(255,255,255,.2);border-radius:20px;padding:.2rem .55rem;font-size:.7rem;color:#fff;margin-right:.5rem;white-space:nowrap"></span>
+    <span id="sync-badge" title="Sincronizando con la nube" style="display:none;width:8px;height:8px;border-radius:50%;background:#FBBF24;margin-right:.4rem;flex-shrink:0"></span>
     <div class="alert-badge" onclick="showAlerts()" id="alert-count" title="Alertas">0</div>
     <div class="header-user">
       <div class="avatar" id="header-avatar">JC</div>
@@ -10572,20 +10572,16 @@ Código: ${e.code || e.message || 'desconocido'}`;
 
 let _syncBadgeHideTimer = null;
 function _actualizarBadgeSync() {
+  // Reducido a un punto — sin texto ni número que cambie, mucho menos ancho y menos
+  // distractor. El detalle (cuántos, cuáles) sigue disponible en el title al pasar el mouse.
   ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
     const el = document.getElementById(elId);
     if (!el) return;
     if (_pendingSyncCount > 0) {
-      // Cancela cualquier "ocultar" pendiente — si esto se ve seguido, es porque otra
-      // sincronización arrancó apenas la anterior terminó, y no debería parpadear entre medio.
       clearTimeout(_syncBadgeHideTimer);
-      el.style.display = 'inline-flex';
-      el.textContent = '🔄 ' + _pendingSyncCount;
+      el.style.display = 'inline-block';
       el.title = _pendingSyncCount + ' cambio(s) guardados en este equipo, sincronizando con la nube...';
     } else {
-      // No ocultar de inmediato: varias escrituras chicas seguidas hacen que el contador
-      // pase por 0 y suba de nuevo en milisegundos — eso es lo que causaba el parpadeo. Con
-      // este margen, solo se oculta si de verdad no hay nada más en cola después de un rato.
       clearTimeout(_syncBadgeHideTimer);
       _syncBadgeHideTimer = setTimeout(() => {
         if (_pendingSyncCount <= 0) el.style.display = 'none';
@@ -12597,7 +12593,7 @@ function _renderTienda() {
 <div class="tnd-header">
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.5rem;align-items:center">
-    <span id="sync-badge-tienda" style="display:none;background:rgba(124,58,237,.12);border-radius:20px;padding:.2rem .5rem;font-size:.68rem;color:#7C3AED;white-space:nowrap"></span>
+    <span id="sync-badge-tienda" title="Sincronizando con la nube" style="display:none;width:8px;height:8px;border-radius:50%;background:#7C3AED;flex-shrink:0"></span>
     <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
       🛒 Carrito
