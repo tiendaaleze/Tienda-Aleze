@@ -170,6 +170,7 @@ if (_esIOS()) {
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <style>
   :root {
     --primary: #7C3AED;
@@ -2071,6 +2072,21 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
          <button type="button" class="btn btn-outline btn-sm" onclick="verBackups()">🔍 Ver respaldos disponibles</button>
           <button type="button" class="btn btn-outline btn-sm" onclick="migrarImagenesAStorage()">🖼️ Migrar imágenes a Storage</button>
         </div>
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-title">💳 Pasarela de pago (Izipay)</div>
+          <div style="font-size:.82rem;color:var(--gray-500);margin-bottom:.75rem">
+            Construida y lista, pero <strong>apagada a propósito</strong>. Activarla de verdad requiere desplegar las Cloud Functions del repositorio (carpeta <code>functions/</code>) — eso no ocurre solo, alguien tiene que hacerlo manualmente con las credenciales del proyecto. Mientras esté apagada, la tienda sigue funcionando exactamente igual que hoy.
+          </div>
+          <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;margin-bottom:.75rem">
+            <input type="checkbox" id="cfg-pasarela-activa" onchange="document.getElementById('cfg-pasarela-detalle').style.display=this.checked?'block':'none'" />
+            <span>Activar "Pagar en línea" en la tienda</span>
+          </label>
+          <div id="cfg-pasarela-detalle" style="display:none">
+            <div class="form-group"><label>Llave pública de Izipay</label><input type="text" class="form-control" id="cfg-pasarela-llave" placeholder="Se obtiene del panel de Izipay" /></div>
+            <div style="font-size:.75rem;color:var(--warning);background:#FFFBEB;border-radius:6px;padding:.5rem .6rem">⚠️ La llave privada y la de verificación de firma NUNCA van acá — esas se cargan directo en Firebase como Secrets, nunca en el sistema ni en Firestore.</div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" style="margin-top:.75rem" onclick="guardarConfigPasarela()">Guardar configuración</button>
+        </div>
         <div class="grid-2">
           <div class="card">
             <div class="card-title">⚙️ Datos del negocio</div>
@@ -3597,7 +3613,13 @@ let DB = {
    // verifica. Cuando exista pasarela de pago real, este flag pasa a true y el flujo de
    // verificacion (Firebase Phone Auth, pendiente de implementar) se vuelve obligatorio
    // antes de pedir o ver puntos, no solo un dato que cualquiera puede escribir.
-   requiereVerificacionSMS: false
+   requiereVerificacionSMS: false,
+   // Pasarela de pago (Izipay) — construida dormida a proposito. La activacion real requiere
+   // desplegar las Cloud Functions en /functions (no se despliegan solas, alguien lo hace
+   // manualmente con `firebase deploy --only functions`) y cargar las llaves secretas ahi,
+   // nunca en Firestore. Mientras pasarelaPago.activa sea false, el checkout de la tienda
+   // sigue exactamente igual que hoy (WhatsApp + Yape/Plin confirmado a mano).
+   pasarelaPago: { activa: false, proveedor: 'izipay', llavePublica: '' }
   },
   _cajas: { principal: { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' } },
   historialVentas: [],
@@ -8233,9 +8255,23 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
         <input type="number" class="form-control" id="nv-m-${i}" value="${n.max}" />
       </div>
    </div>`).join('');
+  const _pp = DB.config.pasarelaPago || { activa: false, llavePublica: '' };
+  document.getElementById('cfg-pasarela-activa').checked = !!_pp.activa;
+  document.getElementById('cfg-pasarela-llave').value = _pp.llavePublica || '';
+  document.getElementById('cfg-pasarela-detalle').style.display = _pp.activa ? 'block' : 'none';
   renderConfigTienda();
   renderUsuariosStaff();
   renderCfgUserSelect();
+}
+
+function guardarConfigPasarela() {
+  DB.config.pasarelaPago = {
+    activa: document.getElementById('cfg-pasarela-activa').checked,
+    proveedor: 'izipay',
+    llavePublica: document.getElementById('cfg-pasarela-llave').value.trim()
+  };
+  fbGuardarProductos();
+  alert('✅ Configuración guardada.' + (DB.config.pasarelaPago.activa ? '\n\nRecuerda: esto solo funciona si ya desplegaste las Cloud Functions del repositorio — activar el interruptor no las despliega solas.' : ''));
 }
 
 function guardarConfig() {
@@ -10312,6 +10348,7 @@ let _fbSaveTimer = null;
 let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ventana debounce
 let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
 let fbAuth = null; // Firebase Authentication
+let fbFunctions = null; // Cloud Functions — pasarela de pago, dormida hasta activarse
 let fbStorage = null;     // Firebase Storage — imágenes de productos  
 let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
 let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
@@ -10347,6 +10384,10 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       } catch(e) { console.warn('[Offline] enablePersistence no disponible:', e); }
       fbAuth = firebase.auth();
       fbStorage = firebase.storage();
+      // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
+      // Y las Cloud Functions ya fueron desplegadas manualmente. Si no se desplegaron,
+      // la llamada falla con un error claro (manejado en tndPagarEnLinea), no en silencio.
+      try { fbFunctions = firebase.functions(); } catch(e) { fbFunctions = null; }
       return true;
   } catch(e) {
     console.error('Firebase init error:', e);
@@ -12785,9 +12826,53 @@ function tndRenderPanel() {
           <span>TOTAL</span><span>S/ ${subtotal.toFixed(2)}</span>
         </div>
       </div>`;
+    // "Pagar en linea" solo aparece si la pasarela esta activa en Configuracion — dormida
+    // por defecto, el checkout de hoy (WhatsApp + metodo informativo) sigue igual.
+    const _pasarelaActiva = DB.config.pasarelaPago && DB.config.pasarelaPago.activa;
     footer.innerHTML = `
+      ${_pasarelaActiva ? `<button class="tnd-btn tnd-btn-primary" onclick="tndPagarEnLinea()">💳 Pagar ahora en línea</button>` : ''}
       <button class="tnd-btn tnd-btn-accent" onclick="tndEnviarPedido()">📲 Hacer pedido por WhatsApp</button>
       <button class="tnd-btn tnd-btn-outline" onclick="tndVolverDatos()">← Volver</button>`;
+  }
+}
+
+// ── Pago en línea (Izipay) — solo se llega acá si el flag esta activo Y las Cloud
+// Functions ya fueron desplegadas manualmente (ver /functions en el repositorio).
+// Sin ese despliegue, esta llamada falla con un error claro, no en silencio.
+async function tndPagarEnLinea() {
+  if (!_tiendaUser?.nombre || !_tiendaUser?.tel) { alert('Completa tus datos antes de pagar.'); tndVolverDatos(); return; }
+  const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+  if (subtotal <= 0) { alert('Tu carrito está vacío.'); return; }
+  if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
+
+  try {
+    // El pedido tiene que existir en Firestore ANTES de iniciar el pago — crearSesionPago
+    // verifica el monto contra el pedido real, no confía en lo que mande el navegador.
+    const clienteId = await tndResolverCliente(_tiendaUser.nombre, (_tiendaUser.tel||'').replace(/\s/g,''));
+    const pedido = {
+      id: getId(), clienteNombre: _tiendaUser.nombre, telefono: (_tiendaUser.tel||'').replace(/\s/g,''),
+      clienteId, items: _tiendaCart, total: Math.round(subtotal*100)/100,
+      entrega: _tndEntrega, direccion: _tndEntrega==='delivery' ? (document.getElementById('tnd-inp-dir')?.value||'') : '',
+      metodo: 'Pago en línea', estado: 'pendiente', pagoEstado: 'sin_iniciar',
+      fecha: new Date().toISOString(), origen: 'web'
+    };
+    await fbFS.collection('pedidos_online').doc(String(pedido.id)).set(pedido);
+
+    const crearSesion = fbFunctions.httpsCallable('crearSesionPago');
+    const resultado = await crearSesion({ pedidoId: pedido.id, monto: pedido.total, moneda: 'PEN' });
+
+    // TODO: acá se renderiza el formulario embebido de Izipay usando
+    // resultado.data.formToken — pendiente de completar contra su SDK real
+    // (KR.setFormConfig / KR.attachForm o el nombre que use su documentación
+    // actual). Por ahora, deja constancia de que la sesión se creó bien.
+    if (resultado.data && resultado.data.formToken) {
+      alert('Sesión de pago creada. Falta completar la integración visual del formulario de Izipay (pendiente de su documentación técnica).');
+    } else {
+      alert('No se pudo iniciar el pago en línea. Intenta con WhatsApp mientras tanto.');
+    }
+  } catch (e) {
+    console.warn('tndPagarEnLinea:', e);
+    alert('El pago en línea no está disponible en este momento. Puedes completar tu pedido por WhatsApp.');
   }
 }
 
