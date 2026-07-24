@@ -10950,6 +10950,13 @@ function fbPatchDB() {
         _val = v;
         // Nunca guardar arrays vacíos — protege contra sobreescritura accidental
         if (Array.isArray(v) && v.length === 0) return;
+        // CAUSA REAL del badge trabado: fbGuardar() poda historialVentas/movimientos
+        // reasignándolos (DB.historialVentas = DB.historialVentas.filter(...)) — .filter()
+        // siempre crea un array nuevo, así que esa reasignación disparaba este mismo set()
+        // de nuevo, que volvía a llamar fbGuardar(), que volvía a podar, sin parar nunca.
+        // Si ya hay un guardado en curso, no hace falta encadenar otro — el que está
+        // corriendo ya va a incluir este cambio.
+        if (_fbEscribiendo) return;
         fbGuardar();
       },
       configurable: true
@@ -10962,6 +10969,9 @@ function fbPatchDB() {
       set(v)  {
         _val = v;
         if (Array.isArray(v) && v.length === 0) return;
+        // Misma protección preventiva que en _fbPatchColsOp — si fbGuardarProductos() alguna
+        // vez reasigna productos/categorias (poda, etc.), esto evita el mismo ciclo infinito.
+        if (_fbEscribiendo) return;
         fbGuardarProductos();
       },
       configurable: true
