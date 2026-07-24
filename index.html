@@ -10570,16 +10570,26 @@ Código: ${e.code || e.message || 'desconocido'}`;
   // falta nada más acá.
 }
 
+let _syncBadgeHideTimer = null;
 function _actualizarBadgeSync() {
   ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
     const el = document.getElementById(elId);
     if (!el) return;
     if (_pendingSyncCount > 0) {
+      // Cancela cualquier "ocultar" pendiente — si esto se ve seguido, es porque otra
+      // sincronización arrancó apenas la anterior terminó, y no debería parpadear entre medio.
+      clearTimeout(_syncBadgeHideTimer);
       el.style.display = 'inline-flex';
       el.textContent = '🔄 ' + _pendingSyncCount;
       el.title = _pendingSyncCount + ' cambio(s) guardados en este equipo, sincronizando con la nube...';
     } else {
-      el.style.display = 'none';
+      // No ocultar de inmediato: varias escrituras chicas seguidas hacen que el contador
+      // pase por 0 y suba de nuevo en milisegundos — eso es lo que causaba el parpadeo. Con
+      // este margen, solo se oculta si de verdad no hay nada más en cola después de un rato.
+      clearTimeout(_syncBadgeHideTimer);
+      _syncBadgeHideTimer = setTimeout(() => {
+        if (_pendingSyncCount <= 0) el.style.display = 'none';
+      }, 700);
     }
   });
 }
