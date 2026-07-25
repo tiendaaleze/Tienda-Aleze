@@ -4,6 +4,57 @@
 // Versión: 1.0.0
 // ================================================
 
+// ── Notificaciones push (FCM) en segundo plano ──────────────────────────────
+// Esto es lo que permite avisar de un pedido nuevo aunque la app este cerrada
+// o el celular bloqueado — new Notification() directo desde index.html (usado
+// para cuando la app SI esta abierta) no puede hacer esto, tiene que salir de
+// acá, en el Service Worker, que sigue vivo aunque la pestaña este cerrada.
+// Dormido hasta que se configure VAPID_KEY en index.html y se registre al
+// menos un dispositivo — sin eso, esto no recibe nada, no rompe nada.
+try {
+  importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
+
+  firebase.initializeApp({
+    apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
+    authDomain: "tienda-aleze.firebaseapp.com",
+    projectId: "tienda-aleze",
+    storageBucket: "tienda-aleze.firebasestorage.app",
+    messagingSenderId: "231416120915",
+    appId: "1:231416120915:web:749a1a6648d0006faf68a6"
+  });
+
+  const messaging = firebase.messaging();
+
+  // El mensaje llega como "data" (sin campo "notification", ver Cloud Function) —
+  // por eso hay que armar la notificación acá a mano, en vez de que el navegador
+  // la muestre solo (eso evitaría poder personalizar el ícono y el clic).
+  messaging.onBackgroundMessage((payload) => {
+    const datos = payload.data || {};
+    self.registration.showNotification(datos.titulo || '🛍️ Nuevo pedido online', {
+      body: datos.cuerpo || '',
+      icon: '/Tienda-Aleze/icon.svg',
+      tag: 'pedido-' + (datos.pedidoId || Date.now()),
+      data: { pedidoId: datos.pedidoId }
+    });
+  });
+} catch (e) {
+  console.warn('[SW] Notificaciones push no disponibles:', e);
+}
+
+// Al tocar la notificación, abrir la app (o enfocar la pestaña si ya está abierta)
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.includes('/Tienda-Aleze/') && 'focus' in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow('/Tienda-Aleze/');
+    })
+  );
+});
+
 const CACHE_NAME = 'tienda-aleze-test-v1';
 const BASE_PATH = '/Tienda-Aleze';
 
