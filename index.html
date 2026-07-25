@@ -1699,15 +1699,8 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
               🛒<span id="mob-pos-cart-badge-btn" style="display:none;background:#EF4444;color:white;border-radius:10px;font-size:.65rem;font-weight:700;padding:1px 5px;min-width:18px;position:absolute;top:-6px;right:-6px;">0</span>
             </button>
           </div>
-          <!-- Selector de cliente propio de la barra retirado — quedaba duplicado con el
-               del carrito compartido, y mobProcesarVenta()/mobCobrarFiado() podían terminar
-               leyendo un cliente distinto al que se veía seleccionado. Ahora hay uno solo,
-               dentro del carrito, y este <select> oculto se mantiene sincronizado con ese
-               desde onClienteChange() — sigue siendo lo que las funciones de venta leen,
-               solo que ya no tiene interfaz propia para evitar la duplicación. -->
-          <select id="mob-pos-cliente" style="display:none" onchange="mobOnClienteChange()">
-            <option value="">👤 Cliente anónimo</option>
-          </select>
+          <!-- Selector de cliente propio de la barra retirado — el carrito móvil usa el
+               único selector compartido (pos-cliente) dentro del panel de carrito. -->
         </div>
 
         <!-- Chips de categorías -->
@@ -4882,7 +4875,6 @@ function updatePosClientes() {
   sel.innerHTML = '<option value="">Cliente anónimo</option>';
   DB.clientes.forEach(c => sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
   if (valorActual) sel.value = valorActual;
-  updateMobPosClientes();
 }
 
 // ── Buscador de cliente (POS desktop) — clientes son compartidos entre sedes, un select
@@ -4919,37 +4911,8 @@ function resetPosCliente() {
   onClienteChange();
 }
 
-// ── Mismo patrón para POS móvil ──
-function _mobPosClienteBuscar() {
-  const q = (document.getElementById('mob-pos-cliente-buscar')?.value || '').trim();
-  const sug = document.getElementById('mob-pos-cliente-sugerencias');
-  if (!sug) return;
-  const matches = (q ? DB.clientes.filter(c => _norm(c.nombre).includes(_norm(q)) || _norm(c.alias||'').includes(_norm(q)) || (c.tel||'').includes(q)) : DB.clientes).slice(0, 8);
-  if (!matches.length) {
-    sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
-  } else {
-    sug.innerHTML = matches.map(c =>
-      `<div onclick="_mobPosClienteSeleccionar(${c.id})" style="padding:.5rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)">
-        ${c.alias || c.nombre}${c.deuda>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(c.deuda)})</span>` : ''}
-       </div>`
-    ).join('');
-  }
-  sug.style.display = 'block';
-}
-function _mobPosClienteSeleccionar(id) {
-  const c = DB.clientes.find(x => x.id === id);
-  const sel = document.getElementById('mob-pos-cliente');
-  const buscar = document.getElementById('mob-pos-cliente-buscar');
-  if (sel) sel.value = id;
-  if (buscar) buscar.value = c ? (c.alias || c.nombre) : '';
-  const sug = document.getElementById('mob-pos-cliente-sugerencias'); if (sug) sug.style.display = 'none';
-  mobOnClienteChange();
-}
-function resetMobPosCliente() {
-  const sel = document.getElementById('mob-pos-cliente'); if (sel) sel.value = '';
-  const buscar = document.getElementById('mob-pos-cliente-buscar'); if (buscar) buscar.value = '';
-  mobOnClienteChange();
-}
+// Buscador/reset de cliente para POS móvil retirado — código muerto (mob-pos-cliente ya no
+// existe). El carrito móvil usa el selector compartido (pos-cliente) vía el mismo panel.
 
 let _ventaPendiente = null; // recuerda un intento de venta fallido para reintentar con el mismo id
 
@@ -9447,11 +9410,6 @@ function getPremioSugerido(clienteId) {
 // ===================== POS - Cliente info y premio =====================
 function onClienteChange() {
   const id = parseInt(document.getElementById('pos-cliente').value);
-  // Puente hacia móvil: mobProcesarVenta/mobCobrarFiado siguen leyendo de mob-pos-cliente
-  // (ahora oculto, sin interfaz propia) — esto lo mantiene sincronizado con el único
-  // selector visible, que vive acá, compartido entre PC y el carrito móvil.
-  const _selMobPuente = document.getElementById('mob-pos-cliente');
-  if (_selMobPuente) _selMobPuente.value = document.getElementById('pos-cliente').value;
   const inf = document.getElementById('pos-cli-info');
   if (!id) {
     inf.style.display = 'none';
@@ -9488,10 +9446,7 @@ function guardarCliRapido() {
   updatePosClientes();
   document.getElementById('pos-cliente').value = c.id;
   const _bd = document.getElementById('pos-cliente-buscar'); if (_bd) _bd.value = c.alias || c.nombre;
-  // onClienteChange() ya sincroniza mob-pos-cliente por dentro (puente agregado al unificar
-  // el selector) — el bloque que llamaba a mobOnClienteChange() por separado quedó redundante
-  // y además pisaba la info de puntos recién mostrada con el formato viejo (solo total, sin
-  // puntos) porque esa función todavía no se había actualizado. Se retira, no hace falta.
+  // onClienteChange() ya actualiza toda la info del cliente — no hace falta nada más acá.
   onClienteChange();
   cerrarModal('modal-cli-rapido');
 }
@@ -10645,51 +10600,8 @@ function toggleSidebar() {
 
 function isMobile() { return window.innerWidth <= 760; }
 
-// Sync mob-pos cliente dropdown with main one
-function updateMobPosClientes() {
-  const desktopSel = document.getElementById('pos-cliente');
-  const mobSel = document.getElementById('mob-pos-cliente');
-  if (!mobSel) return;
-  mobSel.innerHTML = desktopSel.innerHTML;
-}
-
-// El selector visible de cliente en móvil se retiró (quedaba duplicado con el del carrito
-// compartido) — esta función queda con guardas por si algo residual la sigue llamando,
-// pero mob-pos-cli-info ya no existe en el HTML, así que no hace nada visible.
-function mobOnClienteChange() {
-  const mobSel = document.getElementById('mob-pos-cliente');
-  if (!mobSel) return;
-  const desktopSel = document.getElementById('pos-cliente');
-  if (desktopSel) desktopSel.value = mobSel.value;
-  // update cli info
-  const cliId = parseInt(mobSel.value) || null;
-  const cli = cliId ? DB.clientes.find(c => c.id === cliId) : null;
-  const infoEl = document.getElementById('mob-pos-cli-info');
-  const nombreEl = document.getElementById('mob-pos-cli-nombre');
-  const consumoEl = document.getElementById('mob-pos-cli-consumo');
-  if (infoEl && nombreEl && consumoEl) {
-    if (cli) {
-      infoEl.style.display = 'block';
-      nombreEl.textContent = cli.alias || cli.nombre;
-      consumoEl.textContent = ' — Total: S/' + (cli.total || 0).toFixed(2);
-    } else {
-      infoEl.style.display = 'none';
-    }
-  }
-  // también reflejar en el panel unificado pos-cart-panel
-  const posCliInfo = document.getElementById('pos-cli-info');
-  const posCliNombre = document.getElementById('pos-cli-nombre');
-  const posCliConsumo = document.getElementById('pos-cli-consumo');
-  const posSel = document.getElementById('pos-cliente');
-  if (posSel) posSel.value = mobSel.value;
-  if (cli && posCliInfo) {
-    posCliInfo.style.display = 'block';
-    if (posCliNombre) posCliNombre.textContent = cli.alias || cli.nombre;
-    if (posCliConsumo) posCliConsumo.textContent = ' — Total: S/' + (cli.total || 0).toFixed(2);
-  } else if (posCliInfo) { posCliInfo.style.display = 'none'; }
-  // El aviso de fidelización no se llamaba desde móvil — quedaba solo en desktop.
-  actualizarPremioAlertPOS();
-}
+// updateMobPosClientes() y mobOnClienteChange() retiradas — código muerto (mob-pos-cliente
+// ya no existe). El panel de cliente compartido se actualiza directo desde onClienteChange().
 
 function mobFilterPos() {
   const s = document.getElementById('mob-pos-search').value.toLowerCase();
@@ -10835,279 +10747,14 @@ function toggleMobCart() {
   }
 }
 
-let _mobFiadoPendiente = null; // mismo patron que escritorio — evita duplicar en doble toque o reintento
-
-async function mobCobrarFiado() {
-  if (cart.length === 0) { alert('El carrito está vacío'); return; }
-  const clienteId = parseInt(document.getElementById('mob-pos-cliente')?.value) || 0;
-  if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
- const sub = Math.round(cart.reduce((s, i) => s + i.precio * i.cant, 0) * 100) / 100;
-  const desc = parseFloat(document.getElementById('pos-descuento')?.value) || 0;
-  const comboInfo = calcComboDescuento(cart);
-  const total = Math.round(Math.max(0, sub - desc - comboInfo.total) * 100) / 100;
-  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
-
-  const firma = _firmaCarrito(cart, 'FIADO', clienteId);
-  let fiado;
-  if (_mobFiadoPendiente && _mobFiadoPendiente.firma === firma) {
-    fiado = _mobFiadoPendiente.fiado;
-  } else {
-    fiado = {
-      id: getId(), clienteId,
-      items: itemsConPrecioReal,
-      total, pagado: 0, fecha: today(),
-      descuentoCombo: comboInfo.total, descuentoManual: desc,
-      sedeId: sedeAdminEfectiva()
-    };
-  }
-  _mobFiadoPendiente = { firma, fiado };
-
-  if (!DB.historialVentas) DB.historialVentas = [];
-  if (DB.historialVentas.some(v => v.id === fiado.id)) {
-    _mobFiadoPendiente = null;
-    alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
-    cart = [];
-    mobRenderCart(); mobCalcTotal(); mobUpdateBar();
-    resetMobPosCliente();
-    return;
-  }
-
-  for (const item of cart) {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod) {
-      alert('⚠️ No se pudo registrar el fiado: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
-      _mobFiadoPendiente = null;
-      return;
-    }
-  }
-
-  // Mismo paquete atomico que cobrarFiado() de escritorio — stock, fiado, deuda del cliente y
-  // movimiento viajan juntos. Sin ingreso a caja (no es efectivo en mano todavia).
-  const sede = sedeAdminEfectiva();
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  const batch = fbFS.batch();
-  const _deltasPorProducto = new Map();
-  const _acumular = (prod, delta) => {
-    const actual = _deltasPorProducto.get(prod.id);
-    if (actual) actual.delta += delta;
-    else _deltasPorProducto.set(prod.id, { prod, delta });
-  };
-  _fbLastWriteProdTs = Date.now();
-  cart.forEach(item => {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod.esCombo) _acumular(prod, -item.cant);
-    if (prod.esCombo && prod.componentes) {
-      prod.componentes.forEach(comp => {
-        const cp = DB.productos.find(x => x.id === comp.prodId);
-        if (cp) _acumular(cp, -(comp.cant * item.cant));
-      });
-    }
-  });
-  const _deltasStock = [];
-  _deltasPorProducto.forEach(({prod, delta}) => {
-    batch.set(fbFS.collection('stock').doc(String(prod.id)),
-      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
-    _deltasStock.push({ prod, delta });
-  });
-
-  batch.set(fbFS.collection('fiados').doc(String(fiado.id)), { ...fiado, sedeId: sede });
-  const _hvFiadoMob = { ...fiado, sedeId: sede, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
-  batch.set(fbFS.collection('ventas').doc(String(fiado.id)), _hvFiadoMob);
-
-  const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'fiado', desc:`Fiado — ${getClienteNombre(clienteId)}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
-
-  const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
-  batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
-    deuda: firebase.firestore.FieldValue.increment(total),
-    compras: firebase.firestore.FieldValue.increment(1),
-    total: firebase.firestore.FieldValue.increment(total),
-    puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
-  }, { merge: true });
-
-  _sincIniciar('fiado_lote', fiado.id);
-  try {
-    await batch.commit();
-    _sincTerminar('fiado_lote', fiado.id);
-  } catch (e) {
-    _sincError('fiado_lote', fiado.id, e, 'el fiado completo (stock, deuda del cliente) — no se aplicó nada');
-    _mobFiadoPendiente = null;
-    return;
-  }
-
-  _deltasStock.forEach(({prod, delta}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
-  });
-  DB.fiados.push(fiado);
-  const cli = DB.clientes.find(c => c.id === clienteId);
-  if (cli) {
-    cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
-    cli.compras = (cli.compras||0) + 1;
-    cli.total = Math.round(((cli.total||0) + total) * 100) / 100;
-    cli.puntos = (cli.puntos||0) + _puntosGanados;
-  }
-  ensureCajaAbierta();
-  DB.historialVentas.push(_hvFiadoMob);
-  fbGuardar();
-  fbGuardarProductos();
-  _mobFiadoPendiente = null;
-  try { renderDashboard(); } catch(e){}
-  try { renderCaja(); } catch(e){}
-  mostrarTicket(_hvFiadoMob);
-
-  cart = [];
-  mobRenderCart(); mobCalcTotal(); mobUpdateBar();
- const descEl = document.getElementById('pos-descuento');
-  if (descEl) descEl.value = '';
-  resetMobPosCliente();
-  renderMobPosGrid(); toggleMobCart(); updateAlertCount();
-}
-
-let _mobVentaPendiente = null; // recuerda un intento fallido para reintentar con el mismo id, mismo patron que escritorio
-
-async function mobProcesarVenta(){
-  if (cart.length === 0) { alert('El carrito está vacío'); return; }
-  const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
-  const desc = parseFloat(document.getElementById('pos-descuento')?.value) || 0;
-  const comboInfo = calcComboDescuento(cart);
-  const comboDesc = comboInfo.total;
-  const total = Math.max(0, sub - desc - comboDesc);
-  const metodo = document.getElementById('pos-metodo-pago')?.value || 'Efectivo';
-  const clienteId = parseInt(document.getElementById('mob-pos-cliente')?.value) || null;
-
-  // Build items with proportional combo prices for accurate reporting
-  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
-
-  const firma = _firmaCarrito(cart, metodo, clienteId);
-  let venta;
-  if (_mobVentaPendiente && _mobVentaPendiente.firma === firma) {
-    venta = _mobVentaPendiente.venta;
-  } else {
-    venta = {
-      id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
-      items: itemsConPrecioReal, subtotal: sub,
-      descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
-      total, metodo, clienteId, sedeId: sedeAdminEfectiva()
-    };
-  }
-  _mobVentaPendiente = { firma, venta };
-
-  if (!DB.historialVentas) DB.historialVentas = [];
-  if (DB.historialVentas.some(v => v.id === venta.id)) {
-    _mobVentaPendiente = null;
-    mostrarTicket(venta);
-    cart = [];
-    mobRenderCart(); mobCalcTotal(); mobUpdateBar();
-    resetMobPosCliente();
-    return;
-  }
-
-  for (const item of cart) {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod) {
-      alert('⚠️ No se pudo procesar la venta: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
-      _mobVentaPendiente = null;
-      return;
-    }
-  }
-
-  // Mismo paquete atomico que procesarVenta() de escritorio — stock, venta, cliente, caja y
-  // movimiento viajan juntos, todo o nada.
-  const sede = sedeAdminEfectiva();
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  const batch = fbFS.batch();
-  const _deltasPorProducto = new Map();
-  const _acumular = (prod, delta) => {
-    const actual = _deltasPorProducto.get(prod.id);
-    if (actual) actual.delta += delta;
-    else _deltasPorProducto.set(prod.id, { prod, delta });
-  };
-  _fbLastWriteProdTs = Date.now();
-  cart.forEach(item => {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod.esCombo) _acumular(prod, -item.cant);
-    if (prod.esCombo && prod.componentes) {
-      prod.componentes.forEach(comp => {
-        const cp = DB.productos.find(x => x.id === comp.prodId);
-        if (cp) _acumular(cp, -(comp.cant * item.cant));
-      });
-    }
-  });
-  const _deltasStock = [];
-  _deltasPorProducto.forEach(({prod, delta}) => {
-    batch.set(fbFS.collection('stock').doc(String(prod.id)),
-      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
-    _deltasStock.push({ prod, delta });
-  });
-
-  const _ventaMob = { ...venta, sedeId: sede, origen:'pos', estado:'completado', estadoStock:'descontado' };
-  batch.set(fbFS.collection('ventas').doc(String(venta.id)), _ventaMob);
-
-  const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
-
-  const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(total) };
-  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(total);
-  batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
-
-  const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
-  if (clienteId) {
-    batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
-      compras: firebase.firestore.FieldValue.increment(1),
-      total: firebase.firestore.FieldValue.increment(total),
-      puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
-    }, { merge: true });
-  }
-
-  _sincIniciar('venta_lote', venta.id);
-  try {
-    await batch.commit();
-    _sincTerminar('venta_lote', venta.id);
-  } catch (e) {
-    _sincError('venta_lote', venta.id, e, 'la venta completa (stock, caja, cliente) — no se aplicó nada');
-    _mobVentaPendiente = null;
-    return;
-  }
-
-  _deltasStock.forEach(({prod, delta}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
-  });
-  if (clienteId) {
-    const cli = DB.clientes.find(c => c.id === clienteId);
-    if (cli) { cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+_puntosGanados; cli.compras=(cli.compras||0)+1; }
-  }
-  ensureCajaAbierta();
-  DB.caja.ingresos += total;
-  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
-  DB.historialVentas.push(_ventaMob);
-  fbGuardar();
-  fbGuardarProductos();
-  _mobVentaPendiente = null;
-  try { renderDashboard(); } catch(e){}
-  try { renderCaja(); } catch(e){}
-  try { generarReporte(); } catch(e){}
-  toggleMobCart();
-  cart = [];
-  mobRenderCart(); mobCalcTotal(); mobUpdateBar();
-  const descEl2 = document.getElementById('pos-descuento');
-  if (descEl2) descEl2.value = '';
-  resetMobPosCliente();
-  renderMobPosGrid();
-  updateAlertCount();
-  mostrarTicket(venta);
-}
+// mobProcesarVenta() y mobCobrarFiado() se retiraron — codigo muerto confirmado, sin ningun
+// disparador en todo el archivo. El carrito movil usa el mismo panel compartido que
+// escritorio (ver toggleMobCart), asi que procesarVenta()/cobrarFiado() ya cubren movil.
 
 function renderMobPos() {
   if (!isMobile()) return;
   renderMobPosCats();
   renderMobPosGrid();
-  updateMobPosClientes();
   mobRenderCart();
   mobUpdateBar();
   // paddingBottom eliminado — layout controlado por CSS
@@ -12762,40 +12409,62 @@ function confirmarEntregaPedido(id) {
 if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
 
     // ── Dialog async: cobrado o fiado ────────────────────────────────────────
-    _dialogoPagoOnline(p.clienteNombre, function(tipoPago) {
+    _dialogoPagoOnline(p.clienteNombre, async function(tipoPago) {
       if (tipoPago === null) { _fbEscribiendo = false; return; }
       _esPagado = (tipoPago === 'cobrado');
+      if (!fbFS) { _fbEscribiendo = false; alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
 
       // ── Matching / creación de cliente ────────────────────────────────────
       const telNorm = (p.telefono||p.clienteTel||'').replace(/\s/g,'');
       let cli = telNorm ? DB.clientes.find(c=>(c.tel||'').replace(/\s/g,'')=== telNorm) : null;
+      let _esClienteNuevo = false;
       if (!cli && (p.clienteNombre||'').length >= 2) {
         cli = _envolverCliente({ id: getId(), nombre: p.clienteNombre, alias: p.clienteNombre,
                 tel: p.clienteTel||p.telefono||'', dir: p.clienteDir||'',
                 cumple: '', compras: 0, total: 0, deuda: 0 });
-        DB.clientes.push(cli);
+        _esClienteNuevo = true;
       }
 
-      // ── Descontar stock (siempre) — en la sede que despacha, definida arriba ──
-      (p.items||[]).filter(i=>i.cant>0&&!i.eliminado).forEach(item => {
-        const prod = DB.productos.find(x => x.id === item.prodId);
-        if (prod) {
-          if (!prod.esCombo) ajustarStockSede(prod, -item.cant, _sedeDespacho);
-          if (prod.esCombo && prod.componentes) {
-            prod.componentes.forEach(comp => {
-              const cp = DB.productos.find(x => x.id === comp.prodId);
-              if (cp) ajustarStockSede(cp, -(comp.cant * item.cant), _sedeDespacho);
-            });
-          }
-        }
-      });
-
-      if (!DB.historialVentas) DB.historialVentas = [];
       const itemsFinales = (p.items||[]).filter(i=>i.cant>0&&!i.eliminado);
 
+      // ── Validar productos ANTES de tocar nada ───────────────────────────────
+      for (const item of itemsFinales) {
+        if (!DB.productos.find(x => x.id === item.prodId)) {
+          _fbEscribiendo = false;
+          alert('⚠️ No se pudo confirmar la entrega: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se aplicó nada. Revisa el pedido e intenta de nuevo.');
+          return;
+        }
+      }
+
+      // ── Paquete atomico: stock (todos los items), venta/fiado, cliente, caja,
+      // movimiento y el pedido marcado como entregado viajan juntos — todo o nada.
+      const batch = fbFS.batch();
+      const _deltasPorProducto = new Map();
+      const _acumular = (prod, delta) => {
+        const actual = _deltasPorProducto.get(prod.id);
+        if (actual) actual.delta += delta;
+        else _deltasPorProducto.set(prod.id, { prod, delta });
+      };
+      itemsFinales.forEach(item => {
+        const prod = DB.productos.find(x => x.id === item.prodId);
+        if (!prod.esCombo) _acumular(prod, -item.cant);
+        if (prod.esCombo && prod.componentes) {
+          prod.componentes.forEach(comp => {
+            const cp = DB.productos.find(x => x.id === comp.prodId);
+            if (cp) _acumular(cp, -(comp.cant * item.cant));
+          });
+        }
+      });
+      const _deltasStock = [];
+      _deltasPorProducto.forEach(({prod, delta}) => {
+        batch.set(fbFS.collection('stock').doc(String(prod.id)),
+          { [`stockPorSede.${_sedeDespacho}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+        _deltasStock.push({ prod, delta });
+      });
+
+      let _ventaOnline = null, _fiadoOnline = null;
       if (_esPagado) {
-        // ── COBRADO ──────────────────────────────────────────────────────────
-        const _ventaOnline = {
+        _ventaOnline = {
           id: p.id, fecha: p.fecha, hora: p.hora,
           cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
           clienteNombre: p.clienteNombre, items: itemsFinales,
@@ -12805,13 +12474,17 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
           sedeId: _sedeDespacho
         };
-        DB.historialVentas.push(_ventaOnline);
-        fbSincronizarVenta(_ventaOnline);
-        if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; }
-      } else {
-        // ── FIADO ─────────────────────────────────────────────────────────────
+        batch.set(fbFS.collection('ventas').doc(String(_ventaOnline.id)), _ventaOnline);
         if (cli) {
-          const fiadoOnline = {
+          batch.set(fbFS.collection('clientes').doc(String(cli.id)),
+            _esClienteNuevo
+              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: 0, puntos: 0 }
+              : { compras: firebase.firestore.FieldValue.increment(1), total: firebase.firestore.FieldValue.increment(p.total) },
+            { merge: true });
+        }
+      } else {
+        if (cli) {
+          _fiadoOnline = {
             id: p.id, clienteId: cli.id,
             items: itemsFinales.map(i => {
               const prod = DB.productos.find(x => x.id === i.prodId);
@@ -12821,12 +12494,12 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             descuentoCombo: p.descuento || 0, descuentoManual: 0,
             origenOnline: true, sedeId: _sedeDespacho
           };
-          if (!DB.fiados) DB.fiados = [];
-          DB.fiados.push(fiadoOnline);
-          fbSincronizarFiado(fiadoOnline);
-          cli.deuda   = (cli.deuda||0)   + p.total;
-          cli.compras = (cli.compras||0) + 1;
-          cli.total   = (cli.total||0)   + p.total;
+          batch.set(fbFS.collection('fiados').doc(String(_fiadoOnline.id)), _fiadoOnline);
+          batch.set(fbFS.collection('clientes').doc(String(cli.id)),
+            _esClienteNuevo
+              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: p.total, puntos: 0 }
+              : { compras: firebase.firestore.FieldValue.increment(1), total: firebase.firestore.FieldValue.increment(p.total), deuda: firebase.firestore.FieldValue.increment(p.total) },
+            { merge: true });
         }
         const _ventaOnlineFiado = {
           id: p.id, fecha: p.fecha, hora: p.hora,
@@ -12838,29 +12511,67 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
           sedeId: _sedeDespacho
         };
-        DB.historialVentas.push(_ventaOnlineFiado);
-        fbSincronizarVenta(_ventaOnlineFiado);
+        batch.set(fbFS.collection('ventas').doc(String(_ventaOnlineFiado.id)), _ventaOnlineFiado);
+        _ventaOnline = _ventaOnlineFiado; // usado abajo para empujar a historialVentas
       }
 
-      // ── Actualizar estado pedido + caja ────────────────────────────────────
+      const _movId = getId();
+      if (_esPagado) {
+        batch.set(fbFS.collection('caja').doc(_sedeDespacho), {
+          ingresos: firebase.firestore.FieldValue.increment(p.total),
+          ...(p.metodo === 'Efectivo' ? { ingresosEfectivo: firebase.firestore.FieldValue.increment(p.total) } : {})
+        }, { merge: true });
+        batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+          { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho });
+      } else {
+        batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+          { id:_movId, tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho });
+      }
+
+      batch.update(fbFS.collection('pedidos_online').doc(String(p.id)), {
+        estado: 'entregado', cajero: currentUser || 'admin',
+        fechaEntrega: today(), horaEntrega: nowTime()
+      });
+
+      _sincIniciar('entrega_pedido_lote', p.id);
+      try {
+        await batch.commit();
+        _sincTerminar('entrega_pedido_lote', p.id);
+      } catch (e) {
+        _sincError('entrega_pedido_lote', p.id, e, 'la entrega del pedido — no se aplicó nada, ni stock ni venta ni cliente');
+        _fbEscribiendo = false;
+        return;
+      }
+
+      // El lote ya fue aceptado — recien ahora se refleja todo en memoria local.
+      _deltasStock.forEach(({prod, delta}) => {
+        if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+        prod.stockPorSede[_sedeDespacho] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDespacho]||0)+delta)*1000)/1000);
+        prod.stock = stockTotal(prod);
+      });
+      if (_esClienteNuevo && cli) DB.clientes.push(cli);
+      if (!DB.historialVentas) DB.historialVentas = [];
+      DB.historialVentas.push(_ventaOnline);
+      if (_esPagado) {
+        if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; }
+      } else {
+        if (_fiadoOnline) {
+          if (!DB.fiados) DB.fiados = [];
+          DB.fiados.push(_fiadoOnline);
+        }
+        if (cli) {
+          cli.deuda   = (cli.deuda||0)   + p.total;
+          cli.compras = (cli.compras||0) + 1;
+          cli.total   = (cli.total||0)   + p.total;
+        }
+      }
       p.estado = 'entregado';
       ensureCajaAbierta();
       if (_esPagado) {
         DB.caja.ingresos += p.total;
         if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
-        _pushMovimiento({ tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
-      } else {
-        _pushMovimiento({ tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today() });
       }
 
-     // ── Firestore + Firebase ───────────────────────────────────────────────
-      _fbLastWriteTs = Date.now();
-      if (fbFS) {
-        fbFS.collection('pedidos_online').doc(String(p.id)).update({
-          estado: 'entregado', cajero: currentUser || 'admin',
-          fechaEntrega: today(), horaEntrega: nowTime()
-        }).catch(e => console.warn('pedidos_online update error:', e.code));
-      }
       fbGuardar();
       fbGuardarProductos();
       setTimeout(() => { _fbEscribiendo = false; }, 8000);
