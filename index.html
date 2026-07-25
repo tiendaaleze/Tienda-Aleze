@@ -11783,7 +11783,7 @@ function huvRecalc() {
   }
 }
 
-function guardarActualizarVenta() {
+async function guardarActualizarVenta() {
   if (!_hvEditId || !_huvVenta) return;
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar devoluciones.'); return; }
 
@@ -11820,7 +11820,13 @@ function guardarActualizarVenta() {
 
     const montoReembolso = vDB.total;
 
-// Restituir stock de TODOS los items
+    // Mismo paquete atomico que el resto: stock restituido, la venta actualizada, caja y
+    // movimiento viajan juntos en un lote — o se aplica todo, o no se aplica nada. Un
+    // reembolso es dinero real saliendo de caja, merece la misma garantia que una venta.
+    const _sedeDev = vDB.sedeId || sedeAdminEfectiva();
+    const batch = fbFS.batch();
+    const _deltasStock = [];
+
     (vDB.items||[]).forEach(item => {
       const prod = DB.productos.find(p => p.id === item.prodId);
       if (prod) {
@@ -11829,39 +11835,60 @@ function guardarActualizarVenta() {
           const di = d.items?.find(x=>x.prodId===item.prodId);
           return s + (di?.cantDevuelta||0);
         }, 0);
-        ajustarStockSede(prod, Math.max(0, cantOrig - yaDevuelto), vDB.sedeId);
+        const cantARestituir = Math.max(0, cantOrig - yaDevuelto);
+        if (cantARestituir > 0) {
+          batch.set(fbFS.collection('stock').doc(String(prod.id)),
+            { [`stockPorSede.${_sedeDev}`]: firebase.firestore.FieldValue.increment(cantARestituir) }, { merge: true });
+          _deltasStock.push({ prod, delta: cantARestituir });
+        }
       }
     });
 
-    // Registrar egreso en caja — si estaba cerrada, se reabre encadenando el saldo real antes de aplicar el reembolso
-    ensureCajaAbierta();
-    DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
-    _pushMovimiento({
-      tipo: 'egreso',
+    const _movId = getId();
+    batch.set(fbFS.collection('movimientos').doc(String(_movId)), {
+      id: _movId, tipo: 'egreso',
       desc: `Reembolso anulación venta — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
-      monto: montoReembolso,
-      hora: nowTime(),
-      fecha: today(),
-      usuario: autoriza
+      monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDev
     });
 
-    // Registrar devolución en la venta
-    if (!vDB.devoluciones) vDB.devoluciones = [];
-    vDB.devoluciones.push({
+    const _cajaUpdate = { egresos: firebase.firestore.FieldValue.increment(montoReembolso) };
+    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(montoReembolso);
+    batch.set(fbFS.collection('caja').doc(_sedeDev), _cajaUpdate, { merge: true });
+
+    const _devolucionEntry = {
       fecha: today(), hora: nowTime(), tipo: 'anulacion',
       monto: montoReembolso, metodo, obs, autoriza,
       items: (vDB.items||[]).map(item => ({
         prodId: item.prodId, nombre: item.nombre,
         cantDevuelta: item.cantReal ?? item.cant
       }))
+    };
+    const _vDBActualizada = { ...vDB, devoluciones: [...(vDB.devoluciones||[]), _devolucionEntry], estado: 'anulado', total: 0, fechaAnulacion: today() + ' ' + nowTime() };
+    batch.set(fbFS.collection('ventas').doc(String(vDB.id)), _vDBActualizada);
+
+    _sincIniciar('anulacion_lote', vDB.id);
+    try {
+      await batch.commit();
+      _sincTerminar('anulacion_lote', vDB.id);
+    } catch (e) {
+      _sincError('anulacion_lote', vDB.id, e, 'la anulación de la venta — no se aplicó nada');
+      return;
+    }
+
+    _deltasStock.forEach(({prod, delta}) => {
+      if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+      prod.stockPorSede[_sedeDev] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDev]||0)+delta)*1000)/1000);
+      prod.stock = stockTotal(prod);
     });
+    ensureCajaAbierta();
+    DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
+    if (!vDB.devoluciones) vDB.devoluciones = [];
+    vDB.devoluciones.push(_devolucionEntry);
+    vDB.estado         = 'anulado';
+    vDB.total          = 0;
+    vDB.fechaAnulacion = _vDBActualizada.fechaAnulacion;
 
-    vDB.estado        = 'anulado';
-    vDB.total         = 0;
-    vDB.fechaAnulacion = today() + ' ' + nowTime();
-
-    fbSincronizarVenta(vDB);
     fbGuardar();
     fbGuardarProductos();
     cerrarModal('modal-actualizar-venta');
@@ -11906,13 +11933,64 @@ function guardarActualizarVenta() {
 
   if (!confirm(`¿Confirmar devolución parcial?\n\nProductos:\n${itemsDevueltos.map(d=>`• ${d.nombre} x${d.cantDevuelta} = ${sol(d.subtotal)}`).join('\n')}\n\nReembolso: ${sol(montoReembolso)} (${metodo})\nNuevo total de la venta: ${sol(Math.max(0, vDB.total - montoReembolso))}`)) return;
 
-  // Restituir stock de productos devueltos
+  // Mismo paquete atomico: stock, venta actualizada, caja y movimiento juntos o nada.
+  const _sedeDevP = vDB.sedeId || sedeAdminEfectiva();
+  const batchP = fbFS.batch();
+  const _deltasStockP = [];
+
   itemsDevueltos.forEach(dev => {
     const prod = DB.productos.find(p => p.id === dev.prodId);
-    if (prod) ajustarStockSede(prod, dev.cantDevuelta, vDB.sedeId);
+    if (prod) {
+      batchP.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${_sedeDevP}`]: firebase.firestore.FieldValue.increment(dev.cantDevuelta) }, { merge: true });
+      _deltasStockP.push({ prod, delta: dev.cantDevuelta });
+    }
   });
 
-  // Actualizar cantidades en los items de la venta
+  const nuevoTotal = Math.max(0, vDB.total - montoReembolso);
+  const _itemsActualizados = (vDB.items||[]).map(item => {
+    const dev = itemsDevueltos.find(d => d.prodId === item.prodId);
+    if (!dev) return item;
+    const cantAntes = item.cantReal ?? item.cant;
+    return { ...item, cantReal: Math.max(0, cantAntes - dev.cantDevuelta) };
+  });
+  const _devolucionEntryP = {
+    fecha: today(), hora: nowTime(), tipo: 'parcial',
+    monto: montoReembolso, metodo, obs, autoriza,
+    items: itemsDevueltos
+  };
+  const _vDBActualizadaP = {
+    ...vDB, items: _itemsActualizados,
+    devoluciones: [...(vDB.devoluciones||[]), _devolucionEntryP],
+    total: nuevoTotal, estado: nuevoTotal === 0 ? 'anulado' : 'parcial'
+  };
+  batchP.set(fbFS.collection('ventas').doc(String(vDB.id)), _vDBActualizadaP);
+
+  const _movIdP = getId();
+  batchP.set(fbFS.collection('movimientos').doc(String(_movIdP)), {
+    id: _movIdP, tipo: 'egreso',
+    desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
+    monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDevP
+  });
+
+  const _cajaUpdateP = { egresos: firebase.firestore.FieldValue.increment(montoReembolso) };
+  if (metodo === 'Efectivo') _cajaUpdateP.egresosEfectivo = firebase.firestore.FieldValue.increment(montoReembolso);
+  batchP.set(fbFS.collection('caja').doc(_sedeDevP), _cajaUpdateP, { merge: true });
+
+  _sincIniciar('devolucion_lote', vDB.id);
+  try {
+    await batchP.commit();
+    _sincTerminar('devolucion_lote', vDB.id);
+  } catch (e) {
+    _sincError('devolucion_lote', vDB.id, e, 'la devolución — no se aplicó nada');
+    return;
+  }
+
+  _deltasStockP.forEach(({prod, delta}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[_sedeDevP] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDevP]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
+  });
   (vDB.items||[]).forEach((item, i) => {
     const dev = itemsDevueltos.find(d => d.prodId === item.prodId);
     if (dev) {
@@ -11920,31 +11998,14 @@ function guardarActualizarVenta() {
       item.cantReal = Math.max(0, cantAntes - dev.cantDevuelta);
     }
   });
-
-// Nuevo total
-  const nuevoTotal = Math.max(0, vDB.total - montoReembolso);
   vDB.total  = nuevoTotal;
   vDB.estado = nuevoTotal === 0 ? 'anulado' : 'parcial';
-
-  // Registrar egreso en caja — si estaba cerrada, se reabre encadenando el saldo real antes de aplicar el reembolso
   ensureCajaAbierta();
   DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
   if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
-  _pushMovimiento({
-    tipo: 'egreso',
-    desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
-    monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza
-  });
-
-  // Registrar la devolución como traza de auditoría
   if (!vDB.devoluciones) vDB.devoluciones = [];
-  vDB.devoluciones.push({
-    fecha: today(), hora: nowTime(), tipo: 'parcial',
-    monto: montoReembolso, metodo, obs, autoriza,
-    items: itemsDevueltos
-  });
+  vDB.devoluciones.push(_devolucionEntryP);
 
-  fbSincronizarVenta(vDB);
   fbGuardar();
   fbGuardarProductos();
   cerrarModal('modal-actualizar-venta');
