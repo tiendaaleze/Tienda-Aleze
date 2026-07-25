@@ -4038,34 +4038,46 @@ async function doLogin() {
         });
       } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
 
-      // CRITICO — corrige la causa raiz de una perdida real de datos (venta y pago de fiado
-      // desaparecidos del documento combinado tras un guardado atrasado de otra sesion que
-      // pisaba todo). Caja y stock ya tenian esta reconciliacion desde su propia coleccion;
-      // ventas y fiados nunca la tuvieron, aunque eran igual de vulnerables — mas, siendo la
-      // informacion mas critica del negocio. Nunca borra nada, solo agrega lo que el documento
-      // combinado no tenga: si un registro ya esta en la lista, no se toca.
+      // CRITICO — corrige la causa raiz de perdida real de datos: TODO lo que camposOp carga
+      // desde el documento combinado (ventas, clientes, fiados, mermas, movimientos) puede
+      // quedar viejo si otra sesion con datos desactualizados guarda encima. Caja y stock ya
+      // tenian esta reconciliacion desde su propia coleccion — ahora las 5 restantes tambien.
+      // Esto es lo que causo el incidente real de clientes desaparecidos (ventas quedando
+      // "Anónimo" porque el cliente referenciado ya no estaba en la lista). Nunca borra nada,
+      // solo agrega lo que el documento combinado no tenga.
       try {
         const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
-        const [ventasSnap, fiadosSnap] = await Promise.all([
+        const [ventasSnap, fiadosSnap, clientesSnap, mermasSnap, movimientosSnap] = await Promise.all([
           fbFS.collection('ventas').where('fecha', '>=', _limiteReconcilia).get(),
-          fbFS.collection('fiados').get() // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
+          fbFS.collection('fiados').get(), // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
+          fbFS.collection('clientes').get(), // clientes: todos — un cliente no "vence", nunca deberia faltar
+          fbFS.collection('mermas').where('fecha', '>=', _limiteReconcilia).get(),
+          fbFS.collection('movimientos').where('fecha', '>=', _limiteReconcilia).get()
         ]);
         if (!DB.historialVentas) DB.historialVentas = [];
         if (!DB.fiados) DB.fiados = [];
-        const _idsVentas = new Set(DB.historialVentas.map(v => String(v.id)));
-        let _reconciliadasVentas = 0;
-        ventasSnap.forEach(doc => {
-          if (!_idsVentas.has(doc.id)) { DB.historialVentas.push(doc.data()); _reconciliadasVentas++; }
-        });
-        const _idsFiados = new Set(DB.fiados.map(f => String(f.id)));
-        let _reconciliadosFiados = 0;
-        fiadosSnap.forEach(doc => {
-          if (!_idsFiados.has(doc.id)) { DB.fiados.push(doc.data()); _reconciliadosFiados++; }
-        });
-        if (_reconciliadasVentas || _reconciliadosFiados) {
-          console.warn(`[Reconciliación] Se recuperaron ${_reconciliadasVentas} venta(s) y ${_reconciliadosFiados} fiado(s) que faltaban en el documento combinado.`);
+        if (!DB.clientes) DB.clientes = [];
+        if (!DB.mermas) DB.mermas = [];
+        if (!DB.movimientos) DB.movimientos = [];
+
+        const _reconciliar = (snap, arr, idKey) => {
+          const ids = new Set(arr.map(x => String(x[idKey])));
+          let n = 0;
+          snap.forEach(doc => { if (!ids.has(doc.id)) { arr.push(doc.data()); n++; } });
+          return n;
+        };
+        const _rVentas    = _reconciliar(ventasSnap, DB.historialVentas, 'id');
+        const _rFiados    = _reconciliar(fiadosSnap, DB.fiados, 'id');
+        const _rClientes  = _reconciliar(clientesSnap, DB.clientes, 'id');
+        const _rMermas    = _reconciliar(mermasSnap, DB.mermas, 'id');
+        const _rMovs      = _reconciliar(movimientosSnap, DB.movimientos, 'id');
+        _envolverTodosClientes(); // los clientes recien agregados tambien necesitan su Proxy
+
+        const _totalReconciliado = _rVentas + _rFiados + _rClientes + _rMermas + _rMovs;
+        if (_totalReconciliado) {
+          console.warn(`[Reconciliación] Recuperados: ${_rVentas} venta(s), ${_rFiados} fiado(s), ${_rClientes} cliente(s), ${_rMermas} merma(s), ${_rMovs} movimiento(s) que faltaban en el documento combinado.`);
         }
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar ventas/fiados frescos:', e); }
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar datos frescos:', e); }
 
       aplicarNombreNegocio();
 
@@ -4073,6 +4085,17 @@ async function doLogin() {
         const ext = snapExt.data();
         Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
       }
+      // Mismo criterio que ventas/fiados/clientes/mermas/movimientos — gastos vive en un
+      // documento separado (db_ext) pero tiene exactamente el mismo riesgo de quedar viejo.
+      try {
+        const _limiteReconciliaGastos = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
+        const gastosSnap = await fbFS.collection('gastos').where('fecha', '>=', _limiteReconciliaGastos).get();
+        if (!DB_EXT.gastos) DB_EXT.gastos = [];
+        const _idsGastos = new Set(DB_EXT.gastos.map(g => String(g.id)));
+        let _rGastos = 0;
+        gastosSnap.forEach(doc => { if (!_idsGastos.has(doc.id)) { DB_EXT.gastos.push(doc.data()); _rGastos++; } });
+        if (_rGastos) console.warn(`[Reconciliación] Recuperados ${_rGastos} gasto(s) que faltaban en el documento combinado.`);
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar gastos frescos:', e); }
     } catch(e) {
       console.warn('Error cargando datos en login, continuando con caché local:', e.message);
     }
