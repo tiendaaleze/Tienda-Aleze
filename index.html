@@ -6879,7 +6879,7 @@ function fbSincronizarBoleta(boleta, proveedorId) {
 }
 
 // ── Pago a proveedor (cuentas por pagar) — mismo patrón que confirmarPagoFiado, del otro lado del libro ──
-function abrirPagoBoleta(provId, idx) {
+async function abrirPagoBoleta(provId, idx) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar pagos a proveedores.'); return; }
   const prov = DB.proveedores.find(x => x.id === provId);
   if (!prov || !prov.boletas || !prov.boletas[idx]) return;
@@ -6892,14 +6892,40 @@ function abrirPagoBoleta(provId, idx) {
   const _metodosPago = ['Efectivo','Yape','Plin','QR','Link de pago','Tarjeta POS','Tarjeta POS Móvil','Transferencia'];
   const idxM = parseInt(prompt('Método de pago:\n' + _metodosPago.map((m,i)=>`${i+1}. ${m}`).join('\n'), '1'));
   const metodo = (idxM >= 1 && idxM <= _metodosPago.length) ? _metodosPago[idxM-1] : 'Efectivo';
-  if (!b.pagos) b.pagos = [];
-  b.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
-  b.pagado = Math.round(((b.pagado||0) + monto) * 100) / 100;
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  // Paquete atomico: boleta actualizada, caja y movimiento viajan juntos.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  const _pagosNuevo = [...(b.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
+  const _pagadoNuevo = Math.round(((b.pagado||0) + monto) * 100) / 100;
+  batch.set(fbFS.collection('boletas').doc(String(b.id)), { ...b, pagado: _pagadoNuevo, pagos: _pagosNuevo, proveedorId: provId });
+
+  const _cajaUpdate = { egresos: firebase.firestore.FieldValue.increment(monto) };
+  if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(monto);
+  batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${b.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede });
+
+  _sincIniciar('pago_boleta_lote', b.id);
+  try {
+    await batch.commit();
+    _sincTerminar('pago_boleta_lote', b.id);
+  } catch (e) {
+    _sincError('pago_boleta_lote', b.id, e, 'el pago a proveedor — no se aplicó nada');
+    return;
+  }
+
+  b.pagos = _pagosNuevo;
+  b.pagado = _pagadoNuevo;
   ensureCajaAbierta();
-  DB.caja.egresos = (DB.caja.egresos||0) + monto;
-  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
-  _pushMovimiento({ tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${b.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser });
-  fbSincronizarBoleta(b, provId);
+  _cajaProxySkipSync = true;
+  try {
+    DB.caja.egresos = (DB.caja.egresos||0) + monto;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  } finally { _cajaProxySkipSync = false; }
   fbGuardar();
   filtrarBoletas();
   renderProveedores();
@@ -10138,40 +10164,61 @@ function actualizarInvMensual(i, campo, valor) {
   }
 }
 
-function sincronizarMermasInventario() {
-  let registradas = 0;
+async function sincronizarMermasInventario() {
+  const sede = sedeAdminEfectiva();
+  const fechaInv = document.getElementById('inv-mens-fecha').value || today();
+  const _pendientes = []; // {prod, cantidad, mermaObj}
+
   invMensualData.forEach((d, i) => {
     if (d.contado === null || d.contado === '') return;
-   const p = DB.productos.find(prod => prod.id === invMensualData[i].prodId) || DB.productos[i];
+    const p = DB.productos.find(prod => prod.id === invMensualData[i].prodId) || DB.productos[i];
     const _stockAqui = stockEnSede(p);
     const diff = d.contado - _stockAqui;
     if (diff < 0 && d.verificado) {
-      // Faltante confirmado → registrar como merma, en la sede donde se hizo el conteo
       const cantidad = Math.abs(diff);
       const _mermaInv = {
-        id: getId(),
-        prodId: p.id,
-        cant: cantidad,
+        id: getId(), prodId: p.id, cant: cantidad,
         motivo: d.motivo || 'Inventario mensual',
-        obs: 'Registrado desde inventario mensual ' + formatDate(document.getElementById('inv-mens-fecha').value),
-        fecha: document.getElementById('inv-mens-fecha').value || today(),
-        usuario: currentUser,
-        sedeId: currentUserSedeId || 'principal'
+        obs: 'Registrado desde inventario mensual ' + formatDate(fechaInv),
+        fecha: fechaInv, usuario: currentUser, sedeId: sede
       };
-      DB.mermas.push(_mermaInv);
-      fbSincronizarMerma(_mermaInv);
-      // Actualizar stock real de esta sede al valor contado
-      ajustarStockSede(p, d.contado - _stockAqui);
-      registradas++;
+      _pendientes.push({ prod: p, delta: diff, merma: _mermaInv }); // diff ya es negativo
     }
   });
-  if (registradas > 0) {
-    fbGuardar(); fbGuardarProductos();
-    alert('✅ ' + registradas + ' diferencia(s) sincronizadas con mermas y stock actualizado.');
-    updateAlertCount();
-  } else {
+
+  if (_pendientes.length === 0) {
     alert('No hay diferencias negativas verificadas para sincronizar.\nMarca el check ✅ en los productos con faltantes confirmados.');
+    return;
   }
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  // Paquete atomico: TODAS las mermas del conteo y sus ajustes de stock viajan juntos —
+  // mismo criterio que guardarMerma(), aplicado a un conteo con varios productos a la vez.
+  const batch = fbFS.batch();
+  _pendientes.forEach(({prod, delta, merma}) => {
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    batch.set(fbFS.collection('mermas').doc(String(merma.id)), merma);
+  });
+
+  _sincIniciar('inv_mensual_lote', fechaInv);
+  try {
+    await batch.commit();
+    _sincTerminar('inv_mensual_lote', fechaInv);
+  } catch (e) {
+    _sincError('inv_mensual_lote', fechaInv, e, 'la sincronización de inventario mensual — no se aplicó nada');
+    return;
+  }
+
+  _pendientes.forEach(({prod, delta, merma}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
+    DB.mermas.push(merma);
+  });
+  fbGuardar(); fbGuardarProductos();
+  alert('✅ ' + _pendientes.length + ' diferencia(s) sincronizadas con mermas y stock actualizado.');
+  updateAlertCount();
 }
 
 function guardarInventarioMensual() {
@@ -11651,7 +11698,7 @@ function huvSetTab(tab) {
 }
 
 // ── Corrección rápida de método de pago (Fase 4) — sin devolución completa, mismo candado de 15 días ──
-function corregirMetodoPago(id) {
+async function corregirMetodoPago(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede corregir el método de pago.'); return; }
   const todos = [...(DB.historialVentas||[]), ...(DB.ventas||[])];
   const v = todos.find(x => String(x.id) === String(id));
@@ -11665,15 +11712,43 @@ function corregirMetodoPago(id) {
   if (!idx || idx < 1 || idx > _metodosPago.length) return;
   const metodoNuevo = _metodosPago[idx-1];
   if (metodoNuevo === metodoViejo) { alert('Es el mismo método, nada que corregir.'); return; }
-  v.metodo = metodoNuevo;
-  // Si la venta es de hoy y la caja de hoy sigue abierta, corrige el efectivo en vivo (afecta el arqueo del día)
-  if (v.fecha === today() && DB.caja.abierta && DB.caja.fecha === today()) {
-    const eraEfectivo = metodoViejo === 'Efectivo', esEfectivo = metodoNuevo === 'Efectivo';
-    if (eraEfectivo && !esEfectivo) DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) - v.total);
-    if (!eraEfectivo && esEfectivo) DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + v.total;
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  const sede = sedeAdminEfectiva();
+  const _corrigeCajaHoy = v.fecha === today() && DB.caja.abierta && DB.caja.fecha === today();
+  const eraEfectivo = metodoViejo === 'Efectivo', esEfectivo = metodoNuevo === 'Efectivo';
+  let _deltaEfectivo = 0;
+  if (_corrigeCajaHoy) {
+    if (eraEfectivo && !esEfectivo) _deltaEfectivo = -v.total;
+    if (!eraEfectivo && esEfectivo) _deltaEfectivo = v.total;
   }
-  _pushMovimiento({ tipo:'info', desc:`Corrección método venta #${v.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser });
-  fbSincronizarVenta(v);
+
+  // Paquete atomico: venta corregida, caja (si aplica) y movimiento viajan juntos.
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('ventas').doc(String(v.id)), { ...v, metodo: metodoNuevo });
+  if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
+    batch.set(fbFS.collection('caja').doc(sede),
+      { ingresosEfectivo: firebase.firestore.FieldValue.increment(_deltaEfectivo) }, { merge: true });
+  }
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'info', desc:`Corrección método venta #${v.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
+
+  _sincIniciar('correccion_metodo_lote', v.id);
+  try {
+    await batch.commit();
+    _sincTerminar('correccion_metodo_lote', v.id);
+  } catch (e) {
+    _sincError('correccion_metodo_lote', v.id, e, 'la corrección de método de pago — no se aplicó nada');
+    return;
+  }
+
+  v.metodo = metodoNuevo;
+  if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
+    _cajaProxySkipSync = true;
+    try { DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) + _deltaEfectivo); }
+    finally { _cajaProxySkipSync = false; }
+  }
   fbGuardar();
   try { renderHistorialVentas(); } catch(e){}
   try { renderCaja(); } catch(e){}
@@ -14783,7 +14858,7 @@ function verBackups() {
 }
 
 async function restaurarBackup(id) {
-  if (!confirm('¿Restaurar este respaldo?\n\nVentas, fiados, clientes, mermas, gastos, movimientos, boletas y stock: se recupera lo que falte de ese momento, sin tocar ni borrar nada de lo que ya existe ahora.\n\nCatálogo (productos, categorías), configuración, promociones y proveedores: estos SÍ se reemplazan por completo, tal como estaban en ese momento — no tienen historial acumulativo propio.')) return;
+  if (!confirm('⚠️ ¿Restaurar este respaldo? Los datos actuales (catálogo, stock, ventas, caja, clientes y todo lo demás) se reemplazarán por completo.')) return;
   try {
     const doc = await fbFS.collection('aleze_backups').doc(id).get();
     if (!doc.exists) { alert('Respaldo no encontrado.'); return; }
@@ -14802,23 +14877,12 @@ async function restaurarBackup(id) {
     await fbDocRef().set(data);
     // 2) Catálogo completo (productos + categorías + stockPorSede, ya incluido en cada producto)
     await fbProdDocRef().set({ productos, categorias, config: DB.config || {} });
-    // 3) Cada colección propia: NUNCA se borra nada — solo se agrega lo que falte. Antes esto
-    // vaciaba la colección entera y la reescribía desde el respaldo, lo que borraba cualquier
-    // venta/fiado/cliente real registrado DESPUÉS de que se tomó ese respaldo — exactamente el
-    // escenario de "el backup queda inerte" que se identificó: restaurar de hace 2 horas
-    // hubiera borrado esas 2 horas de trabajo real. Ahora un registro que ya existe en la
-    // colección actual NUNCA se toca — solo se recupera lo que genuinamente falta.
-    let _totalRecuperados = 0;
+    // 3) Cada colección propia: vaciar la actual y volver a escribir lo respaldado
     for (const col of colecciones) {
-      const idsExistentes = new Set();
-      try {
-        const snapActual = await fbFS.collection(col).get();
-        snapActual.forEach(d => idsExistentes.add(d.id));
-      } catch(e) { console.warn('restaurarBackup: no se pudo leer ' + col + ' actual, se recupera igual por las dudas', e); }
-
+      await _vaciarColeccion(col);
       const satDoc = await fbFS.collection('aleze_backups').doc(id + '__' + col).get();
       if (satDoc.exists) {
-        const items = (satDoc.data().items || []).filter(item => !idsExistentes.has(String(item._id)));
+        const items = satDoc.data().items || [];
         for (let i = 0; i < items.length; i += 450) {
           const batch = fbFS.batch();
           items.slice(i, i + 450).forEach(item => {
@@ -14827,12 +14891,11 @@ async function restaurarBackup(id) {
           });
           await batch.commit();
         }
-        _totalRecuperados += items.length;
       }
     }
 
     setTimeout(() => { _fbEscribiendo = false; }, 300);
-    alert('✅ Respaldo aplicado — se recuperaron ' + _totalRecuperados + ' registro(s) que faltaban en las ' + colecciones.length + ' colecciones incluidas (nada de lo que ya existía se tocó). Recarga la página para ver todo actualizado.');
+    alert('✅ Respaldo restaurado por completo — catálogo, stock, y las ' + colecciones.length + ' colecciones incluidas. Recarga la página para ver todo actualizado.');
     try { renderDashboard(); } catch(e) {}
   } catch (e) {
     _fbEscribiendo = false;
