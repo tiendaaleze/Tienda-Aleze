@@ -6485,40 +6485,66 @@ function filtrarBoletas() {
   (filtradas.length > 0 ? `<tr style="background:var(--gray-50);font-weight:700"><td colspan="3">Total: ${filtradas.length} boleta(s)</td><td>${sol(total)}</td><td colspan="2"></td></tr>` : '') ||
   '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:1rem">Sin boletas registradas</td></tr>';
 }
-function eliminarBoleta(idx) {
+async function eliminarBoleta(idx) {
   if (currentRole !== 'admin') return;
   const prov = DB.proveedores.find(x => x.id === editingBoletaProvId);
   if (!prov || !prov.boletas) return;
   const boleta = prov.boletas[idx];
   if (!boleta) return;
   const tieneProductos = boleta.productos && boleta.productos.length > 0;
+  let _revertirStock = false;
   if (tieneProductos) {
     const lista = boleta.productos.map(p =>
       `• ${p.nombre}: ${p.cantidad} unid${p.esBonif ? ' (bonif.)' : ''}`
     ).join('\n');
-    const opcion = confirm(
+    _revertirStock = confirm(
       `La boleta N° ${boleta.num} tiene productos asociados:\n\n${lista}\n\n` +
       `¿Deseas REVERTIR el stock de estos productos?\n\n` +
       `✅ Aceptar = Revertir stock (recomendado si fue un error)\n` +
       `❌ Cancelar = Solo eliminar la boleta, mantener stock`
     );
-    if (opcion) {
-      // Revertir stock
-      boleta.productos.forEach(p => {
-        const prod = DB.productos.find(x => x.id === p.prodId);
-        if (prod) ajustarStockSede(prod, -p.cantidad, boleta.sedeId);
-      });
-      fbGuardarProductos();
-    }
   } else {
     if (!confirm(`¿Eliminar la boleta N° ${boleta.num}?`)) return;
   }
-  const _boletaIdEliminada = boleta.id;
-  prov.boletas.splice(idx, 1);
-  if (fbFS && _boletaIdEliminada != null) {
-    fbFS.collection('boletas').doc(String(_boletaIdEliminada)).delete()
-      .catch(e => console.warn('eliminarBoleta: no se pudo borrar boletas/' + _boletaIdEliminada, e));
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  // Paquete atomico: reversion de stock (si aplica) y borrado de boleta viajan juntos.
+  const batch = fbFS.batch();
+  const _deltasPorProducto = new Map();
+  if (_revertirStock) {
+    boleta.productos.forEach(p => {
+      const prod = DB.productos.find(x => x.id === p.prodId);
+      if (prod) {
+        const actual = _deltasPorProducto.get(prod.id);
+        if (actual) actual.delta -= p.cantidad;
+        else _deltasPorProducto.set(prod.id, { prod, delta: -p.cantidad });
+      }
+    });
+    _deltasPorProducto.forEach(({prod, delta}) => {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${boleta.sedeId || sedeAdminEfectiva()}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    });
   }
+  const _boletaIdEliminada = boleta.id;
+  if (_boletaIdEliminada != null) batch.delete(fbFS.collection('boletas').doc(String(_boletaIdEliminada)));
+
+  _sincIniciar('elim_boleta_lote', _boletaIdEliminada ?? idx);
+  try {
+    await batch.commit();
+    _sincTerminar('elim_boleta_lote', _boletaIdEliminada ?? idx);
+  } catch (e) {
+    _sincError('elim_boleta_lote', _boletaIdEliminada ?? idx, e, 'la eliminación de la boleta — no se aplicó nada');
+    return;
+  }
+
+  const _sedeBol = boleta.sedeId || sedeAdminEfectiva();
+  _deltasPorProducto.forEach(({prod, delta}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[_sedeBol] = Math.max(0, Math.round(((prod.stockPorSede[_sedeBol]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
+  });
+  if (_revertirStock) fbGuardarProductos();
+  prov.boletas.splice(idx, 1);
   fbGuardar();
   renderProveedores();
   filtrarBoletas();
@@ -8367,18 +8393,41 @@ function eliminarMerma(id) {
   document.querySelectorAll('input[name="merma-elim-opcion"]').forEach(r => r.checked = false);
   abrirModal('modal-confirmar-eliminar-merma');
 }
-function _confirmarElimMerma() {
+async function _confirmarElimMerma() {
   const opcion = document.querySelector('input[name="merma-elim-opcion"]:checked');
   if (!opcion) { alert('Selecciona una opción antes de continuar.'); return; }
   const m = DB.mermas.find(x => x.id === _mermaElimId);
   if (!m) { cerrarModal('modal-confirmar-eliminar-merma'); return; }
-  if (opcion.value === 'restaurar') {
-    const prod = DB.productos.find(p => p.id === m.prodId);
-    if (prod) ajustarStockSede(prod, m.cant, m.sedeId);
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  const _restaurar = opcion.value === 'restaurar';
+  const prod = _restaurar ? DB.productos.find(p => p.id === m.prodId) : null;
+
+  // Paquete atomico: restaurar stock (si aplica) y borrar la merma viajan juntos.
+  const batch = fbFS.batch();
+  if (_restaurar && prod) {
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${m.sedeId || sedeAdminEfectiva()}`]: firebase.firestore.FieldValue.increment(m.cant) }, { merge: true });
+  }
+  batch.delete(fbFS.collection('mermas').doc(String(_mermaElimId)));
+
+  _sincIniciar('elim_merma_lote', _mermaElimId);
+  try {
+    await batch.commit();
+    _sincTerminar('elim_merma_lote', _mermaElimId);
+  } catch (e) {
+    _sincError('elim_merma_lote', _mermaElimId, e, 'la eliminación de la merma — no se aplicó nada');
+    return;
+  }
+
+  if (_restaurar && prod) {
+    const sede = m.sedeId || sedeAdminEfectiva();
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+m.cant)*1000)/1000);
+    prod.stock = stockTotal(prod);
     fbGuardarProductos();
   }
   DB.mermas = DB.mermas.filter(x => x.id !== _mermaElimId);
-  if (fbFS) fbFS.collection('mermas').doc(String(_mermaElimId)).delete().catch(e => console.warn('No se pudo borrar mermas/'+_mermaElimId, e));
   _mermaElimId = null;
   fbGuardar();
   cerrarModal('modal-confirmar-eliminar-merma');
