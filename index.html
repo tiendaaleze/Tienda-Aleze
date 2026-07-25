@@ -4905,7 +4905,7 @@ function _firmaCarrito(items, metodo, clienteId) {
   return JSON.stringify(items.map(i => [i.prodId, i.cant])) + '|' + metodo + '|' + clienteId;
 }
 
-function procesarVenta() {
+async function procesarVenta() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
 
   const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
@@ -4931,8 +4931,6 @@ function procesarVenta() {
   }
   _ventaPendiente = { firma, venta };
 
-  // ── Fase Offline: local-first, mismo patrón que POS móvil — la venta se completa en el
-  // dispositivo al instante, sin esperar red. La sincronización a Firestore pasa en segundo plano.
   if (!DB.historialVentas) DB.historialVentas = [];
   if (DB.historialVentas.some(v => v.id === venta.id)) {
     // Ya se procesó (reintento con el mismo carrito) — no duplicar, solo repetir el ticket.
@@ -4943,38 +4941,89 @@ function procesarVenta() {
     return;
   }
 
-  // Envuelto en try/catch por item: una falla en un producto no debe cortar el resto de la
-  // venta (deuda, caja, guardado) — antes si un item fallaba acá, nada de lo siguiente corria.
+  // Validar TODO antes de tocar nada — si un producto del carrito ya no existe, se corta acá,
+  // sin haber descontado stock de ningún otro item ni guardado nada a medias.
+  for (const item of cart) {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod) {
+      alert('⚠️ No se pudo procesar la venta: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
+      _ventaPendiente = null;
+      return;
+    }
+  }
+
+  // ── Paquete atómico: stock, venta, cliente, caja y movimiento viajan juntos en un solo lote
+  // — Firestore garantiza que se aplican TODOS o NINGUNO, nunca una parte sin la otra. Antes
+  // cada pieza viajaba por separado (independiente), lo que permitía que el stock se
+  // descontara sin que la venta llegara a guardarse, o viceversa.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  const _deltasStock = []; // para aplicar en memoria local recién si el lote se acepta
+
   cart.forEach(item => {
-    try {
-      const prod = DB.productos.find(p => p.id === item.prodId);
-      if (prod) {
-        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = DB.productos.find(x => x.id === comp.prodId);
-            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-          });
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod.esCombo) {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
+      _deltasStock.push({ prod, delta: -item.cant });
+    }
+    if (prod.esCombo && prod.componentes) {
+      prod.componentes.forEach(comp => {
+        const cp = DB.productos.find(x => x.id === comp.prodId);
+        if (cp) {
+          batch.set(fbFS.collection('stock').doc(String(cp.id)),
+            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
+          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
         }
-      }
-    } catch(e) {
-      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en venta ' + venta.id + ':', e);
+      });
     }
   });
 
+  const _ventaFinal = { ...venta, sedeId: sede, origen: 'pos', estado: 'completado', estadoStock: 'descontado' };
+  batch.set(fbFS.collection('ventas').doc(String(venta.id)), _ventaFinal);
+
+  const _movId = getId();
+  const _movData = { id: _movId, tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+
+  const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(total) };
+  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(total);
+  batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+
+  const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
   if (clienteId) {
-    const cli = DB.clientes.find(c => c.id === clienteId);
-    if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos=(cli.puntos||0)+calcularPuntosGanados(itemsConPrecioReal); }
+    batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
+      compras: firebase.firestore.FieldValue.increment(1),
+      total: firebase.firestore.FieldValue.increment(total),
+      puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
+    }, { merge: true });
   }
 
+  _sincIniciar('venta_lote', venta.id);
+  try {
+    await batch.commit();
+    _sincTerminar('venta_lote', venta.id);
+  } catch (e) {
+    _sincError('venta_lote', venta.id, e, 'la venta completa (stock, caja, cliente) — no se aplicó nada');
+    _ventaPendiente = null;
+    return; // No se aplica NADA localmente — el paquete no se completó, se puede reintentar tal cual.
+  }
+
+  // El lote ya fue aceptado (confirmado en línea, o encolado si no había señal) — recién ahora
+  // se refleja en la memoria local para la interfaz.
+  _deltasStock.forEach(({prod, delta}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
+  });
+  if (clienteId) {
+    const cli = DB.clientes.find(c => c.id === clienteId);
+    if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+_puntosGanados; }
+  }
   ensureCajaAbierta();
   DB.caja.ingresos = (DB.caja.ingresos||0) + total;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
-  _pushMovimiento({ tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
-
-  const _ventaFinal = { ...venta, origen: 'pos', estado: 'completado', estadoStock: 'descontado' };
   DB.historialVentas.push(_ventaFinal);
-  fbSincronizarVenta(_ventaFinal);
   fbGuardar();
   fbGuardarProductos();
 
@@ -4991,7 +5040,7 @@ function procesarVenta() {
 let _fiadoPendiente = null; // recuerda un intento de fiado fallido para reintentar con el mismo id
 // nota: _firmaCarrito ya está declarada en el Bloque 1 — no la repitas aquí
 
-function cobrarFiado() {
+async function cobrarFiado() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   const clienteId = parseInt(document.getElementById('pos-cliente').value);
   if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
@@ -5020,7 +5069,6 @@ function cobrarFiado() {
   }
   _fiadoPendiente = { firma, fiado };
 
-  // ── Fase Offline: local-first, mismo patrón que POS móvil ──
   if (!DB.historialVentas) DB.historialVentas = [];
   if (DB.historialVentas.some(v => v.id === fiado.id)) {
     _fiadoPendiente = null;
@@ -5030,40 +5078,84 @@ function cobrarFiado() {
     return;
   }
 
+  // Validar antes de tocar nada.
+  for (const item of cart) {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod) {
+      alert('⚠️ No se pudo registrar el fiado: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
+      _fiadoPendiente = null;
+      return;
+    }
+  }
+
+  // ── Mismo paquete atómico que procesarVenta(): stock, fiado, cliente y movimiento juntos
+  // en un solo lote — todo o nada. La caja NO recibe ingreso acá (un fiado no es efectivo en
+  // mano todavía), solo se registra el movimiento para el rastro.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  const _deltasStock = [];
+
   cart.forEach(item => {
-    try {
-      const prod = DB.productos.find(p => p.id === item.prodId);
-      if (prod) {
-        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = DB.productos.find(x => x.id === comp.prodId);
-            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-          });
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod.esCombo) {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
+      _deltasStock.push({ prod, delta: -item.cant });
+    }
+    if (prod.esCombo && prod.componentes) {
+      prod.componentes.forEach(comp => {
+        const cp = DB.productos.find(x => x.id === comp.prodId);
+        if (cp) {
+          batch.set(fbFS.collection('stock').doc(String(cp.id)),
+            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
+          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
         }
-      }
-    } catch(e) {
-      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en fiado ' + fiado.id + ':', e);
+      });
     }
   });
 
-  DB.fiados.push(fiado);
-  fbSincronizarFiado(fiado);
+  batch.set(fbFS.collection('fiados').doc(String(fiado.id)), { ...fiado, sedeId: sede });
 
+  const _ventaFiado = { ...fiado, sedeId: sede, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
+  batch.set(fbFS.collection('ventas').doc(String(fiado.id)), _ventaFiado);
+
+  const _movId = getId();
+  const _movData = { id: _movId, tipo:'fiado', desc:'Fiado — ' + getClienteNombre(clienteId), monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+
+  const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
+  batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
+    deuda: firebase.firestore.FieldValue.increment(total),
+    compras: firebase.firestore.FieldValue.increment(1),
+    total: firebase.firestore.FieldValue.increment(total),
+    puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
+  }, { merge: true });
+
+  _sincIniciar('fiado_lote', fiado.id);
+  try {
+    await batch.commit();
+    _sincTerminar('fiado_lote', fiado.id);
+  } catch (e) {
+    _sincError('fiado_lote', fiado.id, e, 'el fiado completo (stock, deuda del cliente) — no se aplicó nada');
+    _fiadoPendiente = null;
+    return;
+  }
+
+  _deltasStock.forEach(({prod, delta}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
+  });
+  DB.fiados.push(fiado);
   const cli = DB.clientes.find(c => c.id === clienteId);
   if (cli) {
     cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
     cli.compras = (cli.compras||0) + 1;
     cli.total = (cli.total||0) + total;
-    cli.puntos = (cli.puntos||0) + calcularPuntosGanados(itemsConPrecioReal);
+    cli.puntos = (cli.puntos||0) + _puntosGanados;
   }
-
   ensureCajaAbierta();
-  _pushMovimiento({ tipo:'fiado', desc:'Fiado — ' + getClienteNombre(clienteId), monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
-
-  const _ventaFiado = { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
   DB.historialVentas.push(_ventaFiado);
-  fbSincronizarVenta(_ventaFiado);
   fbGuardar();
   fbGuardarProductos();
 
@@ -10442,7 +10534,7 @@ function toggleMobCart() {
 
 let _mobFiadoPendiente = null; // mismo patron que escritorio — evita duplicar en doble toque o reintento
 
-function mobCobrarFiado() {
+async function mobCobrarFiado() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   const clienteId = parseInt(document.getElementById('mob-pos-cliente')?.value) || 0;
   if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
@@ -10452,7 +10544,6 @@ function mobCobrarFiado() {
   const total = Math.round(Math.max(0, sub - desc - comboInfo.total) * 100) / 100;
   const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
 
-  // Proteccion contra doble envio, igual que mobProcesarVenta y ambas funciones de escritorio.
   const firma = _firmaCarrito(cart, 'FIADO', clienteId);
   let fiado;
   if (_mobFiadoPendiente && _mobFiadoPendiente.firma === firma) {
@@ -10478,51 +10569,82 @@ function mobCobrarFiado() {
     return;
   }
 
-DB.fiados.push(fiado);
-  fbSincronizarFiado(fiado);
-  const _hvFiadoMob = { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
-  DB.historialVentas.push(_hvFiadoMob);
-  fbSincronizarVenta(_hvFiadoMob);
+  for (const item of cart) {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod) {
+      alert('⚠️ No se pudo registrar el fiado: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
+      _mobFiadoPendiente = null;
+      return;
+    }
+  }
 
-  // Descontar stock — envuelto en try/catch por item, mismo criterio que mobProcesarVenta:
-  // si un producto falla, el resto de la funcion (fiado ya registrado arriba, deuda, caja,
-  // guardado) se ejecuta igual. Antes una falla acá dejaba todo lo siguiente sin ejecutar.
+  // Mismo paquete atomico que cobrarFiado() de escritorio — stock, fiado, deuda del cliente y
+  // movimiento viajan juntos. Sin ingreso a caja (no es efectivo en mano todavia).
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  const _deltasStock = [];
   _fbLastWriteProdTs = Date.now();
+
   cart.forEach(item => {
-    try {
-      const prod = DB.productos.find(p => p.id === item.prodId);
-      if (prod) {
-        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = DB.productos.find(x => x.id === comp.prodId);
-            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-          });
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod.esCombo) {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
+      _deltasStock.push({ prod, delta: -item.cant });
+    }
+    if (prod.esCombo && prod.componentes) {
+      prod.componentes.forEach(comp => {
+        const cp = DB.productos.find(x => x.id === comp.prodId);
+        if (cp) {
+          batch.set(fbFS.collection('stock').doc(String(cp.id)),
+            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
+          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
         }
-      }
-    } catch(e) {
-      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en fiado ' + fiado.id + ':', e);
+      });
     }
   });
 
- // Actualizar deuda del cliente
-const cli = DB.clientes.find(c => c.id === clienteId);
-if (cli) {
-  // Aplicamos protección de precisión para evitar colas de decimales binarios
-  cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
-  cli.compras = (cli.compras||0) + 1;
-  cli.total = Math.round(((cli.total||0) + total) * 100) / 100;
-  cli.puntos = (cli.puntos||0) + calcularPuntosGanados(itemsConPrecioReal);
-}
+  batch.set(fbFS.collection('fiados').doc(String(fiado.id)), { ...fiado, sedeId: sede });
+  const _hvFiadoMob = { ...fiado, sedeId: sede, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
+  batch.set(fbFS.collection('ventas').doc(String(fiado.id)), _hvFiadoMob);
 
-  // Always register movement with ensureCajaAbierta
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'fiado', desc:`Fiado — ${getClienteNombre(clienteId)}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
+
+  const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
+  batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
+    deuda: firebase.firestore.FieldValue.increment(total),
+    compras: firebase.firestore.FieldValue.increment(1),
+    total: firebase.firestore.FieldValue.increment(total),
+    puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
+  }, { merge: true });
+
+  _sincIniciar('fiado_lote', fiado.id);
+  try {
+    await batch.commit();
+    _sincTerminar('fiado_lote', fiado.id);
+  } catch (e) {
+    _sincError('fiado_lote', fiado.id, e, 'el fiado completo (stock, deuda del cliente) — no se aplicó nada');
+    _mobFiadoPendiente = null;
+    return;
+  }
+
+  _deltasStock.forEach(({prod, delta}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
+  });
+  DB.fiados.push(fiado);
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  if (cli) {
+    cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
+    cli.compras = (cli.compras||0) + 1;
+    cli.total = Math.round(((cli.total||0) + total) * 100) / 100;
+    cli.puntos = (cli.puntos||0) + _puntosGanados;
+  }
   ensureCajaAbierta();
-  _pushMovimiento({ tipo:'fiado', desc:`Fiado — ${getClienteNombre(clienteId)}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
-
-  // CRITICO: antes esta funcion tenia su PROPIO guardado directo a Firestore, escrito aparte,
-  // que hacia el mismo "reemplazar todo el documento" sin pasar por ninguna de las
-  // protecciones de fbGuardar() (sin badge, sin clasificacion de error, sin nada). Se
-  // reemplaza por el fbGuardar() real, igual que las otras 3 funciones de venta/fiado.
+  DB.historialVentas.push(_hvFiadoMob);
   fbGuardar();
   fbGuardarProductos();
   _mobFiadoPendiente = null;
@@ -10540,7 +10662,7 @@ if (cli) {
 
 let _mobVentaPendiente = null; // recuerda un intento fallido para reintentar con el mismo id, mismo patron que escritorio
 
-function mobProcesarVenta(){
+async function mobProcesarVenta(){
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
   const desc = parseFloat(document.getElementById('pos-descuento')?.value) || 0;
@@ -10553,9 +10675,6 @@ function mobProcesarVenta(){
   // Build items with proportional combo prices for accurate reporting
   const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
 
-  // Proteccion contra doble envio — mismo patron que procesarVenta() de escritorio. Sin esto,
-  // un doble-toque o un reintento por red duplicaba venta, stock descontado dos veces, y el
-  // cargo al cliente dos veces — movil nunca tuvo esta proteccion hasta ahora.
   const firma = _firmaCarrito(cart, metodo, clienteId);
   let venta;
   if (_mobVentaPendiente && _mobVentaPendiente.firma === firma) {
@@ -10580,41 +10699,84 @@ function mobProcesarVenta(){
     return;
   }
 
-  // Descontar stock — envuelto en try/catch por item: si UN producto falla (referencia
-  // corrupta, combo mal formado, lo que sea), los demas items y TODO lo que viene despues
-  // (fiado/venta ya registrados arriba, deuda del cliente, caja, guardado) igual se ejecuta.
-  // Antes, una falla acá cortaba la funcion entera a mitad de camino sin dejar rastro de por
-  // que el stock no bajo aunque la venta si quedo registrada.
-  _fbLastWriteProdTs = Date.now();
-  cart.forEach(item => {
-    try {
-      const prod = DB.productos.find(p => p.id === item.prodId);
-      if (prod) {
-        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = DB.productos.find(x => x.id === comp.prodId);
-            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-          });
-        }
-      }
-    } catch(e) {
-      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en venta ' + venta.id + ':', e);
+  for (const item of cart) {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod) {
+      alert('⚠️ No se pudo procesar la venta: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
+      _mobVentaPendiente = null;
+      return;
     }
+  }
+
+  // Mismo paquete atomico que procesarVenta() de escritorio — stock, venta, cliente, caja y
+  // movimiento viajan juntos, todo o nada.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  const _deltasStock = [];
+  _fbLastWriteProdTs = Date.now();
+
+  cart.forEach(item => {
+    const prod = DB.productos.find(p => p.id === item.prodId);
+    if (!prod.esCombo) {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
+      _deltasStock.push({ prod, delta: -item.cant });
+    }
+    if (prod.esCombo && prod.componentes) {
+      prod.componentes.forEach(comp => {
+        const cp = DB.productos.find(x => x.id === comp.prodId);
+        if (cp) {
+          batch.set(fbFS.collection('stock').doc(String(cp.id)),
+            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
+          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
+        }
+      });
+    }
+  });
+
+  const _ventaMob = { ...venta, sedeId: sede, origen:'pos', estado:'completado', estadoStock:'descontado' };
+  batch.set(fbFS.collection('ventas').doc(String(venta.id)), _ventaMob);
+
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
+
+  const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(total) };
+  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(total);
+  batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+
+  const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
+  if (clienteId) {
+    batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
+      compras: firebase.firestore.FieldValue.increment(1),
+      total: firebase.firestore.FieldValue.increment(total),
+      puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
+    }, { merge: true });
+  }
+
+  _sincIniciar('venta_lote', venta.id);
+  try {
+    await batch.commit();
+    _sincTerminar('venta_lote', venta.id);
+  } catch (e) {
+    _sincError('venta_lote', venta.id, e, 'la venta completa (stock, caja, cliente) — no se aplicó nada');
+    _mobVentaPendiente = null;
+    return;
+  }
+
+  _deltasStock.forEach(({prod, delta}) => {
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
+    prod.stock = stockTotal(prod);
   });
   if (clienteId) {
     const cli = DB.clientes.find(c => c.id === clienteId);
-    if (cli) { cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+calcularPuntosGanados(itemsConPrecioReal); cli.compras=(cli.compras||0)+1; }
+    if (cli) { cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+_puntosGanados; cli.compras=(cli.compras||0)+1; }
   }
-  // Register caja movement always
   ensureCajaAbierta();
   DB.caja.ingresos += total;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
-  _pushMovimiento({ tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
-
-  const _ventaMob = { ...venta, origen:'pos', estado:'completado', estadoStock:'descontado' };
   DB.historialVentas.push(_ventaMob);
-  fbSincronizarVenta(_ventaMob);
   fbGuardar();
   fbGuardarProductos();
   _mobVentaPendiente = null;
