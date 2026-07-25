@@ -11047,7 +11047,7 @@ let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
 // Si aún no tienes clave, usa 'debug' temporalmente solo en localhost
 const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
 
-function iniciarFirebase() {
+async function iniciarFirebase() {
   try {
     fbApp = firebase.initializeApp(FIREBASE_CONFIG);
 
@@ -11058,6 +11058,20 @@ function iniciarFirebase() {
      const appCheckInstance = firebase.appCheck(fbApp);
 appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       console.log('[AppCheck] activado correctamente');
+      // Esperar el primer token ANTES de que arranque la ráfaga de lecturas del login (PASO 3)
+      // — generar el primer token de reCAPTCHA v3 no es instantáneo, y sin esto esa ráfaga
+      // inicial completa salía sin token adjunto (coincide con el % bajo de solicitudes
+      // verificadas). Con límite de 3s: si reCAPTCHA está lento o caído, el login sigue igual,
+      // no se queda esperando para siempre.
+      try {
+        await Promise.race([
+          appCheckInstance.getToken(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))
+        ]);
+        console.log('[AppCheck] primer token listo antes de leer datos');
+      } catch(tokErr) {
+        console.warn('[AppCheck] no se pudo confirmar el primer token a tiempo, continuando igual:', tokErr.message);
+      }
     } catch(acErr) {
       console.warn('[AppCheck] no activado — la app sigue funcionando:', acErr.message);
     }
@@ -11393,7 +11407,7 @@ function aplicarNombreNegocio() {
 // ===================== INIT =====================
 window.onload = async function() {
   const hoy = today();
-  const fbOk = iniciarFirebase();
+  const fbOk = await iniciarFirebase();
 
   if (fbOk) {
     try {
