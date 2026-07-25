@@ -3552,35 +3552,63 @@ async function procesarCanje(clienteId, premioId) {
     }
   }
 
-  const sede = currentUserSedeId || 'principal';
+  const sede = sedeAdminEfectiva();
   const canje = {
     id: getId(), clienteId, fecha: today(), hora: nowTime(),
     premioId: premio.id, premioNombre: premio.nombre, puntosUsados: premio.puntos,
     tipo: premio.tipo, staff: currentUser, sedeId: sede
   };
 
+  // Paquete atomico: puntos descontados, canje registrado, y si aplica la merma del producto
+  // premio, viajan juntos — sin esto podian perderse puntos de un cliente sin que quedara
+  // registro del canje (o al reves), exactamente el riesgo de fidelizacion duplicada descrito.
+  const batch = fbFS.batch();
+  let _merma = null, _prodPremio = null;
+
   if (premio.tipo === 'producto' && premio.prodId) {
     const prod = DB.productos.find(p => p.id === premio.prodId);
     if (prod) {
-      ajustarStockSede(prod, -1, sede);
-      const merma = {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-1) }, { merge: true });
+      _merma = {
         id: getId(), prodId: prod.id, cant: 1, motivo: 'Canje de fidelización',
         obs: `Canje: ${premio.nombre} — ${getClienteNombre(clienteId)}`,
         fecha: today(), usuario: currentUser, sedeId: sede
       };
-      DB.mermas.push(merma);
-      fbSincronizarMerma(merma);
+      batch.set(fbFS.collection('mermas').doc(String(_merma.id)), _merma);
       canje.prodId = prod.id;
       canje.costoAsociado = prod.costo || 0;
+      _prodPremio = prod;
     }
   } else if (premio.tipo === 'descuento') {
     canje.montoDescuento = premio.monto || 0;
+  }
+
+  batch.set(fbFS.collection('canjes').doc(String(canje.id)), canje);
+  batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
+    puntos: firebase.firestore.FieldValue.increment(-premio.puntos)
+  }, { merge: true });
+
+  _sincIniciar('canje_lote', canje.id);
+  try {
+    await batch.commit();
+    _sincTerminar('canje_lote', canje.id);
+  } catch (e) {
+    _sincError('canje_lote', canje.id, e, 'el canje de fidelización — no se aplicó nada, los puntos siguen intactos');
+    return null;
+  }
+
+  if (_prodPremio && _merma) {
+    if (!_prodPremio.stockPorSede) _prodPremio.stockPorSede = { principal: _prodPremio.stock||0 };
+    _prodPremio.stockPorSede[sede] = Math.max(0, Math.round(((_prodPremio.stockPorSede[sede]||0)-1)*1000)/1000);
+    _prodPremio.stock = stockTotal(_prodPremio);
+    DB.mermas.push(_merma);
+  }
+  if (premio.tipo === 'descuento') {
     const descInput = document.getElementById('pos-descuento'); // campo unico, compartido entre desktop y movil
     if (descInput) descInput.value = (parseFloat(descInput.value) || 0) + canje.montoDescuento;
   }
-
   cli.puntos = (cli.puntos || 0) - premio.puntos;
-  fbSincronizarCanje(canje);
   fbGuardar();
   fbGuardarProductos();
   return canje;
@@ -8043,7 +8071,7 @@ function editarMerma(id) {
   abrirModal('modal-merma');
 }
 
-function guardarMerma() {
+async function guardarMerma() {
   // Vendedor puede crear/editar mermas de su propia sede sin depender de admin — una botella
   // rota o un vencimiento no debería esperar aprobación. Solo eliminar sigue siendo de admin.
   const _sede = sedeAdminEfectiva();
@@ -8055,27 +8083,70 @@ function guardarMerma() {
 if (!prod) { alert('Producto no encontrado. Recarga el inventario.'); return; }
   if (!cant || cant <= 0) { alert('Ingresa una cantidad válida'); return; }
 
+  // Paquete atomico: el descuento de stock y el registro de la merma viajan juntos — sin esto,
+  // el stock podia descontarse sin que la merma quedara registrada (perdida sin motivo ni
+  // rastro), o la merma quedar registrada sin el descuento real (inventario desincronizado).
+  const batch = fbFS.batch();
+
 if (editingMermaId) {
-    // Editar: restaurar stock anterior (en la sede original de esa merma) y aplicar nuevo
     const old = DB.mermas.find(x => x.id === editingMermaId);
     const oldProd = DB.productos.find(p => p.id === old.prodId);
     const oldCant = old.cant;
-    const oldCosto = oldProd ? oldProd.costo : 0;
-    if (oldProd) ajustarStockSede(oldProd, oldCant, old.sedeId);
-    if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); if(oldProd) ajustarStockSede(oldProd, -oldCant, old.sedeId); return; }
-    const costoAnterior = oldCosto * oldCant;
-    const costoNuevo = prod.costo * cant;
-    const diferencia = costoNuevo - costoAnterior;
+    // Verificar disponibilidad simulando la restauracion, sin tocar nada todavia
+    const stockSimulado = stockEnSede(prod, _sede) + (oldProd && oldProd.id === prod.id ? oldCant : 0);
+    if (cant > stockSimulado) { alert('La cantidad supera el stock disponible en esa sede'); return; }
+
+    const _deltasPorProducto = new Map();
+    const _acumular = (p, delta) => {
+      const actual = _deltasPorProducto.get(p.id);
+      if (actual) actual.delta += delta; else _deltasPorProducto.set(p.id, { prod: p, delta });
+    };
+    if (oldProd) _acumular(oldProd, oldCant); // restaurar stock viejo
+    _acumular(prod, -cant); // aplicar el nuevo descuento
+    const _deltasStock = [];
+    _deltasPorProducto.forEach(({prod: p, delta}) => {
+      batch.set(fbFS.collection('stock').doc(String(p.id)),
+        { [`stockPorSede.${_sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+      _deltasStock.push({ prod: p, delta });
+    });
+
+    const _mermaActualizada = { ...old, prodId, cant, motivo, obs, sedeId: _sede };
+    batch.set(fbFS.collection('mermas').doc(String(old.id)), _mermaActualizada);
+
+    _sincIniciar('merma_lote', old.id);
+    try {
+      await batch.commit();
+      _sincTerminar('merma_lote', old.id);
+    } catch (e) {
+      _sincError('merma_lote', old.id, e, 'la merma editada — no se aplicó nada');
+      return;
+    }
+    _deltasStock.forEach(({prod: p, delta}) => {
+      if (!p.stockPorSede) p.stockPorSede = { principal: p.stock||0 };
+      p.stockPorSede[_sede] = Math.max(0, Math.round(((p.stockPorSede[_sede]||0)+delta)*1000)/1000);
+      p.stock = stockTotal(p);
+    });
     old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede;
-    ajustarStockSede(prod, -cant, _sede);
-    fbSincronizarMerma(old);
-fbGuardar(); fbGuardarProductos();
+    fbGuardar(); fbGuardarProductos();
   } else {
     if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
-  const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede };
+    const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede };
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${_sede}`]: firebase.firestore.FieldValue.increment(-cant) }, { merge: true });
+    batch.set(fbFS.collection('mermas').doc(String(nuevaMerma.id)), nuevaMerma);
+
+    _sincIniciar('merma_lote', nuevaMerma.id);
+    try {
+      await batch.commit();
+      _sincTerminar('merma_lote', nuevaMerma.id);
+    } catch (e) {
+      _sincError('merma_lote', nuevaMerma.id, e, 'la merma — no se aplicó nada');
+      return;
+    }
+    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+    prod.stockPorSede[_sede] = Math.max(0, Math.round(((prod.stockPorSede[_sede]||0)-cant)*1000)/1000);
+    prod.stock = stockTotal(prod);
     DB.mermas.push(nuevaMerma);
-    ajustarStockSede(prod, -cant, _sede);
-    fbSincronizarMerma(nuevaMerma);
     fbGuardar(); fbGuardarProductos();
   }
   cerrarModal('modal-merma');
