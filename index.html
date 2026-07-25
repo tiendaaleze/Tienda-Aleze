@@ -3562,6 +3562,7 @@ async function procesarCanje(clienteId, premioId) {
   // Paquete atomico: puntos descontados, canje registrado, y si aplica la merma del producto
   // premio, viajan juntos — sin esto podian perderse puntos de un cliente sin que quedara
   // registro del canje (o al reves), exactamente el riesgo de fidelizacion duplicada descrito.
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return null; }
   const batch = fbFS.batch();
   let _merma = null, _prodPremio = null;
 
@@ -5008,6 +5009,7 @@ async function procesarVenta() {
   // cada pieza viajaba por separado (independiente), lo que permitía que el stock se
   // descontara sin que la venta llegara a guardarse, o viceversa.
   const sede = sedeAdminEfectiva();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   // Agregar deltas por producto ANTES de armar el lote — si el mismo producto aparece dos
   // veces (una suelto, otra como componente de un combo), esto evita escribir el mismo
@@ -5149,6 +5151,7 @@ async function cobrarFiado() {
   // en un solo lote — todo o nada. La caja NO recibe ingreso acá (un fiado no es efectivo en
   // mano todavía), solo se registra el movimiento para el rastro.
   const sede = sedeAdminEfectiva();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   const _deltasPorProducto = new Map();
   const _acumular = (prod, delta) => {
@@ -6774,6 +6777,7 @@ async function guardarBoleta() {
       _cambiosProductos.push({ prod, costoNuevo: Math.round(costoPromedio * 10000) / 10000, venc: p.venc, delta: p.cantidad });
     });
 
+    if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
     const batch = fbFS.batch();
     // Agregar por producto (mismo criterio que venta/fiado) por si el mismo producto aparece
     // dos veces en la boleta.
@@ -7333,6 +7337,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   // cada registro de historial viajan en un solo lote — o se aplican todos juntos, o ninguno.
   // Esta es la funcion que coincide exactamente con el incidente real reportado (pago global
   // parcial perdido) — antes cada fiado se sincronizaba por separado, sin ninguna garantia.
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   const _cambiosLocales = []; // {f, montoPagadoEsteFiado, pagoEntry} para aplicar tras el exito
   const _hvPagosGlobal = [];
@@ -7555,6 +7560,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   // Antes de este cambio, este pago tenia el mismo hueco que la venta/fiado original: cada
   // pieza viajaba por separado, sin ninguna garantia de que llegaran todas juntas.
   const sede = sedeAdminEfectiva();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
 
   const _fPagos = [...(f.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
@@ -8071,6 +8077,7 @@ async function confirmarTraslado() {
   // Paquete atomico: el descuento en origen y el aumento en destino viajan juntos. Sin esto,
   // si solo uno de los dos llegara a guardarse, el stock quedaria "perdido en el camino" —
   // descontado de una sede sin haber llegado nunca a la otra, exactamente el riesgo real.
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   // Ambos ajustes van en UNA sola escritura al mismo documento (stock/{id}) — llamar set()
   // dos veces sobre el mismo documento dentro de un lote no garantiza que ambos cambios
@@ -8092,8 +8099,14 @@ async function confirmarTraslado() {
     return;
   }
 
-  ajustarStockSede(prod, -cantidad, origen);
-  ajustarStockSede(prod, cantidad, destino);
+  // NUNCA usar ajustarStockSede() acá — esa función escribe a Firestore por su cuenta
+  // (fbIncrementarStock), lo que aplicaría el mismo cambio DOS VECES ya que el lote de arriba
+  // ya lo escribió. Se actualiza el estado local a mano, igual que en el resto de las
+  // funciones con lote atómico (venta, fiado, merma, canje, boleta).
+  if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock || 0 };
+  prod.stockPorSede[origen]  = Math.max(0, Math.round(((prod.stockPorSede[origen]||0)  - cantidad) * 1000) / 1000);
+  prod.stockPorSede[destino] = Math.max(0, Math.round(((prod.stockPorSede[destino]||0) + cantidad) * 1000) / 1000);
+  prod.stock = stockTotal(prod);
   fbGuardarProductos();
   cerrarModal('modal-traslado');
   renderInvTable();
@@ -8137,6 +8150,7 @@ if (!prod) { alert('Producto no encontrado. Recarga el inventario.'); return; }
   // Paquete atomico: el descuento de stock y el registro de la merma viajan juntos — sin esto,
   // el stock podia descontarse sin que la merma quedara registrada (perdida sin motivo ni
   // rastro), o la merma quedar registrada sin el descuento real (inventario desincronizado).
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
 
 if (editingMermaId) {
@@ -9603,6 +9617,7 @@ async function guardarGasto() {
   // Paquete atomico: el gasto, el ajuste de caja y el movimiento viajan juntos — sin esto,
   // podia salir plata de caja sin gasto que lo respalde, o quedar el gasto registrado sin
   // que caja lo refleje.
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   let _gastoFinal, _movDesc, _movMonto, _movTipo, _cajaUpdate = {};
 
@@ -10869,6 +10884,7 @@ async function mobCobrarFiado() {
   // Mismo paquete atomico que cobrarFiado() de escritorio — stock, fiado, deuda del cliente y
   // movimiento viajan juntos. Sin ingreso a caja (no es efectivo en mano todavia).
   const sede = sedeAdminEfectiva();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   const _deltasPorProducto = new Map();
   const _acumular = (prod, delta) => {
@@ -11001,6 +11017,7 @@ async function mobProcesarVenta(){
   // Mismo paquete atomico que procesarVenta() de escritorio — stock, venta, cliente, caja y
   // movimiento viajan juntos, todo o nada.
   const sede = sedeAdminEfectiva();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batch = fbFS.batch();
   const _deltasPorProducto = new Map();
   const _acumular = (prod, delta) => {
@@ -12042,6 +12059,7 @@ async function guardarActualizarVenta() {
     // movimiento viajan juntos en un lote — o se aplica todo, o no se aplica nada. Un
     // reembolso es dinero real saliendo de caja, merece la misma garantia que una venta.
     const _sedeDev = vDB.sedeId || sedeAdminEfectiva();
+    if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
     const batch = fbFS.batch();
     const _deltasStock = [];
 
@@ -12153,6 +12171,7 @@ async function guardarActualizarVenta() {
 
   // Mismo paquete atomico: stock, venta actualizada, caja y movimiento juntos o nada.
   const _sedeDevP = vDB.sedeId || sedeAdminEfectiva();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
   const batchP = fbFS.batch();
   const _deltasStockP = [];
 
