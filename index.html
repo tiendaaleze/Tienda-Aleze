@@ -4354,7 +4354,19 @@ function today() {
 function nowTime() { return new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }); }
 function formatDate(d) { if (!d) return '-'; const [y,m,dd] = d.split('-'); return dd+'/'+m+'/'+y; }
 function diasHasta(fecha) { if (!fecha) return 9999; return Math.ceil((new Date(fecha) - new Date()) / 86400000); }
-function getId() { return Date.now() + Math.floor(Math.random()*9999); }
+// CRITICO: antes esto era Date.now() + random(9999) — dos llamadas dentro del MISMO
+// milisegundo (real dentro de un bucle sincronico, como varias mermas seguidas al sincronizar
+// un conteo de inventario) tenian una probabilidad real, aunque baja, de devolver el mismo
+// numero, pisando un registro con otro en la misma coleccion. El contador da hasta 1000 IDs
+// unicos POR MILISEGUNDO (1 millon por segundo) antes de repetir — muy por encima de
+// cualquier bucle real de esta app — y se mantiene dentro del rango entero seguro de
+// JavaScript por décadas. Sigue siendo numerico y creciente con el tiempo (mas nuevo = numero
+// mas grande), no rompe ningun orden ni comparacion existente.
+let _getIdContador = 0;
+function getId() {
+  _getIdContador = (_getIdContador + 1) % 1000;
+  return Date.now() * 1000 + _getIdContador;
+}
 function getCategoriaNombre(id) {
   const c = DB.categorias.find(c => c.id == id);
   if (!c) return '-';
