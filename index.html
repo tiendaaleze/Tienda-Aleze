@@ -12959,6 +12959,13 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       setTimeout(() => { _fbEscribiendo = false; }, 8000);
 
       // ── Sincronizar UI ─────────────────────────────────────────────────────
+      // CRITICO: _fbEscribiendo queda en true por 8s (mas abajo) para que el listener de
+      // pedidos_online no reaccione dos veces a este mismo cambio — pero ese listener es el
+      // UNICO lugar del codigo que actualizaba #po-nav-badge y llamaba updateAlertCount().
+      // Bloquearlo 8s bloqueaba tambien esas 2 actualizaciones, dejando el contador de
+      // pedidos pendientes de la barra de navegacion sin bajar hasta que pasaran los 8s (o
+      // nunca, si no volvia a disparar el listener). Se actualizan acá directo, sin depender
+      // del listener bloqueado.
       renderPedidosOnline();
       try { renderInvTable(); }        catch(e){}
       try { renderHistorialVentas(); } catch(e){}
@@ -12966,6 +12973,12 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       try { renderCaja(); }            catch(e){}
       try { renderFiados(); }          catch(e){}
       try { generarReporte(); }        catch(e){}
+      try { updateAlertCount(); } catch(e){}
+      try {
+        const _pendAhora = DB.pedidosOnline.filter(x => x.estado === 'pendiente').length;
+        const _nb = document.getElementById('po-nav-badge');
+        if (_nb) { _nb.textContent = _pendAhora || ''; _nb.style.display = _pendAhora > 0 ? 'inline-block' : 'none'; }
+      } catch(e){}
       alert(_esPagado
         ? '✅ Pedido cobrado. Stock, caja, historial y reportes actualizados.'
         : '✅ Pedido fiado. Stock descontado, visible en módulo Fiados.');
