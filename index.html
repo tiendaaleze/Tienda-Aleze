@@ -8069,14 +8069,38 @@ function _renderMovsTabla(movsVis) {
   });
 }
 
-function registrarMovimiento() {
+async function registrarMovimiento() {
   const tipo = document.getElementById('mov-tipo').value;
   const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
   const desc = document.getElementById('mov-desc').value;
   if (monto <= 0) { alert('Ingresa un monto válido'); return; }
-  if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; } else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
-  _pushMovimiento({ tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today() });
-  fbGuardar();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  const sede = sedeAdminEfectiva();
+  const campo = tipo === 'ingreso' ? 'ingresos' : 'egresos';
+  const campoEfectivo = tipo === 'ingreso' ? 'ingresosEfectivo' : 'egresosEfectivo';
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('caja').doc(sede), {
+    [campo]: firebase.firestore.FieldValue.increment(monto),
+    [campoEfectivo]: firebase.firestore.FieldValue.increment(monto)
+  }, { merge: true });
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today(), sedeId: sede });
+
+  _sincIniciar('mov_manual_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('mov_manual_lote', _movId);
+  } catch (e) {
+    _sincError('mov_manual_lote', _movId, e, 'el movimiento — no se aplicó nada');
+    return;
+  }
+
+  _cajaProxySkipSync = true;
+  try {
+    if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; }
+    else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
+  } finally { _cajaProxySkipSync = false; }
   document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
   updateCajaStats();
 }
@@ -9795,18 +9819,45 @@ async function guardarGasto() {
   try { generarReporte(); } catch(e){}
 }
 
-function eliminarGasto(id) {
+async function eliminarGasto(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar gastos. Puedes crear y editar, pero no borrar lo ya registrado.'); return; }
   const gasto = DB_EXT.gastos.find(x => x.id === id);
   if (!confirm('¿Eliminar este gasto? Se devolverá el monto al efectivo disponible como corrección.')) return;
-  DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
-  if (fbFS) fbFS.collection('gastos').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar gastos/'+id, e));
+
   if (gasto && gasto.monto > 0) {
+    if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+    const sede = sedeAdminEfectiva();
+    // Paquete atomico: borrar el gasto, devolver el efectivo y registrar el movimiento juntos.
+    const batch = fbFS.batch();
+    batch.delete(fbFS.collection('gastos').doc(String(id)));
+    batch.set(fbFS.collection('caja').doc(sede), {
+      ingresos: firebase.firestore.FieldValue.increment(gasto.monto),
+      ingresosEfectivo: firebase.firestore.FieldValue.increment(gasto.monto)
+    }, { merge: true });
+    const _movId = getId();
+    batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+      { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede });
+
+    _sincIniciar('elim_gasto_lote', id);
+    try {
+      await batch.commit();
+      _sincTerminar('elim_gasto_lote', id);
+    } catch (e) {
+      _sincError('elim_gasto_lote', id, e, 'la eliminación del gasto — no se aplicó nada');
+      return;
+    }
+
+    DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
     ensureCajaAbierta();
-    DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
-    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
-    _pushMovimiento({ tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser });
+    _cajaProxySkipSync = true;
+    try {
+      DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
+      DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
+    } finally { _cajaProxySkipSync = false; }
     fbGuardar();
+  } else {
+    DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
+    if (fbFS) fbFS.collection('gastos').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar gastos/'+id, e));
   }
   fbGuardarExt();
   renderGastos();
@@ -9990,19 +10041,41 @@ function abrirAddCapital() {
   abrirModal('modal-add-capital');
 }
 
-function confirmarAddCapital() {
+async function confirmarAddCapital() {
   const monto = parseFloat(document.getElementById('ac-monto').value) || 0;
   const desc  = document.getElementById('ac-desc').value || 'Capital adicional';
   if (monto <= 0) { alert('Monto inválido'); return; }
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  const sede = sedeAdminEfectiva();
+  // Capital vive en db_ext (sin colección propia) — se empaqueta lo que sí tiene colección
+  // dedicada (caja + movimiento) en un lote; fbGuardarExt() sigue guardando el capital como ya lo hacía.
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('caja').doc(sede), {
+    ingresos: firebase.firestore.FieldValue.increment(monto),
+    ingresosEfectivo: firebase.firestore.FieldValue.increment(monto)
+  }, { merge: true });
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede });
+
+  _sincIniciar('add_capital_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('add_capital_lote', _movId);
+  } catch (e) {
+    _sincError('add_capital_lote', _movId, e, 'el aporte de capital — no se aplicó nada');
+    return;
+  }
+
   DB_EXT.capital.total += monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) + monto;
   DB_EXT.capital.hist.push({ tipo:'aporte', fecha: today(), desc, monto, acum });
-  // Reinyección real: esta plata entra físicamente al negocio, suma al efectivo disponible
   ensureCajaAbierta();
-  DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
-  DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
-  _pushMovimiento({ tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser });
-  fbGuardar();
+  _cajaProxySkipSync = true;
+  try {
+    DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
+    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
+  } finally { _cajaProxySkipSync = false; }
   fbGuardarExt();
   cerrarModal('modal-add-capital');
   renderCapital();
@@ -10063,7 +10136,7 @@ function abrirPagoCuota() {
   abrirModal('modal-pago-cuota');
 }
 
-function confirmarPagoCuota() {
+async function confirmarPagoCuota() {
   const monto = parseFloat(document.getElementById('pc-monto').value) || 0;
   const fecha = document.getElementById('pc-fecha').value || today();
   const desc  = document.getElementById('pc-desc').value.trim() || 'Pago préstamo '+fecha.substring(0,7);
@@ -10072,15 +10145,35 @@ function confirmarPagoCuota() {
   if (DB_EXT.capital.prestamo > 0 && monto > prestamoPend) {
     alert('El monto supera el préstamo pendiente de '+sol(prestamoPend)); return;
   }
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('caja').doc(sede), {
+    egresos: firebase.firestore.FieldValue.increment(monto),
+    egresosEfectivo: firebase.firestore.FieldValue.increment(monto)
+  }, { merge: true });
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede });
+
+  _sincIniciar('pago_cuota_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('pago_cuota_lote', _movId);
+  } catch (e) {
+    _sincError('pago_cuota_lote', _movId, e, 'el pago de la cuota — no se aplicó nada');
+    return;
+  }
+
   DB_EXT.capital.prestamoPagado = (DB_EXT.capital.prestamoPagado||0) + monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) - monto;
   DB_EXT.capital.hist.push({ tipo:'pago_prestamo', fecha, desc, monto: -monto, acum });
-  // Registrar egreso en caja (efectivo por defecto — cuota de préstamo no tiene selector de método hoy)
   ensureCajaAbierta();
-  DB.caja.egresos = (DB.caja.egresos||0) + monto;
-  DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
-  _pushMovimiento({ tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser });
-  fbGuardar();
+  _cajaProxySkipSync = true;
+  try {
+    DB.caja.egresos = (DB.caja.egresos||0) + monto;
+    DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  } finally { _cajaProxySkipSync = false; }
   fbGuardarExt();
   cerrarModal('modal-pago-cuota');
   renderCapital();
