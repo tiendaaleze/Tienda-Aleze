@@ -30,6 +30,7 @@
  */
 
 const { onRequest, onCall } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
@@ -209,3 +210,72 @@ exports.webhookIzipay = onRequest(
     }
   }
 );
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ * Notificación push real (Firebase Cloud Messaging) — pedido online nuevo
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * POR QUÉ HACE FALTA UNA CLOUD FUNCTION PARA ESTO:
+ * El sistema ya avisaba de pedidos nuevos con new Notification() directo
+ * desde el navegador (ver notificarNuevoPedido() en index.html) — pero eso
+ * SOLO funciona mientras la pestaña está abierta y activa. Para avisar con
+ * el celular bloqueado o la app cerrada, el aviso tiene que salir de un
+ * SERVIDOR (FCM), no del navegador del cajero — por eso vive acá.
+ *
+ * Se dispara solo, automáticamente, cada vez que se crea un documento nuevo
+ * en pedidos_online — no hace falta llamarla desde ningún lado.
+ *
+ * REQUIERE (ver FCM-NOTIFICACIONES-PUSH.md para la guía completa paso a paso):
+ * 1. Plan Blaze activo (ya lo está).
+ * 2. Desplegar esto con `firebase deploy --only functions`.
+ * 3. La colección staff_tokens debe existir con las reglas correspondientes
+ *    (ver bloque de reglas en la guía) — ahí se guarda qué dispositivo de
+ *    qué usuario debe recibir el aviso.
+ */
+exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", async (event) => {
+  const pedido = event.data?.data();
+  if (!pedido) return;
+  // Solo avisar de pedidos recién llegados, pendientes de atender.
+  if (pedido.estado !== "pendiente") return;
+
+  const tokensSnap = await db.collection("staff_tokens").get();
+  const tokens = tokensSnap.docs.map((d) => d.id); // el ID del documento ES el token
+  if (tokens.length === 0) {
+    logger.info("Pedido nuevo, pero no hay dispositivos registrados para avisar.");
+    return;
+  }
+
+  // Mensaje solo de datos (sin campo "notification") — así el manejador propio del
+  // Service Worker (onBackgroundMessage) decide exactamente cómo se ve, sin que
+  // el navegador muestre una notificación genérica por su cuenta y quede duplicada.
+  const mensaje = {
+    data: {
+      titulo: "🛍️ Nuevo pedido online",
+      cuerpo: `${pedido.clienteNombre || "Cliente"} — S/ ${(pedido.total || 0).toFixed(2)}`,
+      pedidoId: String(event.params.pedidoId),
+    },
+    tokens,
+  };
+
+  try {
+    const resp = await admin.messaging().sendEachForMulticast(mensaje);
+    // Limpiar tokens que ya no sirven (dispositivo desinstaló la app, permiso revocado, etc.)
+    // — sin esto, staff_tokens acumula basura para siempre y cada envío se pone más lento.
+    const tokensVencidos = [];
+    resp.responses.forEach((r, i) => {
+      const code = r.error?.code;
+      if (!r.success && (code === "messaging/invalid-registration-token" || code === "messaging/registration-token-not-registered")) {
+        tokensVencidos.push(tokens[i]);
+      }
+    });
+    if (tokensVencidos.length > 0) {
+      const batch = db.batch();
+      tokensVencidos.forEach((t) => batch.delete(db.collection("staff_tokens").doc(t)));
+      await batch.commit();
+    }
+    logger.info(`Pedido ${event.params.pedidoId}: notificación enviada a ${resp.successCount}/${tokens.length} dispositivo(s).`);
+  } catch (err) {
+    logger.error("Error enviando notificación push de pedido nuevo:", err);
+  }
+});
