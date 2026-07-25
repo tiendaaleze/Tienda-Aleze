@@ -4037,6 +4037,36 @@ async function doLogin() {
           }
         });
       } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
+
+      // CRITICO — corrige la causa raiz de una perdida real de datos (venta y pago de fiado
+      // desaparecidos del documento combinado tras un guardado atrasado de otra sesion que
+      // pisaba todo). Caja y stock ya tenian esta reconciliacion desde su propia coleccion;
+      // ventas y fiados nunca la tuvieron, aunque eran igual de vulnerables — mas, siendo la
+      // informacion mas critica del negocio. Nunca borra nada, solo agrega lo que el documento
+      // combinado no tenga: si un registro ya esta en la lista, no se toca.
+      try {
+        const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
+        const [ventasSnap, fiadosSnap] = await Promise.all([
+          fbFS.collection('ventas').where('fecha', '>=', _limiteReconcilia).get(),
+          fbFS.collection('fiados').get() // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
+        ]);
+        if (!DB.historialVentas) DB.historialVentas = [];
+        if (!DB.fiados) DB.fiados = [];
+        const _idsVentas = new Set(DB.historialVentas.map(v => String(v.id)));
+        let _reconciliadasVentas = 0;
+        ventasSnap.forEach(doc => {
+          if (!_idsVentas.has(doc.id)) { DB.historialVentas.push(doc.data()); _reconciliadasVentas++; }
+        });
+        const _idsFiados = new Set(DB.fiados.map(f => String(f.id)));
+        let _reconciliadosFiados = 0;
+        fiadosSnap.forEach(doc => {
+          if (!_idsFiados.has(doc.id)) { DB.fiados.push(doc.data()); _reconciliadosFiados++; }
+        });
+        if (_reconciliadasVentas || _reconciliadosFiados) {
+          console.warn(`[Reconciliación] Se recuperaron ${_reconciliadasVentas} venta(s) y ${_reconciliadosFiados} fiado(s) que faltaban en el documento combinado.`);
+        }
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar ventas/fiados frescos:', e); }
+
       aplicarNombreNegocio();
 
       if (snapExt.exists) {
@@ -4913,16 +4943,22 @@ function procesarVenta() {
     return;
   }
 
+  // Envuelto en try/catch por item: una falla en un producto no debe cortar el resto de la
+  // venta (deuda, caja, guardado) — antes si un item fallaba acá, nada de lo siguiente corria.
   cart.forEach(item => {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (prod) {
-      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-      if (prod.esCombo && prod.componentes) {
-        prod.componentes.forEach(comp => {
-          const cp = DB.productos.find(x => x.id === comp.prodId);
-          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-        });
+    try {
+      const prod = DB.productos.find(p => p.id === item.prodId);
+      if (prod) {
+        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
+        if (prod.esCombo && prod.componentes) {
+          prod.componentes.forEach(comp => {
+            const cp = DB.productos.find(x => x.id === comp.prodId);
+            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
+          });
+        }
       }
+    } catch(e) {
+      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en venta ' + venta.id + ':', e);
     }
   });
 
@@ -4995,15 +5031,19 @@ function cobrarFiado() {
   }
 
   cart.forEach(item => {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (prod) {
-      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-      if (prod.esCombo && prod.componentes) {
-        prod.componentes.forEach(comp => {
-          const cp = DB.productos.find(x => x.id === comp.prodId);
-          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-        });
+    try {
+      const prod = DB.productos.find(p => p.id === item.prodId);
+      if (prod) {
+        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
+        if (prod.esCombo && prod.componentes) {
+          prod.componentes.forEach(comp => {
+            const cp = DB.productos.find(x => x.id === comp.prodId);
+            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
+          });
+        }
       }
+    } catch(e) {
+      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en fiado ' + fiado.id + ':', e);
     }
   });
 
@@ -10400,6 +10440,8 @@ function toggleMobCart() {
   }
 }
 
+let _mobFiadoPendiente = null; // mismo patron que escritorio — evita duplicar en doble toque o reintento
+
 function mobCobrarFiado() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   const clienteId = parseInt(document.getElementById('mob-pos-cliente')?.value) || 0;
@@ -10410,32 +10452,56 @@ function mobCobrarFiado() {
   const total = Math.round(Math.max(0, sub - desc - comboInfo.total) * 100) / 100;
   const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
 
-  const fiado = {
-    id: getId(), clienteId,
-    items: itemsConPrecioReal,
-    total, pagado: 0, fecha: today(),
-    descuentoCombo: comboInfo.total, descuentoManual: desc,
-    sedeId: sedeAdminEfectiva()
-  };
+  // Proteccion contra doble envio, igual que mobProcesarVenta y ambas funciones de escritorio.
+  const firma = _firmaCarrito(cart, 'FIADO', clienteId);
+  let fiado;
+  if (_mobFiadoPendiente && _mobFiadoPendiente.firma === firma) {
+    fiado = _mobFiadoPendiente.fiado;
+  } else {
+    fiado = {
+      id: getId(), clienteId,
+      items: itemsConPrecioReal,
+      total, pagado: 0, fecha: today(),
+      descuentoCombo: comboInfo.total, descuentoManual: desc,
+      sedeId: sedeAdminEfectiva()
+    };
+  }
+  _mobFiadoPendiente = { firma, fiado };
+
+  if (!DB.historialVentas) DB.historialVentas = [];
+  if (DB.historialVentas.some(v => v.id === fiado.id)) {
+    _mobFiadoPendiente = null;
+    alert('Fiado registrado para ' + getClienteNombre(clienteId) + ': ' + sol(total));
+    cart = [];
+    mobRenderCart(); mobCalcTotal(); mobUpdateBar();
+    resetMobPosCliente();
+    return;
+  }
+
 DB.fiados.push(fiado);
   fbSincronizarFiado(fiado);
-  if (!DB.historialVentas) DB.historialVentas = [];
   const _hvFiadoMob = { ...fiado, origen: 'pos', estado: 'fiado', estadoStock: 'descontado' };
   DB.historialVentas.push(_hvFiadoMob);
   fbSincronizarVenta(_hvFiadoMob);
 
-  // Descontar stock
+  // Descontar stock — envuelto en try/catch por item, mismo criterio que mobProcesarVenta:
+  // si un producto falla, el resto de la funcion (fiado ya registrado arriba, deuda, caja,
+  // guardado) se ejecuta igual. Antes una falla acá dejaba todo lo siguiente sin ejecutar.
   _fbLastWriteProdTs = Date.now();
   cart.forEach(item => {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (prod) {
-      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-      if (prod.esCombo && prod.componentes) {
-        prod.componentes.forEach(comp => {
-          const cp = DB.productos.find(x => x.id === comp.prodId);
-          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-        });
+    try {
+      const prod = DB.productos.find(p => p.id === item.prodId);
+      if (prod) {
+        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
+        if (prod.esCombo && prod.componentes) {
+          prod.componentes.forEach(comp => {
+            const cp = DB.productos.find(x => x.id === comp.prodId);
+            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
+          });
+        }
       }
+    } catch(e) {
+      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en fiado ' + fiado.id + ':', e);
     }
   });
 
@@ -10453,14 +10519,13 @@ if (cli) {
   ensureCajaAbierta();
   _pushMovimiento({ tipo:'fiado', desc:`Fiado — ${getClienteNombre(clienteId)}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
 
-  _fbLastWriteTs = Date.now();
-  _fbEscribiendo = true;
-  const _vPayload = JSON.parse(JSON.stringify(DB));
-delete _vPayload.productos; delete _vPayload.categorias; delete _vPayload.pedidosOnline;
-  fbDocRef().set(_vPayload)
-    .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); })
-    .catch(() => { _fbEscribiendo = false; });
+  // CRITICO: antes esta funcion tenia su PROPIO guardado directo a Firestore, escrito aparte,
+  // que hacia el mismo "reemplazar todo el documento" sin pasar por ninguna de las
+  // protecciones de fbGuardar() (sin badge, sin clasificacion de error, sin nada). Se
+  // reemplaza por el fbGuardar() real, igual que las otras 3 funciones de venta/fiado.
+  fbGuardar();
   fbGuardarProductos();
+  _mobFiadoPendiente = null;
   try { renderDashboard(); } catch(e){}
   try { renderCaja(); } catch(e){}
   mostrarTicket(_hvFiadoMob);
@@ -10472,6 +10537,8 @@ delete _vPayload.productos; delete _vPayload.categorias; delete _vPayload.pedido
   resetMobPosCliente();
   renderMobPosGrid(); toggleMobCart(); updateAlertCount();
 }
+
+let _mobVentaPendiente = null; // recuerda un intento fallido para reintentar con el mismo id, mismo patron que escritorio
 
 function mobProcesarVenta(){
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
@@ -10486,24 +10553,53 @@ function mobProcesarVenta(){
   // Build items with proportional combo prices for accurate reporting
   const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
 
-  const venta = {
-    id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
-    items: itemsConPrecioReal, subtotal: sub,
-    descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
-    total, metodo, clienteId, sedeId: sedeAdminEfectiva()
-  };
-  // Descontar stock
+  // Proteccion contra doble envio — mismo patron que procesarVenta() de escritorio. Sin esto,
+  // un doble-toque o un reintento por red duplicaba venta, stock descontado dos veces, y el
+  // cargo al cliente dos veces — movil nunca tuvo esta proteccion hasta ahora.
+  const firma = _firmaCarrito(cart, metodo, clienteId);
+  let venta;
+  if (_mobVentaPendiente && _mobVentaPendiente.firma === firma) {
+    venta = _mobVentaPendiente.venta;
+  } else {
+    venta = {
+      id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
+      items: itemsConPrecioReal, subtotal: sub,
+      descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
+      total, metodo, clienteId, sedeId: sedeAdminEfectiva()
+    };
+  }
+  _mobVentaPendiente = { firma, venta };
+
+  if (!DB.historialVentas) DB.historialVentas = [];
+  if (DB.historialVentas.some(v => v.id === venta.id)) {
+    _mobVentaPendiente = null;
+    mostrarTicket(venta);
+    cart = [];
+    mobRenderCart(); mobCalcTotal(); mobUpdateBar();
+    resetMobPosCliente();
+    return;
+  }
+
+  // Descontar stock — envuelto en try/catch por item: si UN producto falla (referencia
+  // corrupta, combo mal formado, lo que sea), los demas items y TODO lo que viene despues
+  // (fiado/venta ya registrados arriba, deuda del cliente, caja, guardado) igual se ejecuta.
+  // Antes, una falla acá cortaba la funcion entera a mitad de camino sin dejar rastro de por
+  // que el stock no bajo aunque la venta si quedo registrada.
   _fbLastWriteProdTs = Date.now();
   cart.forEach(item => {
-    const prod = DB.productos.find(p => p.id === item.prodId);
-    if (prod) {
-      if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
-      if (prod.esCombo && prod.componentes) {
-        prod.componentes.forEach(comp => {
-          const cp = DB.productos.find(x => x.id === comp.prodId);
-          if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
-        });
+    try {
+      const prod = DB.productos.find(p => p.id === item.prodId);
+      if (prod) {
+        if (!prod.esCombo) ajustarStockSede(prod, -item.cant);
+        if (prod.esCombo && prod.componentes) {
+          prod.componentes.forEach(comp => {
+            const cp = DB.productos.find(x => x.id === comp.prodId);
+            if (cp) ajustarStockSede(cp, -(comp.cant * item.cant));
+          });
+        }
       }
+    } catch(e) {
+      console.warn('[CRITICO] No se pudo descontar stock de "' + (item.nombre||item.prodId) + '" en venta ' + venta.id + ':', e);
     }
   });
   if (clienteId) {
@@ -10516,12 +10612,12 @@ function mobProcesarVenta(){
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
   _pushMovimiento({ tipo:'ingreso', desc:`Venta POS móvil — ${metodo}`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser });
 
-  if (!DB.historialVentas) DB.historialVentas = [];
   const _ventaMob = { ...venta, origen:'pos', estado:'completado', estadoStock:'descontado' };
   DB.historialVentas.push(_ventaMob);
   fbSincronizarVenta(_ventaMob);
   fbGuardar();
   fbGuardarProductos();
+  _mobVentaPendiente = null;
   try { renderDashboard(); } catch(e){}
   try { renderCaja(); } catch(e){}
   try { generarReporte(); } catch(e){}
