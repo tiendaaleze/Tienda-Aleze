@@ -7213,35 +7213,77 @@ function _asignarPagoAItems(fiado, monto) {
   return Math.round(costo * 10000) / 10000;
 }
 
-function ejecutarPagoGlobal(cid, montoTotal, metodo) {
+async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   metodo = metodo || 'Efectivo';
   let saldo = montoTotal;
   const _sedeEPG = sedeAdminEfectiva();
   const fiados = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && (f.total - f.pagado) > 0).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
+
+  // Mismo criterio que la venta: TODOS los fiados tocados, el cliente, caja, movimiento y
+  // cada registro de historial viajan en un solo lote — o se aplican todos juntos, o ninguno.
+  // Esta es la funcion que coincide exactamente con el incidente real reportado (pago global
+  // parcial perdido) — antes cada fiado se sincronizaba por separado, sin ninguna garantia.
+  const batch = fbFS.batch();
+  const _cambiosLocales = []; // {f, montoPagadoEsteFiado, pagoEntry} para aplicar tras el exito
   const _hvPagosGlobal = [];
+
   fiados.forEach(f => {
     if (saldo <= 0) return;
-    // Corregimos el pendiente del fiado individual en el bucle
     const pendFiado = Math.round((f.total - f.pagado) * 100) / 100;
     const montoPagadoEsteFiado = Math.min(saldo, pendFiado);
     if (montoPagadoEsteFiado > 0) {
+      // Nota: _asignarPagoAItems SI modifica f.items[].pagado como parte de calcular el costo
+      // asociado — es la unica pieza que se adelanta a la confirmacion del lote (necesaria
+      // para el calculo), a diferencia de todo lo demas en esta funcion que espera el exito.
+      // Riesgo minimo: si el lote fallara despues de esto, esta marca queda en memoria local
+      // nada mas, se corrige sola al recargar (trae el fiado real de Firestore de nuevo).
       const costoAsociado = _asignarPagoAItems(f, montoPagadoEsteFiado);
-      if (!f.pagos) f.pagos = [];
-      f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' });
-      f.pagado = Math.round((f.pagado + montoPagadoEsteFiado) * 100) / 100;
+      const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' };
+      const _fPagado = Math.round((f.pagado + montoPagadoEsteFiado) * 100) / 100;
+      batch.set(fbFS.collection('fiados').doc(String(f.id)), { ...f, pagado: _fPagado, pagos: [...(f.pagos||[]), _fPagoEntry] });
       saldo = Math.round((saldo - montoPagadoEsteFiado) * 100) / 100;
-      _hvPagosGlobal.push({ id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado });
-      fbSincronizarFiado(f);
+      const _entry = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado, sedeId: _sedeEPG };
+      batch.set(fbFS.collection('ventas').doc(String(_entry.id)), _entry);
+      _hvPagosGlobal.push(_entry);
+      _cambiosLocales.push({ f, montoPagadoEsteFiado, _fPagoEntry, _fPagado });
     }
+  });
+
+  batch.set(fbFS.collection('clientes').doc(String(cid)), {
+    deuda: firebase.firestore.FieldValue.increment(-montoTotal)
+  }, { merge: true });
+
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today(), sedeId: _sedeEPG });
+
+  const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(montoTotal) };
+  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(montoTotal);
+  batch.set(fbFS.collection('caja').doc(_sedeEPG), _cajaUpdate, { merge: true });
+
+  const _idPagoGlobal = 'pago_global_' + cid + '_' + Date.now();
+  _sincIniciar('pago_global_lote', _idPagoGlobal);
+  try {
+    await batch.commit();
+    _sincTerminar('pago_global_lote', _idPagoGlobal);
+  } catch (e) {
+    _sincError('pago_global_lote', _idPagoGlobal, e, 'el pago global — no se aplicó nada, ningún fiado quedó marcado como pagado');
+    return;
+  }
+
+  // El lote ya fue aceptado — recien ahora se aplican los cambios en memoria local.
+  _cambiosLocales.forEach(({f, _fPagoEntry, _fPagado}) => {
+    if (!f.pagos) f.pagos = [];
+    f.pagos.push(_fPagoEntry);
+    f.pagado = _fPagado;
   });
   const cli = DB.clientes.find(c => c.id === cid);
   if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100);
   ensureCajaAbierta();
   DB.caja.ingresos += montoTotal;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
-  _pushMovimiento({ tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today() });
   if (!DB.historialVentas) DB.historialVentas = [];
-  _hvPagosGlobal.forEach(entry => { DB.historialVentas.push(entry); fbSincronizarVenta(entry); });
+  _hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
   fbGuardar();
   renderFiados();
   updateAlertCount();
@@ -7390,28 +7432,60 @@ function abrirPagoFiado(id) {
   abrirModal('modal-pago-fiado');
 }
 
-function confirmarPagoFiado() {
+async function confirmarPagoFiado() {
   const f = DB.fiados.find(x => x.id === editingFiadoId);
   const monto = parseFloat(document.getElementById('fiado-pago-monto').value) || 0;
   const metodo = document.getElementById('fiado-pago-metodo')?.value || 'Efectivo';
 const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   if (monto <= 0 || monto > pendiente) { alert('Monto inválido. Máximo: ' + sol(pendiente)); return; }
   const costoAsociado = _asignarPagoAItems(f, monto);
+
+  // Mismo criterio que la venta: el pago es un paquete — fiado actualizado, deuda del
+  // cliente, movimiento, caja y el registro en historial viajan juntos o no viaja nada.
+  // Antes de este cambio, este pago tenia el mismo hueco que la venta/fiado original: cada
+  // pieza viajaba por separado, sin ninguna garantia de que llegaran todas juntas.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+
+  const _fPagos = [...(f.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
+  const _fPagado = Math.round((f.pagado + monto) * 100) / 100;
+  batch.set(fbFS.collection('fiados').doc(String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede });
+
+  batch.set(fbFS.collection('clientes').doc(String(f.clienteId)), {
+    deuda: firebase.firestore.FieldValue.increment(-monto)
+  }, { merge: true });
+
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
+
+  const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(monto) };
+  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(monto);
+  batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+
+  const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, metodo, cajero: currentUser, costoAsociado, sedeId: sede };
+  batch.set(fbFS.collection('ventas').doc(String(_pagoFiado.id)), _pagoFiado);
+
+  _sincIniciar('pago_fiado_lote', f.id);
+  try {
+    await batch.commit();
+    _sincTerminar('pago_fiado_lote', f.id);
+  } catch (e) {
+    _sincError('pago_fiado_lote', f.id, e, 'el pago del fiado — no se aplicó nada');
+    return;
+  }
+
+  // El lote ya fue aceptado — recien ahora se refleja en memoria local.
   if (!f.pagos) f.pagos = [];
-f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
-  f.pagado = Math.round((f.pagado + monto) * 100) / 100;
+  f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
+  f.pagado = _fPagado;
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - monto) * 100) / 100);
-  // Ensure caja is open for today, then register ingreso
   ensureCajaAbierta();
   DB.caja.ingresos += monto;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
-  _pushMovimiento({ tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today() });
   if (!DB.historialVentas) DB.historialVentas = [];
-  const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, metodo, cajero: currentUser, costoAsociado };
   DB.historialVentas.push(_pagoFiado);
-  fbSincronizarVenta(_pagoFiado);
-  fbSincronizarFiado(f);
   fbGuardar();
   cerrarModal('modal-pago-fiado');
   renderFiados();
