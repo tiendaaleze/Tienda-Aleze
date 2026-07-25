@@ -3429,10 +3429,17 @@ function fbSincronizarClienteCampo(id, campo, valor) {
     .then(() => _sincTerminar('cliente', id))
     .catch(e => _sincError('cliente', id, e, 'los datos del cliente'));
 }
+// Interruptor para cuando una operación ya sincronizó el cliente vía su propio lote atómico
+// (venta, fiado, pago, canje...) — evita que el Proxy dispare SU PROPIA escritura independiente
+// encima de lo que el lote ya escribió. Mismo mecanismo que _cajaProxySkipSync, mismo riesgo:
+// sin esto, deuda/puntos/compras/total de CUALQUIER cliente con transacciones se duplicaban en
+// Firestore en cada venta o fiado — la escritura del lote, más la del Proxy encima.
+let _clienteProxySkipSync = false;
 function _envolverCliente(c) {
   if (!c || _clienteProxiesCreados.has(c)) return c;
   const proxy = new Proxy(c, {
     set(target, prop, value) {
+      if (_clienteProxySkipSync) { target[prop] = value; return true; }
       if (_CLIENTE_CAMPOS_INCREMENTALES.includes(prop) && typeof value === 'number' && typeof target[prop] === 'number') {
         const delta = Math.round((value - target[prop]) * 100) / 100;
         target[prop] = value;
@@ -3602,7 +3609,10 @@ async function procesarCanje(clienteId, premioId) {
     const descInput = document.getElementById('pos-descuento'); // campo unico, compartido entre desktop y movil
     if (descInput) descInput.value = (parseFloat(descInput.value) || 0) + canje.montoDescuento;
   }
-  cli.puntos = (cli.puntos || 0) - premio.puntos;
+  // El lote ya escribió esto en Firestore — el interruptor evita que el Proxy del cliente
+  // dispare su propia escritura encima (mismo riesgo que ya se corrigió en caja).
+  _clienteProxySkipSync = true;
+  try { cli.puntos = (cli.puntos || 0) - premio.puntos; } finally { _clienteProxySkipSync = false; }
   fbGuardar();
   fbGuardarProductos();
   return canje;
@@ -5052,7 +5062,11 @@ async function procesarVenta() {
   });
   if (clienteId) {
     const cli = DB.clientes.find(c => c.id === clienteId);
-    if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+_puntosGanados; }
+    if (cli) {
+      _clienteProxySkipSync = true;
+      try { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+total; cli.puntos = (cli.puntos||0)+_puntosGanados; }
+      finally { _clienteProxySkipSync = false; }
+    }
   }
   ensureCajaAbierta();
   DB.caja.ingresos = (DB.caja.ingresos||0) + total;
@@ -5186,10 +5200,13 @@ async function cobrarFiado() {
   DB.fiados.push(fiado);
   const cli = DB.clientes.find(c => c.id === clienteId);
   if (cli) {
-    cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
-    cli.compras = (cli.compras||0) + 1;
-    cli.total = (cli.total||0) + total;
-    cli.puntos = (cli.puntos||0) + _puntosGanados;
+    _clienteProxySkipSync = true;
+    try {
+      cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
+      cli.compras = (cli.compras||0) + 1;
+      cli.total = (cli.total||0) + total;
+      cli.puntos = (cli.puntos||0) + _puntosGanados;
+    } finally { _clienteProxySkipSync = false; }
   }
   ensureCajaAbierta();
   DB.historialVentas.push(_ventaFiado);
@@ -7368,7 +7385,11 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
     f.pagado = _fPagado;
   });
   const cli = DB.clientes.find(c => c.id === cid);
-  if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100);
+  if (cli) {
+    _clienteProxySkipSync = true;
+    try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100); }
+    finally { _clienteProxySkipSync = false; }
+  }
   ensureCajaAbierta();
   DB.caja.ingresos += montoTotal;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
@@ -7571,7 +7592,11 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
   f.pagado = _fPagado;
   const cli = DB.clientes.find(c => c.id === f.clienteId);
-  if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - monto) * 100) / 100);
+  if (cli) {
+    _clienteProxySkipSync = true;
+    try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - monto) * 100) / 100); }
+    finally { _clienteProxySkipSync = false; }
+  }
   ensureCajaAbierta();
   DB.caja.ingresos += monto;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
@@ -7864,8 +7889,7 @@ async function abrirRetiroEfectivo() {
   // El lote ya fue aceptado — recien ahora se refleja en memoria local. El interruptor evita
   // que el Proxy de caja dispare su propia escritura encima de lo que el lote ya escribió.
   _cajaProxySkipSync = true;
-  DB.caja.retiros = (DB.caja.retiros||0) + monto;
-  _cajaProxySkipSync = false;
+  try { DB.caja.retiros = (DB.caja.retiros||0) + monto; } finally { _cajaProxySkipSync = false; }
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   renderCaja();
@@ -7933,11 +7957,12 @@ async function confirmarCierreCaja() {
   // El lote ya fue aceptado — recien ahora se refleja en memoria local, con el interruptor
   // activo para que el Proxy no dispare su propia escritura encima de lo ya guardado.
   _cajaProxySkipSync = true;
-  DB.caja.abierta = false;
-  DB.caja.fechaCierre = today();
-  DB.caja.saldoFinal = saldo;
-  DB.caja.saldoFinalEfectivo = contado;
-  _cajaProxySkipSync = false;
+  try {
+    DB.caja.abierta = false;
+    DB.caja.fechaCierre = today();
+    DB.caja.saldoFinal = saldo;
+    DB.caja.saldoFinalEfectivo = contado;
+  } finally { _cajaProxySkipSync = false; }
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movCierre);
   if (_movArqueo) DB.movimientos.push(_movArqueo);
@@ -12645,19 +12670,24 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       if (_esClienteNuevo && cli) DB.clientes.push(cli);
       if (!DB.historialVentas) DB.historialVentas = [];
       DB.historialVentas.push(_ventaOnline);
-      if (_esPagado) {
-        if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; }
-      } else {
-        if (_fiadoOnline) {
-          if (!DB.fiados) DB.fiados = [];
-          DB.fiados.push(_fiadoOnline);
+      // El lote ya escribió el cliente en Firestore — el interruptor evita que el Proxy
+      // dispare su propia escritura encima (mismo riesgo ya corregido en las otras 5 funciones).
+      _clienteProxySkipSync = true;
+      try {
+        if (_esPagado) {
+          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; }
+        } else {
+          if (_fiadoOnline) {
+            if (!DB.fiados) DB.fiados = [];
+            DB.fiados.push(_fiadoOnline);
+          }
+          if (cli) {
+            cli.deuda   = (cli.deuda||0)   + p.total;
+            cli.compras = (cli.compras||0) + 1;
+            cli.total   = (cli.total||0)   + p.total;
+          }
         }
-        if (cli) {
-          cli.deuda   = (cli.deuda||0)   + p.total;
-          cli.compras = (cli.compras||0) + 1;
-          cli.total   = (cli.total||0)   + p.total;
-        }
-      }
+      } finally { _clienteProxySkipSync = false; }
       p.estado = 'entregado';
       ensureCajaAbierta();
       if (_esPagado) {
