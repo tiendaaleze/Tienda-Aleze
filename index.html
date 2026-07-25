@@ -13789,12 +13789,21 @@ async function tndEnviarPedido() {
   if (_tndEnviando) return;
 
   // ── Validaciones previas al envío ────────────────────────────────────────
+  // Los máximos (100 y 15) coinciden exactamente con pedidoValido() en las reglas de Firestore
+  // — sin esto, un nombre o teléfono demasiado largo rechazaba el pedido sin ningún mensaje
+  // claro para el cliente, solo un error crudo de permisos.
   if (!_tiendaUser?.nombre || _tiendaUser.nombre.length < 3) {
     alert('Falta tu nombre (mínimo 3 caracteres)'); return;
+  }
+  if (_tiendaUser.nombre.length > 100) {
+    alert('Tu nombre es demasiado largo (máximo 100 caracteres)'); return;
   }
   const telLimpio = (_tiendaUser?.tel||'').replace(/\s/g,'');
   if (!telLimpio || telLimpio.length < 7) {
     alert('Falta tu número de WhatsApp (mínimo 7 dígitos)'); return;
+  }
+  if (telLimpio.length > 15) {
+    alert('Tu número de WhatsApp es demasiado largo (máximo 15 dígitos)'); return;
   }
   if (_tiendaCart.length === 0) {
     alert('Tu carrito está vacío'); return;
