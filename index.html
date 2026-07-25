@@ -183,6 +183,7 @@ if (_esIOS()) {
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <style>
   :root {
@@ -4201,6 +4202,35 @@ currentRole = role;
   fbEscuchar();
   fbEscucharPedidosOnline();
   if (currentRole === 'admin') iniciarBackupAutomatico();
+  _registrarNotificacionesPush();
+}
+
+// ── Notificaciones push reales (FCM) — avisa aunque la app este cerrada o el celular
+// bloqueado, a diferencia de notificarNuevoPedido() que solo funciona con la pestaña abierta.
+// Dormido hasta que VAPID_KEY tenga la clave real (ver comentario junto a esa constante).
+async function _registrarNotificacionesPush() {
+  if (VAPID_KEY === 'PENDIENTE') return; // no configurado todavia, no hace nada
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !firebase.messaging) return;
+  try {
+    const permiso = await Notification.requestPermission();
+    if (permiso !== 'granted') { console.log('[FCM] Notificaciones no autorizadas por el usuario.'); return; }
+
+    const reg = await navigator.serviceWorker.ready;
+    const messaging = firebase.messaging();
+    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!token) { console.warn('[FCM] No se pudo obtener el token del dispositivo.'); return; }
+
+    // El token ES el id del documento — asi un mismo dispositivo nunca duplica su registro,
+    // y si el usuario cambia (otro cajero entra con el mismo celular) el token se actualiza solo.
+    await fbFS.collection('staff_tokens').doc(token).set({
+      usuario: currentUser || 'desconocido',
+      sedeId: currentUserSedeId || 'principal',
+      ultimaActividad: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    console.log('[FCM] Dispositivo registrado para notificaciones push.');
+  } catch (e) {
+    console.warn('[FCM] No se pudo registrar el dispositivo para notificaciones push:', e.message);
+  }
 }
 let _logoutEsperando = 0;
 function doLogout() {
@@ -11263,6 +11293,12 @@ let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
 // RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
 // Si aún no tienes clave, usa 'debug' temporalmente solo en localhost
 const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
+
+// VAPID_KEY: clave publica para notificaciones push (Firebase Console > Configuracion del
+// proyecto > Cloud Messaging > Certificados push web > "Generar par de claves"). Es publica
+// a proposito, va en el codigo igual que RECAPTCHA_SITE_KEY. Mientras diga 'PENDIENTE', las
+// notificaciones push quedan dormidas — no rompe nada, solo no se activan hasta pegarla acá.
+const VAPID_KEY = 'PENDIENTE';
 
 async function iniciarFirebase() {
   try {
