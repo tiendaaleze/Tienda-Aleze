@@ -6808,6 +6808,14 @@ async function guardarBoleta() {
     });
 
     if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+    // Firestore permite maximo 500 operaciones por lote — con boleta + 1 escritura de stock
+    // por producto distinto, esto cubre hasta 499 productos distintos en una sola boleta, muy
+    // por encima de cualquier factura real. Si algun dia se superara, mejor un mensaje claro
+    // que un error criptico de Firestore.
+    if (_boletaProductos.length > 490) {
+      alert('⚠️ Esta boleta tiene demasiados productos distintos (' + _boletaProductos.length + ') para procesar de una vez. Divídela en 2 boletas más chicas.');
+      return;
+    }
     const batch = fbFS.batch();
     // Agregar por producto (mismo criterio que venta/fiado) por si el mismo producto aparece
     // dos veces en la boleta.
@@ -10347,21 +10355,29 @@ async function sincronizarMermasInventario() {
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
 
   // Paquete atomico: TODAS las mermas del conteo y sus ajustes de stock viajan juntos —
-  // mismo criterio que guardarMerma(), aplicado a un conteo con varios productos a la vez.
-  const batch = fbFS.batch();
-  _pendientes.forEach(({prod, delta, merma}) => {
-    batch.set(fbFS.collection('stock').doc(String(prod.id)),
-      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
-    batch.set(fbFS.collection('mermas').doc(String(merma.id)), merma);
-  });
+  // mismo criterio que guardarMerma(). Firestore permite maximo 500 operaciones por lote —
+  // con 2 operaciones por producto (stock + merma), un conteo con mas de 250 diferencias
+  // superaria ese limite y el lote fallaria entero sin necesidad. Se parte en bloques de 200
+  // productos (400 operaciones) por seguridad, mismo criterio que ya usa el sistema de backups.
+  const _CHUNK = 200;
+  for (let i = 0; i < _pendientes.length; i += _CHUNK) {
+    const trozo = _pendientes.slice(i, i + _CHUNK);
+    const batch = fbFS.batch();
+    trozo.forEach(({prod, delta, merma}) => {
+      batch.set(fbFS.collection('stock').doc(String(prod.id)),
+        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+      batch.set(fbFS.collection('mermas').doc(String(merma.id)), merma);
+    });
 
-  _sincIniciar('inv_mensual_lote', fechaInv);
-  try {
-    await batch.commit();
-    _sincTerminar('inv_mensual_lote', fechaInv);
-  } catch (e) {
-    _sincError('inv_mensual_lote', fechaInv, e, 'la sincronización de inventario mensual — no se aplicó nada');
-    return;
+    _sincIniciar('inv_mensual_lote', fechaInv + '_' + i);
+    try {
+      await batch.commit();
+      _sincTerminar('inv_mensual_lote', fechaInv + '_' + i);
+    } catch (e) {
+      _sincError('inv_mensual_lote', fechaInv + '_' + i, e,
+        'la sincronización de inventario mensual — se aplicaron ' + i + ' de ' + _pendientes.length + ' diferencias antes del error');
+      return;
+    }
   }
 
   _pendientes.forEach(({prod, delta, merma}) => {
