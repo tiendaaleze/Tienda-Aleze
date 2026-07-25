@@ -9589,7 +9589,7 @@ function editarGasto(id) {
   abrirModal('modal-gasto');
 }
 
-function guardarGasto() {
+async function guardarGasto() {
   // Vendedor puede registrar gastos operativos chicos de su sede (pagar por instalar un foco,
   // etc.) sin depender de admin. Solo eliminar sigue siendo de admin.
   const monto = parseFloat(document.getElementById('g-monto').value) || 0;
@@ -9598,40 +9598,78 @@ function guardarGasto() {
   const desc  = document.getElementById('g-desc').value;
   const fecha = document.getElementById('g-fecha').value;
   const metodo = document.getElementById('g-metodo')?.value || 'Efectivo';
+  const sede = sedeAdminEfectiva();
+
+  // Paquete atomico: el gasto, el ajuste de caja y el movimiento viajan juntos — sin esto,
+  // podia salir plata de caja sin gasto que lo respalde, o quedar el gasto registrado sin
+  // que caja lo refleje.
+  const batch = fbFS.batch();
+  let _gastoFinal, _movDesc, _movMonto, _movTipo, _cajaUpdate = {};
 
   if (_editingGastoId) {
-    // EDITAR — ajustar diferencia en caja
     const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
-    if (old) {
-      const diff = monto - old.monto;
-      old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
-      if (diff !== 0) {
-        ensureCajaAbierta();
-        if (diff > 0) {
-          // Aumento — egreso adicional
-          DB.caja.egresos = (DB.caja.egresos||0) + diff;
-          if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
-          _pushMovimiento({ tipo:'egreso', desc:`Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`, monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser });
-        } else {
-          // Reducción — ingreso por corrección
-          DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
-          if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + diff);
-          DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
-          DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
-          _pushMovimiento({ tipo:'ingreso', desc:`Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`, monto: Math.abs(diff), hora: nowTime(), fecha: today(), usuario: currentUser });
-        }
+    if (!old) return;
+    const diff = monto - old.monto;
+    _gastoFinal = { ...old, tipo, desc, monto, fecha, metodo };
+    batch.set(fbFS.collection('gastos').doc(String(old.id)), _gastoFinal);
+    if (diff !== 0) {
+      if (diff > 0) {
+        _cajaUpdate.egresos = firebase.firestore.FieldValue.increment(diff);
+        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(diff);
+        _movTipo = 'egreso'; _movDesc = `Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`; _movMonto = diff;
+      } else {
+        _cajaUpdate.egresos = firebase.firestore.FieldValue.increment(diff); // diff negativo, resta
+        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(diff);
+        _cajaUpdate.ingresos = firebase.firestore.FieldValue.increment(Math.abs(diff));
+        _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(Math.abs(diff));
+        _movTipo = 'ingreso'; _movDesc = `Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`; _movMonto = Math.abs(diff);
       }
-      fbSincronizarGasto(old);
+      batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+      const _movId = getId();
+      batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+        { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede });
     }
   } else {
-    // NUEVO
-    const _nuevoGasto = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sedeAdminEfectiva() };
-    DB_EXT.gastos.push(_nuevoGasto);
-    fbSincronizarGasto(_nuevoGasto);
+    _gastoFinal = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sede };
+    batch.set(fbFS.collection('gastos').doc(String(_gastoFinal.id)), _gastoFinal);
+    _cajaUpdate.egresos = firebase.firestore.FieldValue.increment(monto);
+    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(monto);
+    batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+    const _movId = getId();
+    batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+      { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede });
+  }
+
+  _sincIniciar('gasto_lote', _gastoFinal.id);
+  try {
+    await batch.commit();
+    _sincTerminar('gasto_lote', _gastoFinal.id);
+  } catch (e) {
+    _sincError('gasto_lote', _gastoFinal.id, e, 'el gasto — no se aplicó nada');
+    return;
+  }
+
+  if (_editingGastoId) {
+    const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
+    const diff = monto - old.monto;
+    old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
+    if (diff !== 0) {
+      ensureCajaAbierta();
+      if (diff > 0) {
+        DB.caja.egresos = (DB.caja.egresos||0) + diff;
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
+      } else {
+        DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + diff);
+        DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
+        DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
+      }
+    }
+  } else {
+    DB_EXT.gastos.push(_gastoFinal);
     ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
     if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
-    _pushMovimiento({ tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora: nowTime(), fecha, usuario: currentUser });
   }
 
   fbGuardar();
@@ -13952,25 +13990,23 @@ async function tndEnviarPedido() {
   };
 
   // ── Guardar en colección pedidos_online/{id} ─────────────────────────────
-  // El cliente NO escribe en aleze/db — solo en pedidos_online
+  // El cliente NO escribe en aleze/db — solo en pedidos_online. A diferencia de venta/fiado,
+  // acá hay UN solo documento (no varias piezas que puedan desincronizarse entre si) — pero
+  // antes se mostraba "pedido enviado" SIEMPRE, sin esperar a que el guardado terminara de
+  // verdad. Si fallaba, el pedido quedaba en un array local que nunca llega a ningun lado, y
+  // el cliente jamas se enteraba. Ahora se espera la confirmacion real antes de avisar exito.
   if (fbFS) {
-    fbFS.collection('pedidos_online').doc(String(pedido.id)).set(pedido)
-      .then(() => {
-        _tndEnviando = false; // liberar tras éxito
-      })
-      .catch(e => {
-        _tndEnviando = false; // liberar tras error
-        console.warn('pedidos_online write error:', e.code);
-        // Fallback: guardar en DB local si Firestore rechaza
-        if (!DB.pedidosOnline) DB.pedidosOnline = [];
-        DB.pedidosOnline.push(pedido);
-      });
-  } else {
-    // Sin conexión a Firebase — guardar localmente
-    _tndEnviando = false;
-    if (!DB.pedidosOnline) DB.pedidosOnline = [];
-    DB.pedidosOnline.push(pedido);
+    try {
+      await fbFS.collection('pedidos_online').doc(String(pedido.id)).set(pedido);
+    } catch (e) {
+      console.warn('pedidos_online write error:', e.code);
+      _tndEnviando = false;
+      if (btnEnviar) { btnEnviar.disabled = false; btnEnviar.textContent = '📲 Enviar pedido'; }
+      alert('⚠️ No se pudo enviar tu pedido — puede ser un problema de conexión.\n\nPor favor intenta de nuevo, o escríbenos directo por WhatsApp para no perder tu pedido.');
+      return;
+    }
   }
+  _tndEnviando = false;
 
   // ── Guardar historial local del cliente (solo localStorage) ─────────────
   if (_tiendaUser.tel) {
