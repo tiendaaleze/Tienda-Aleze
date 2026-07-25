@@ -14783,7 +14783,7 @@ function verBackups() {
 }
 
 async function restaurarBackup(id) {
-  if (!confirm('⚠️ ¿Restaurar este respaldo? Los datos actuales (catálogo, stock, ventas, caja, clientes y todo lo demás) se reemplazarán por completo.')) return;
+  if (!confirm('¿Restaurar este respaldo?\n\nVentas, fiados, clientes, mermas, gastos, movimientos, boletas y stock: se recupera lo que falte de ese momento, sin tocar ni borrar nada de lo que ya existe ahora.\n\nCatálogo (productos, categorías), configuración, promociones y proveedores: estos SÍ se reemplazan por completo, tal como estaban en ese momento — no tienen historial acumulativo propio.')) return;
   try {
     const doc = await fbFS.collection('aleze_backups').doc(id).get();
     if (!doc.exists) { alert('Respaldo no encontrado.'); return; }
@@ -14802,12 +14802,23 @@ async function restaurarBackup(id) {
     await fbDocRef().set(data);
     // 2) Catálogo completo (productos + categorías + stockPorSede, ya incluido en cada producto)
     await fbProdDocRef().set({ productos, categorias, config: DB.config || {} });
-    // 3) Cada colección propia: vaciar la actual y volver a escribir lo respaldado
+    // 3) Cada colección propia: NUNCA se borra nada — solo se agrega lo que falte. Antes esto
+    // vaciaba la colección entera y la reescribía desde el respaldo, lo que borraba cualquier
+    // venta/fiado/cliente real registrado DESPUÉS de que se tomó ese respaldo — exactamente el
+    // escenario de "el backup queda inerte" que se identificó: restaurar de hace 2 horas
+    // hubiera borrado esas 2 horas de trabajo real. Ahora un registro que ya existe en la
+    // colección actual NUNCA se toca — solo se recupera lo que genuinamente falta.
+    let _totalRecuperados = 0;
     for (const col of colecciones) {
-      await _vaciarColeccion(col);
+      const idsExistentes = new Set();
+      try {
+        const snapActual = await fbFS.collection(col).get();
+        snapActual.forEach(d => idsExistentes.add(d.id));
+      } catch(e) { console.warn('restaurarBackup: no se pudo leer ' + col + ' actual, se recupera igual por las dudas', e); }
+
       const satDoc = await fbFS.collection('aleze_backups').doc(id + '__' + col).get();
       if (satDoc.exists) {
-        const items = satDoc.data().items || [];
+        const items = (satDoc.data().items || []).filter(item => !idsExistentes.has(String(item._id)));
         for (let i = 0; i < items.length; i += 450) {
           const batch = fbFS.batch();
           items.slice(i, i + 450).forEach(item => {
@@ -14816,11 +14827,12 @@ async function restaurarBackup(id) {
           });
           await batch.commit();
         }
+        _totalRecuperados += items.length;
       }
     }
 
     setTimeout(() => { _fbEscribiendo = false; }, 300);
-    alert('✅ Respaldo restaurado por completo — catálogo, stock, y las ' + colecciones.length + ' colecciones incluidas. Recarga la página para ver todo actualizado.');
+    alert('✅ Respaldo aplicado — se recuperaron ' + _totalRecuperados + ' registro(s) que faltaban en las ' + colecciones.length + ' colecciones incluidas (nada de lo que ya existía se tocó). Recarga la página para ver todo actualizado.');
     try { renderDashboard(); } catch(e) {}
   } catch (e) {
     _fbEscribiendo = false;
