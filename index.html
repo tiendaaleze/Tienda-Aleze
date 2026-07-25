@@ -4981,25 +4981,31 @@ async function procesarVenta() {
   // descontara sin que la venta llegara a guardarse, o viceversa.
   const sede = sedeAdminEfectiva();
   const batch = fbFS.batch();
-  const _deltasStock = []; // para aplicar en memoria local recién si el lote se acepta
-
+  // Agregar deltas por producto ANTES de armar el lote — si el mismo producto aparece dos
+  // veces (una suelto, otra como componente de un combo), esto evita escribir el mismo
+  // documento de stock dos veces dentro del mismo lote, cosa que Firestore no garantiza que
+  // se combine correctamente.
+  const _deltasPorProducto = new Map(); // prodId -> {prod, delta}
+  const _acumular = (prod, delta) => {
+    const actual = _deltasPorProducto.get(prod.id);
+    if (actual) actual.delta += delta;
+    else _deltasPorProducto.set(prod.id, { prod, delta });
+  };
   cart.forEach(item => {
     const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod.esCombo) {
-      batch.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
-      _deltasStock.push({ prod, delta: -item.cant });
-    }
+    if (!prod.esCombo) _acumular(prod, -item.cant);
     if (prod.esCombo && prod.componentes) {
       prod.componentes.forEach(comp => {
         const cp = DB.productos.find(x => x.id === comp.prodId);
-        if (cp) {
-          batch.set(fbFS.collection('stock').doc(String(cp.id)),
-            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
-          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
-        }
+        if (cp) _acumular(cp, -(comp.cant * item.cant));
       });
     }
+  });
+  const _deltasStock = [];
+  _deltasPorProducto.forEach(({prod, delta}) => {
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    _deltasStock.push({ prod, delta });
   });
 
   const _ventaFinal = { ...venta, sedeId: sede, origen: 'pos', estado: 'completado', estadoStock: 'descontado' };
@@ -5116,25 +5122,27 @@ async function cobrarFiado() {
   // mano todavía), solo se registra el movimiento para el rastro.
   const sede = sedeAdminEfectiva();
   const batch = fbFS.batch();
-  const _deltasStock = [];
-
+  const _deltasPorProducto = new Map();
+  const _acumular = (prod, delta) => {
+    const actual = _deltasPorProducto.get(prod.id);
+    if (actual) actual.delta += delta;
+    else _deltasPorProducto.set(prod.id, { prod, delta });
+  };
   cart.forEach(item => {
     const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod.esCombo) {
-      batch.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
-      _deltasStock.push({ prod, delta: -item.cant });
-    }
+    if (!prod.esCombo) _acumular(prod, -item.cant);
     if (prod.esCombo && prod.componentes) {
       prod.componentes.forEach(comp => {
         const cp = DB.productos.find(x => x.id === comp.prodId);
-        if (cp) {
-          batch.set(fbFS.collection('stock').doc(String(cp.id)),
-            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
-          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
-        }
+        if (cp) _acumular(cp, -(comp.cant * item.cant));
       });
     }
+  });
+  const _deltasStock = [];
+  _deltasPorProducto.forEach(({prod, delta}) => {
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    _deltasStock.push({ prod, delta });
   });
 
   batch.set(fbFS.collection('fiados').doc(String(fiado.id)), { ...fiado, sedeId: sede });
@@ -7968,7 +7976,7 @@ function _traspasoActualizarInfo() {
   if (prod && info) info.textContent = `Disponible en ${origen}: ${stockEnSede(prod, origen)} ${prod.unidad}`;
 }
 
-function confirmarTraslado() {
+async function confirmarTraslado() {
   const prodId = parseInt(document.getElementById('trsl-prod').value);
   const prod = DB.productos.find(p => p.id === prodId);
   if (!prod) { alert('Selecciona un producto.'); return; }
@@ -7981,9 +7989,32 @@ function confirmarTraslado() {
   if (cantidad > disponible) { alert(`No hay suficiente stock en ${origen}. Disponible: ${disponible} ${prod.unidad}`); return; }
   if (!confirm(`¿Confirmar traslado?\n\n${prod.nombre}: ${cantidad} ${prod.unidad}\nDesde: ${origen}\nHacia: ${destino}`)) return;
 
+  // Paquete atomico: el descuento en origen y el aumento en destino viajan juntos. Sin esto,
+  // si solo uno de los dos llegara a guardarse, el stock quedaria "perdido en el camino" —
+  // descontado de una sede sin haber llegado nunca a la otra, exactamente el riesgo real.
+  const batch = fbFS.batch();
+  // Ambos ajustes van en UNA sola escritura al mismo documento (stock/{id}) — llamar set()
+  // dos veces sobre el mismo documento dentro de un lote no garantiza que ambos cambios
+  // se combinen, es mas seguro mandarlos juntos en un solo objeto.
+  batch.set(fbFS.collection('stock').doc(String(prod.id)), {
+    [`stockPorSede.${origen}`]: firebase.firestore.FieldValue.increment(-cantidad),
+    [`stockPorSede.${destino}`]: firebase.firestore.FieldValue.increment(cantidad)
+  }, { merge: true });
+  const _movId = getId();
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
+    { id:_movId, tipo:'traslado', desc:`Traslado: ${prod.nombre} x${cantidad} ${prod.unidad} — ${origen} → ${destino}`, monto:0, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: origen });
+
+  _sincIniciar('traslado_lote', prod.id);
+  try {
+    await batch.commit();
+    _sincTerminar('traslado_lote', prod.id);
+  } catch (e) {
+    _sincError('traslado_lote', prod.id, e, 'el traslado — no se aplicó nada, el stock sigue completo en la sede de origen');
+    return;
+  }
+
   ajustarStockSede(prod, -cantidad, origen);
   ajustarStockSede(prod, cantidad, destino);
-  _pushMovimiento({ tipo:'traslado', desc:`Traslado: ${prod.nombre} x${cantidad} ${prod.unidad} — ${origen} → ${destino}`, monto:0, hora:nowTime(), fecha:today(), usuario:currentUser });
   fbGuardarProductos();
   cerrarModal('modal-traslado');
   renderInvTable();
@@ -10679,26 +10710,28 @@ async function mobCobrarFiado() {
   // movimiento viajan juntos. Sin ingreso a caja (no es efectivo en mano todavia).
   const sede = sedeAdminEfectiva();
   const batch = fbFS.batch();
-  const _deltasStock = [];
+  const _deltasPorProducto = new Map();
+  const _acumular = (prod, delta) => {
+    const actual = _deltasPorProducto.get(prod.id);
+    if (actual) actual.delta += delta;
+    else _deltasPorProducto.set(prod.id, { prod, delta });
+  };
   _fbLastWriteProdTs = Date.now();
-
   cart.forEach(item => {
     const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod.esCombo) {
-      batch.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
-      _deltasStock.push({ prod, delta: -item.cant });
-    }
+    if (!prod.esCombo) _acumular(prod, -item.cant);
     if (prod.esCombo && prod.componentes) {
       prod.componentes.forEach(comp => {
         const cp = DB.productos.find(x => x.id === comp.prodId);
-        if (cp) {
-          batch.set(fbFS.collection('stock').doc(String(cp.id)),
-            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
-          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
-        }
+        if (cp) _acumular(cp, -(comp.cant * item.cant));
       });
     }
+  });
+  const _deltasStock = [];
+  _deltasPorProducto.forEach(({prod, delta}) => {
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    _deltasStock.push({ prod, delta });
   });
 
   batch.set(fbFS.collection('fiados').doc(String(fiado.id)), { ...fiado, sedeId: sede });
@@ -10809,26 +10842,28 @@ async function mobProcesarVenta(){
   // movimiento viajan juntos, todo o nada.
   const sede = sedeAdminEfectiva();
   const batch = fbFS.batch();
-  const _deltasStock = [];
+  const _deltasPorProducto = new Map();
+  const _acumular = (prod, delta) => {
+    const actual = _deltasPorProducto.get(prod.id);
+    if (actual) actual.delta += delta;
+    else _deltasPorProducto.set(prod.id, { prod, delta });
+  };
   _fbLastWriteProdTs = Date.now();
-
   cart.forEach(item => {
     const prod = DB.productos.find(p => p.id === item.prodId);
-    if (!prod.esCombo) {
-      batch.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-item.cant) }, { merge: true });
-      _deltasStock.push({ prod, delta: -item.cant });
-    }
+    if (!prod.esCombo) _acumular(prod, -item.cant);
     if (prod.esCombo && prod.componentes) {
       prod.componentes.forEach(comp => {
         const cp = DB.productos.find(x => x.id === comp.prodId);
-        if (cp) {
-          batch.set(fbFS.collection('stock').doc(String(cp.id)),
-            { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-(comp.cant * item.cant)) }, { merge: true });
-          _deltasStock.push({ prod: cp, delta: -(comp.cant * item.cant) });
-        }
+        if (cp) _acumular(cp, -(comp.cant * item.cant));
       });
     }
+  });
+  const _deltasStock = [];
+  _deltasPorProducto.forEach(({prod, delta}) => {
+    batch.set(fbFS.collection('stock').doc(String(prod.id)),
+      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    _deltasStock.push({ prod, delta });
   });
 
   const _ventaMob = { ...venta, sedeId: sede, origen:'pos', estado:'completado', estadoStock:'descontado' };
