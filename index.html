@@ -3758,9 +3758,15 @@ function fbSincronizarCajaCampo(sede, campo, valor) {
     .then(() => _sincTerminar('caja', sede))
     .catch(e => _sincError('caja', sede, e, 'el estado de caja'));
 }
+// Interruptor para cuando UNA MISMA operación ya sincronizó caja vía un lote atómico propio
+// (retiro de efectivo, cierre de caja) — evita que el Proxy dispare SU PROPIA escritura
+// independiente encima de lo que el lote ya escribió (mismo riesgo de doble-escritura que ya
+// se encontró y corrigió en traslado y apertura de caja).
+let _cajaProxySkipSync = false;
 function _crearCajaProxy(sede, cajaObj) {
   const proxy = new Proxy(cajaObj, {
     set(target, prop, value) {
+      if (_cajaProxySkipSync) { target[prop] = value; return true; }
       if (_CAJA_CAMPOS_INCREMENTALES.includes(prop) && typeof value === 'number' && typeof target[prop] === 'number') {
         const delta = Math.round((value - target[prop]) * 100) / 100;
         target[prop] = value;
@@ -4803,7 +4809,13 @@ function ensureCajaAbierta() {
     inicialNuevo = DB.caja.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
     inicialEfectivoNuevo = (typeof DB.caja.saldoFinalEfectivo === 'number') ? DB.caja.saldoFinalEfectivo : DB.caja.saldoFinal;
   }
-  DB.caja = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
+  const _sedeECA = sedeAdminEfectiva();
+  const _cajaAutoNueva = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
+  // NUNCA "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (mismo riesgo
+  // de doble-escritura que ya se corrigió en abrirCaja()). Se envuelve el Proxy directo, y se
+  // escribe UNA vez, explícita, en vez de confiar en el setter o dejarlo solo para fbGuardar().
+  DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaAutoNueva);
+  if (fbFS) fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva).catch(e => console.warn('ensureCajaAbierta: no se pudo escribir caja/'+_sedeECA, e));
   if (!DB.movimientos) DB.movimientos = [];
   _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
 }
@@ -7776,12 +7788,35 @@ function renderCaja() {
   }
 }
 
-function abrirCaja() {
+async function abrirCaja() {
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
- DB.caja = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
+  const sede = sedeAdminEfectiva();
+  const cajaNueva = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
+  const _movId = getId();
+  const _movData = { id:_movId, tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today(), sedeId: sede };
+
+  // Paquete atomico: la apertura de caja y su movimiento de auditoria viajan juntos.
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('caja').doc(sede), cajaNueva);
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+
+  _sincIniciar('apertura_caja_lote', sede);
+  try {
+    await batch.commit();
+    _sincTerminar('apertura_caja_lote', sede);
+  } catch (e) {
+    _sincError('apertura_caja_lote', sede, e, 'la apertura de caja — no se aplicó nada');
+    return;
+  }
+
+  // NUNCA usar "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (ver la
+  // definicion de la propiedad caja), duplicaria lo que el lote ya escribio. Se envuelve el
+  // objeto nuevo en su Proxy directamente, sin pasar por el setter.
+  DB._cajas[sede] = _crearCajaProxy(sede, cajaNueva);
   if (!DB.movimientos) DB.movimientos = [];
-  _pushMovimiento({ tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today() });
-  fbGuardar(); renderCaja();
+  DB.movimientos.push(_movData);
+  renderCaja();
 }
 
 function guardarMontoAperturaDefault() {
@@ -7798,7 +7833,7 @@ function guardarMontoAperturaDefault() {
 function _saldoEfectivoTeorico() {
   return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresosEfectivo||0) - (DB.caja.retiros||0);
 }
-function abrirRetiroEfectivo() {
+async function abrirRetiroEfectivo() {
   const disponible = _saldoEfectivoTeorico();
   if (disponible <= 0) { alert('No hay efectivo disponible para retirar.'); return; }
   const monto = parseFloat(prompt(`Efectivo disponible en caja: ${sol(disponible)}\n\n¿Cuánto vas a retirar?`));
@@ -7806,9 +7841,33 @@ function abrirRetiroEfectivo() {
   if (monto > disponible && !confirm(`El monto supera el efectivo disponible (${sol(disponible)}). ¿Continuar de todas formas?`)) return;
   const destino = prompt('¿A dónde va? (ej. "Depósito BCP", "Guardado en casa")') || 'Sin especificar';
   ensureCajaAbierta();
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  // Paquete atomico: el retiro (campo de caja) y su movimiento de auditoria viajan juntos.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('caja').doc(sede),
+    { retiros: firebase.firestore.FieldValue.increment(monto) }, { merge: true });
+  const _movId = getId();
+  const _movData = { id:_movId, tipo:'retiro', desc:`Retiro de efectivo — ${destino}`, monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+
+  _sincIniciar('retiro_caja_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('retiro_caja_lote', _movId);
+  } catch (e) {
+    _sincError('retiro_caja_lote', _movId, e, 'el retiro de efectivo — no se aplicó nada');
+    return;
+  }
+
+  // El lote ya fue aceptado — recien ahora se refleja en memoria local. El interruptor evita
+  // que el Proxy de caja dispare su propia escritura encima de lo que el lote ya escribió.
+  _cajaProxySkipSync = true;
   DB.caja.retiros = (DB.caja.retiros||0) + monto;
-  _pushMovimiento({ tipo:'retiro', desc:`Retiro de efectivo — ${destino}`, monto, hora:nowTime(), fecha:today(), cajero:currentUser });
-  fbGuardar();
+  _cajaProxySkipSync = false;
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   renderCaja();
   alert(`✅ Retiro registrado: ${sol(monto)}`);
 }
@@ -7830,27 +7889,61 @@ function actualizarDiferenciaCierre() {
   diffEl.style.color = diff === 0 ? 'var(--accent)' : 'var(--danger)';
   notaWrap.style.display = Math.abs(diff) > 5 ? 'block' : 'none';
 }
-function confirmarCierreCaja() {
+async function confirmarCierreCaja() {
   const saldo = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
   const saldoEfectivo = _saldoEfectivoTeorico();
   const contado = parseFloat(document.getElementById('cc-contado').value);
   if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
   const diff = Math.round((contado - saldoEfectivo) * 100) / 100;
   const nota = document.getElementById('cc-nota').value.trim();
-  _pushMovimiento({ tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today() });
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+
+  // Paquete atomico: cierre de caja, arqueo (si aplica) y los movimientos de auditoria
+  // viajan juntos — todo o nada.
+  const sede = sedeAdminEfectiva();
+  const batch = fbFS.batch();
+  batch.set(fbFS.collection('caja').doc(sede), {
+    abierta: false, fechaCierre: today(), saldoFinal: saldo, saldoFinalEfectivo: contado
+  }, { merge: true });
+
+  const _movCierreId = getId();
+  const _movCierre = { id:_movCierreId, tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today(), sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movCierreId)), _movCierre);
+
+  let _movArqueo = null;
   if (diff !== 0) {
-    _pushMovimiento({
-      tipo: 'arqueo',
+    const _movArqueoId = getId();
+    _movArqueo = {
+      id: _movArqueoId, tipo: 'arqueo',
       desc: `Arqueo — esperado ${sol(saldoEfectivo)}, contado ${sol(contado)} (${diff>0?'sobrante':'faltante'} ${sol(Math.abs(diff))})${nota?' — '+nota:''}`,
-      monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser
-    });
+      monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede
+    };
+    batch.set(fbFS.collection('movimientos').doc(String(_movArqueoId)), _movArqueo);
   }
+
+  _sincIniciar('cierre_caja_lote', sede);
+  try {
+    await batch.commit();
+    _sincTerminar('cierre_caja_lote', sede);
+  } catch (e) {
+    _sincError('cierre_caja_lote', sede, e, 'el cierre de caja — no se aplicó nada, la caja sigue abierta');
+    return;
+  }
+
+  // El lote ya fue aceptado — recien ahora se refleja en memoria local, con el interruptor
+  // activo para que el Proxy no dispare su propia escritura encima de lo ya guardado.
+  _cajaProxySkipSync = true;
   DB.caja.abierta = false;
   DB.caja.fechaCierre = today();
   DB.caja.saldoFinal = saldo;
-  DB.caja.saldoFinalEfectivo = contado; // lo real, no lo teórico — mañana arranca del conteo verificado
+  DB.caja.saldoFinalEfectivo = contado;
+  _cajaProxySkipSync = false;
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movCierre);
+  if (_movArqueo) DB.movimientos.push(_movArqueo);
+
   cerrarModal('modal-cerrar-caja');
-  fbGuardar(); renderCaja();
+  renderCaja();
 }
 
 function updateCajaStats() {
