@@ -4844,7 +4844,15 @@ function aplicarPreciosProporcionales(cartRef, comboInfo) {
 }
 
 // ── Auto-open caja when date changes or first action of the day ──
-function ensureCajaAbierta() {
+// CRITICO: esta funcion ahora es async y DEBE llamarse con "await" ANTES de construir
+// cualquier lote que toque caja (nunca despues). Antes, cuando la primera venta del dia era
+// lo que disparaba la apertura automatica (nadie habia navegado todavia para que
+// checkAutoAbrirCaja() la abriera antes), el lote de esa venta escribia su incremento a
+// caja primero, y ensureCajaAbierta() llegaba DESPUES y reescribia el documento entero desde
+// cero (ingresos:0, egresos:0, etc.) — borrando lo que la venta acababa de escribir, en TODOS
+// los medios de pago, no solo efectivo. Ahora se espera su escritura ANTES de que la funcion
+// que llama arme su propio lote, asi nunca hay nada que pisar.
+async function ensureCajaAbierta() {
   const fechaHoy = today();
   const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
   if (DB.caja.abierta && DB.caja.fecha === fechaHoy) return; // already open today
@@ -4854,7 +4862,7 @@ function ensureCajaAbierta() {
     const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
     const saldoEfectivoAnt = ((DB.caja.inicialEfectivo ?? DB.caja.inicial) || 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
     _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
-    inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer es el punto de partida de hoy
+    inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer (todos los medios de pago) es el punto de partida de hoy
     inicialEfectivoNuevo = saldoEfectivoAnt; // mismo encadenado, pero solo con lo que es efectivo físico
     try { fbGuardar(); } catch(e) {}
   } else if (typeof DB.caja.saldoFinal === 'number') {
@@ -4867,7 +4875,10 @@ function ensureCajaAbierta() {
   // de doble-escritura que ya se corrigió en abrirCaja()). Se envuelve el Proxy directo, y se
   // escribe UNA vez, explícita, en vez de confiar en el setter o dejarlo solo para fbGuardar().
   DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaAutoNueva);
-  if (fbFS) fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva).catch(e => console.warn('ensureCajaAbierta: no se pudo escribir caja/'+_sedeECA, e));
+  if (fbFS) {
+    try { await fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva); }
+    catch(e) { console.warn('ensureCajaAbierta: no se pudo escribir caja/'+_sedeECA, e); }
+  }
   if (!DB.movimientos) DB.movimientos = [];
   _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
 }
@@ -4992,6 +5003,10 @@ function _firmaCarrito(items, metodo, clienteId) {
 
 async function procesarVenta() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
+  // CRITICO: asegurar caja abierta ANTES de armar el lote — si esto se llama despues del
+  // commit, y era la primera operacion del dia, reescribe el documento de caja entero
+  // encima del incremento que el lote acaba de escribir. Ver nota en ensureCajaAbierta().
+  await ensureCajaAbierta();
 
   const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
@@ -5116,7 +5131,6 @@ async function procesarVenta() {
       finally { _clienteProxySkipSync = false; }
     }
   }
-  ensureCajaAbierta();
   DB.caja.ingresos = (DB.caja.ingresos||0) + total;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
   DB.historialVentas.push(_ventaFinal);
@@ -5140,6 +5154,7 @@ async function cobrarFiado() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   const clienteId = parseInt(document.getElementById('pos-cliente').value);
   if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
 
   const sub = Math.round(cart.reduce((s, i) => s + i.precio * i.cant, 0) * 100) / 100;
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
@@ -5256,7 +5271,6 @@ async function cobrarFiado() {
       cli.puntos = (cli.puntos||0) + _puntosGanados;
     } finally { _clienteProxySkipSync = false; }
   }
-  ensureCajaAbierta();
   DB.historialVentas.push(_ventaFiado);
   fbGuardar();
   fbGuardarProductos();
@@ -6975,6 +6989,7 @@ async function abrirPagoBoleta(provId, idx) {
   const idxM = parseInt(prompt('Método de pago:\n' + _metodosPago.map((m,i)=>`${i+1}. ${m}`).join('\n'), '1'));
   const metodo = (idxM >= 1 && idxM <= _metodosPago.length) ? _metodosPago[idxM-1] : 'Efectivo';
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
 
   // Paquete atomico: boleta actualizada, caja y movimiento viajan juntos.
   const sede = sedeAdminEfectiva();
@@ -7002,7 +7017,6 @@ async function abrirPagoBoleta(provId, idx) {
 
   b.pagos = _pagosNuevo;
   b.pagado = _pagadoNuevo;
-  ensureCajaAbierta();
   _cajaProxySkipSync = true;
   try {
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
@@ -7438,6 +7452,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   // Esta es la funcion que coincide exactamente con el incidente real reportado (pago global
   // parcial perdido) — antes cada fiado se sincronizaba por separado, sin ninguna garantia.
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const batch = fbFS.batch();
   const _cambiosLocales = []; // {f, montoPagadoEsteFiado, pagoEntry} para aplicar tras el exito
   const _hvPagosGlobal = [];
@@ -7498,7 +7513,6 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
     try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100); }
     finally { _clienteProxySkipSync = false; }
   }
-  ensureCajaAbierta();
   DB.caja.ingresos += montoTotal;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
   if (!DB.historialVentas) DB.historialVentas = [];
@@ -7665,6 +7679,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   // pieza viajaba por separado, sin ninguna garantia de que llegaran todas juntas.
   const sede = sedeAdminEfectiva();
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const batch = fbFS.batch();
 
   const _fPagos = [...(f.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
@@ -7705,7 +7720,6 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
     try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - monto) * 100) / 100); }
     finally { _clienteProxySkipSync = false; }
   }
-  ensureCajaAbierta();
   DB.caja.ingresos += monto;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   if (!DB.historialVentas) DB.historialVentas = [];
@@ -7973,8 +7987,8 @@ async function abrirRetiroEfectivo() {
   if (!monto || isNaN(monto) || monto <= 0) return;
   if (monto > disponible && !confirm(`El monto supera el efectivo disponible (${sol(disponible)}). ¿Continuar de todas formas?`)) return;
   const destino = prompt('¿A dónde va? (ej. "Depósito BCP", "Guardado en casa")') || 'Sin especificar';
-  ensureCajaAbierta();
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
 
   // Paquete atomico: el retiro (campo de caja) y su movimiento de auditoria viajan juntos.
   const sede = sedeAdminEfectiva();
@@ -9846,6 +9860,7 @@ async function guardarGasto() {
   // podia salir plata de caja sin gasto que lo respalde, o quedar el gasto registrado sin
   // que caja lo refleje.
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const batch = fbFS.batch();
   let _gastoFinal, _movDesc, _movMonto, _movTipo, _cajaUpdate = {};
 
@@ -9897,7 +9912,6 @@ async function guardarGasto() {
     const diff = monto - old.monto;
     old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
     if (diff !== 0) {
-      ensureCajaAbierta();
       if (diff > 0) {
         DB.caja.egresos = (DB.caja.egresos||0) + diff;
         if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
@@ -9910,7 +9924,6 @@ async function guardarGasto() {
     }
   } else {
     DB_EXT.gastos.push(_gastoFinal);
-    ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
     if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
   }
@@ -9931,6 +9944,7 @@ async function eliminarGasto(id) {
 
   if (gasto && gasto.monto > 0) {
     if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+    await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
     const sede = sedeAdminEfectiva();
     // Paquete atomico: borrar el gasto, devolver el efectivo y registrar el movimiento juntos.
     const batch = fbFS.batch();
@@ -9953,7 +9967,6 @@ async function eliminarGasto(id) {
     }
 
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
-    ensureCajaAbierta();
     _cajaProxySkipSync = true;
     try {
       DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
@@ -10151,6 +10164,7 @@ async function confirmarAddCapital() {
   const desc  = document.getElementById('ac-desc').value || 'Capital adicional';
   if (monto <= 0) { alert('Monto inválido'); return; }
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const sede = sedeAdminEfectiva();
   // Capital vive en db_ext (sin colección propia) — se empaqueta lo que sí tiene colección
   // dedicada (caja + movimiento) en un lote; fbGuardarExt() sigue guardando el capital como ya lo hacía.
@@ -10175,7 +10189,6 @@ async function confirmarAddCapital() {
   DB_EXT.capital.total += monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) + monto;
   DB_EXT.capital.hist.push({ tipo:'aporte', fecha: today(), desc, monto, acum });
-  ensureCajaAbierta();
   _cajaProxySkipSync = true;
   try {
     DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
@@ -10251,6 +10264,7 @@ async function confirmarPagoCuota() {
     alert('El monto supera el préstamo pendiente de '+sol(prestamoPend)); return;
   }
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const sede = sedeAdminEfectiva();
   const batch = fbFS.batch();
   batch.set(fbFS.collection('caja').doc(sede), {
@@ -10273,7 +10287,6 @@ async function confirmarPagoCuota() {
   DB_EXT.capital.prestamoPagado = (DB_EXT.capital.prestamoPagado||0) + monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) - monto;
   DB_EXT.capital.hist.push({ tipo:'pago_prestamo', fecha, desc, monto: -monto, acum });
-  ensureCajaAbierta();
   _cajaProxySkipSync = true;
   try {
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
@@ -12126,6 +12139,7 @@ async function guardarActualizarVenta() {
     // reembolso es dinero real saliendo de caja, merece la misma garantia que una venta.
     const _sedeDev = vDB.sedeId || sedeAdminEfectiva();
     if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+    await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
     const batch = fbFS.batch();
     const _deltasStock = [];
 
@@ -12182,7 +12196,6 @@ async function guardarActualizarVenta() {
       prod.stockPorSede[_sedeDev] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDev]||0)+delta)*1000)/1000);
       prod.stock = stockTotal(prod);
     });
-    ensureCajaAbierta();
     DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
     if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
     if (!vDB.devoluciones) vDB.devoluciones = [];
@@ -12238,6 +12251,7 @@ async function guardarActualizarVenta() {
   // Mismo paquete atomico: stock, venta actualizada, caja y movimiento juntos o nada.
   const _sedeDevP = vDB.sedeId || sedeAdminEfectiva();
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const batchP = fbFS.batch();
   const _deltasStockP = [];
 
@@ -12303,7 +12317,6 @@ async function guardarActualizarVenta() {
   });
   vDB.total  = nuevoTotal;
   vDB.estado = nuevoTotal === 0 ? 'anulado' : 'parcial';
-  ensureCajaAbierta();
   DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
   if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
   if (!vDB.devoluciones) vDB.devoluciones = [];
@@ -12832,6 +12845,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       if (tipoPago === null) { _fbEscribiendo = false; return; }
       _esPagado = (tipoPago === 'cobrado');
       if (!fbFS) { _fbEscribiendo = false; alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+      await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
 
       // ── Matching / creación de cliente ────────────────────────────────────
       const telNorm = (p.telefono||p.clienteTel||'').replace(/\s/g,'');
@@ -12990,7 +13004,6 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         }
       } finally { _clienteProxySkipSync = false; }
       p.estado = 'entregado';
-      ensureCajaAbierta();
       if (_esPagado) {
         DB.caja.ingresos += p.total;
         if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
