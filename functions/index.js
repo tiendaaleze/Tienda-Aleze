@@ -249,11 +249,17 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
   // Mensaje solo de datos (sin campo "notification") — así el manejador propio del
   // Service Worker (onBackgroundMessage) decide exactamente cómo se ve, sin que
   // el navegador muestre una notificación genérica por su cuenta y quede duplicada.
+  // CRITICO: android.priority:'high' — sin esto, Android puede retrasar o directamente
+  // descartar el mensaje cuando el celular esta en ahorro de bateria con la app cerrada,
+  // que es exactamente el escenario real de un vendedor con el telefono guardado.
   const mensaje = {
     data: {
       titulo: "🛍️ Nuevo pedido online",
       cuerpo: `${pedido.clienteNombre || "Cliente"} — S/ ${(pedido.total || 0).toFixed(2)}`,
       pedidoId: String(event.params.pedidoId),
+    },
+    android: {
+      priority: "high",
     },
     tokens,
   };
