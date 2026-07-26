@@ -4954,7 +4954,7 @@ function updatePosClientes() {
   const sel = document.getElementById('pos-cliente');
   const valorActual = sel.value;
   sel.innerHTML = '<option value="">Cliente anónimo</option>';
-  DB.clientes.forEach(c => sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
+  DB.clientes.forEach(c => sel.innerHTML += `<option value="${c.id}">${c.nombre || 'Cliente sin nombre'}</option>`);
   if (valorActual) sel.value = valorActual;
 }
 
@@ -7050,7 +7050,7 @@ _norm(c.alias||'').includes(_norm(buscar)) ||
 _norm(c.tel||'').includes(_norm(buscar))
   ) : DB.clientes;
   document.getElementById('cli-tbody').innerHTML = lista.map(c => `<tr>
-    <td><strong>${c.nombre}</strong></td>
+    <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
     <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
     <td>${c.tel||'-'}</td>
     <td>${c.cumple ? formatDate(c.cumple) : '-'}</td>
@@ -9663,7 +9663,7 @@ function renderFrecuentes() {
         const pct = nv ? Math.min(100, c.total / nv.umbral * 100) : Math.min(100, c.total / 100 * 100);
         return `<tr>
           <td>${crowns[i] || i+1}</td>
-          <td><strong>${c.nombre}</strong></td>
+          <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
           <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
           <td>
             <strong>${sol(c.total)}</strong>
