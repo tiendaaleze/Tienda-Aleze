@@ -35,7 +35,10 @@ try {
       body: datos.cuerpo || '',
       icon: '/Tienda-Aleze/icon.svg',
       tag: 'pedido-' + (datos.pedidoId || Date.now()),
-      data: { pedidoId: datos.pedidoId }
+      data: { pedidoId: datos.pedidoId },
+      vibrate: [300, 100, 300, 100, 300], // el sonido lo decide el sistema operativo, no esto —
+      silent: false,                       // pero la vibracion si es confiable en Android
+      requireInteraction: true             // se queda visible hasta que se toque, no desaparece sola
     });
   });
 } catch (e) {
