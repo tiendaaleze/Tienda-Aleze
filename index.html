@@ -4875,7 +4875,13 @@ function ensureCajaAbierta() {
 function checkAutoAbrirCaja() {
   const fechaHoy = today();
   const changed = DB.caja.fecha && DB.caja.fecha !== fechaHoy;
-  const closedWithAuto = !DB.caja.abierta && parseFloat(DB.config && DB.config.montoAperturaAuto) > 0;
+  // CRITICO: antes closedWithAuto no revisaba la fecha — bastaba con "esta cerrada y hay
+  // monto de apertura automatica configurado" para volver a abrirla. Eso significaba que
+  // cualquier cierre manual DURANTE EL DIA se deshacia solo con navegar a otra pantalla,
+  // sin importar que se haya cerrado a proposito hace 5 segundos. Ahora solo se auto-abre
+  // si quedo cerrada de un DIA ANTERIOR (o nunca se abrio) — un cierre de hoy mismo nunca
+  // se revierte por esta via, sin importar cuanto tiempo pase ni cuantas veces se navegue.
+  const closedWithAuto = !DB.caja.abierta && DB.caja.fecha !== fechaHoy && parseFloat(DB.config && DB.config.montoAperturaAuto) > 0;
   if (changed || closedWithAuto) {
     ensureCajaAbierta();
     fbGuardar();
