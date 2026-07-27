@@ -4345,8 +4345,12 @@ function updatePosCartBadge() {
   }
 }
 
-function navigate(page) {
-  checkAutoAbrirCaja();
+async function navigate(page) {
+  // CRITICO: checkAutoAbrirCaja() ahora es async (espera a ensureCajaAbierta(), que a su vez
+  // espera una lectura real al servidor) — sin este await, renderCaja()/renderDashboard() de
+  // abajo pintaban con el estado de un instante antes, y el estado real recien se veia al
+  // volver a navegar o actualizar manualmente.
+  await checkAutoAbrirCaja();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const pageEl = document.getElementById('page-' + page);
@@ -4972,7 +4976,7 @@ async function ensureCajaAbierta() {
   finally { _ensureCajaAbiertaPromise = null; }
 }
 
-function checkAutoAbrirCaja() {
+async function checkAutoAbrirCaja() {
   const fechaHoy = today();
   const changed = DB.caja.fecha && DB.caja.fecha !== fechaHoy;
   // CRITICO: antes closedWithAuto no revisaba la fecha — bastaba con "esta cerrada y hay
@@ -4983,7 +4987,12 @@ function checkAutoAbrirCaja() {
   // se revierte por esta via, sin importar cuanto tiempo pase ni cuantas veces se navegue.
   const closedWithAuto = !DB.caja.abierta && DB.caja.fecha !== fechaHoy && parseFloat(DB.config && DB.config.montoAperturaAuto) > 0;
   if (changed || closedWithAuto) {
-    ensureCajaAbierta();
+    // CRITICO: ensureCajaAbierta() ahora hace una lectura real al servidor antes de decidir
+    // (agregado para corregir el bug de cache fria por sede) — eso la hizo mas lenta. Antes,
+    // renderCaja() se llamaba en la linea siguiente SIN esperarla, pintando la pantalla con
+    // el estado de un instante antes — el estado real recien se veia al volver a renderizar
+    // (por eso aparecia "hasta actualizar"). Ahora se espera de verdad antes de pintar.
+    await ensureCajaAbierta();
     fbGuardar();
     try { renderCaja(); } catch(e){}
     try { renderDashboard(); } catch(e){}
