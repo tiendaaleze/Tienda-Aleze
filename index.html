@@ -4898,35 +4898,54 @@ function aplicarPreciosProporcionales(cartRef, comboInfo) {
 // cero (ingresos:0, egresos:0, etc.) — borrando lo que la venta acababa de escribir, en TODOS
 // los medios de pago, no solo efectivo. Ahora se espera su escritura ANTES de que la funcion
 // que llama arme su propio lote, asi nunca hay nada que pisar.
+// CRITICO: proteccion contra llamadas concurrentes. checkAutoAbrirCaja() (disparado en CADA
+// navegacion) llama a esta funcion SIN esperarla — y el estado local (DB._cajas[sede]) se
+// actualiza de forma SINCRONICA antes de que la escritura real a Firestore termine. Si justo
+// despues se procesaba una venta (que SI espera correctamente), esa venta veia "ya esta
+// abierta hoy" localmente y seguia de largo con su propio lote — pero si la escritura de
+// apertura de la navegacion (un .set() COMPLETO, no un incremento) llegaba al servidor
+// DESPUES del incremento de la venta, lo pisaba igual que el bug original, solo que por una
+// via distinta. Esta promesa compartida hace que CUALQUIER llamada concurrente, sin importar
+// de que funcion venga, espere la MISMA apertura real en curso, en vez de asumir que ya
+// termino solo porque el estado local ya cambio.
+let _ensureCajaAbiertaPromise = null;
 async function ensureCajaAbierta() {
+  if (_ensureCajaAbiertaPromise) { await _ensureCajaAbiertaPromise; return; }
   const fechaHoy = today();
-  const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
   if (DB.caja.abierta && DB.caja.fecha === fechaHoy) return; // already open today
-  let inicialNuevo = montoAuto; // fallback: solo si nunca hubo caja previa (primer uso del sistema)
-  let inicialEfectivoNuevo = montoAuto;
-  if (DB.caja.abierta && DB.caja.fecha && DB.caja.fecha !== fechaHoy) {
-    const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
-    const saldoEfectivoAnt = ((DB.caja.inicialEfectivo ?? DB.caja.inicial) || 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
-    _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
-    inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer (todos los medios de pago) es el punto de partida de hoy
-    inicialEfectivoNuevo = saldoEfectivoAnt; // mismo encadenado, pero solo con lo que es efectivo físico
-    try { fbGuardar(); } catch(e) {}
-  } else if (typeof DB.caja.saldoFinal === 'number') {
-    inicialNuevo = DB.caja.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
-    inicialEfectivoNuevo = (typeof DB.caja.saldoFinalEfectivo === 'number') ? DB.caja.saldoFinalEfectivo : DB.caja.saldoFinal;
-  }
-  const _sedeECA = sedeAdminEfectiva();
-  const _cajaAutoNueva = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
-  // NUNCA "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (mismo riesgo
-  // de doble-escritura que ya se corrigió en abrirCaja()). Se envuelve el Proxy directo, y se
-  // escribe UNA vez, explícita, en vez de confiar en el setter o dejarlo solo para fbGuardar().
-  DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaAutoNueva);
-  if (fbFS) {
-    try { await fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva); }
-    catch(e) { console.warn('ensureCajaAbierta: no se pudo escribir caja/'+_sedeECA, e); }
-  }
-  if (!DB.movimientos) DB.movimientos = [];
-  _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
+
+  _ensureCajaAbiertaPromise = (async () => {
+    const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
+    let inicialNuevo = montoAuto; // fallback: solo si nunca hubo caja previa (primer uso del sistema)
+    let inicialEfectivoNuevo = montoAuto;
+    if (DB.caja.abierta && DB.caja.fecha && DB.caja.fecha !== fechaHoy) {
+      const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
+      const saldoEfectivoAnt = ((DB.caja.inicialEfectivo ?? DB.caja.inicial) || 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
+      _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
+      inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer (todos los medios de pago) es el punto de partida de hoy
+      inicialEfectivoNuevo = saldoEfectivoAnt; // mismo encadenado, pero solo con lo que es efectivo físico
+      try { fbGuardar(); } catch(e) {}
+    } else if (typeof DB.caja.saldoFinal === 'number') {
+      inicialNuevo = DB.caja.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
+      inicialEfectivoNuevo = (typeof DB.caja.saldoFinalEfectivo === 'number') ? DB.caja.saldoFinalEfectivo : DB.caja.saldoFinal;
+    }
+    const _sedeECA = sedeAdminEfectiva();
+    const _cajaAutoNueva = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
+    if (fbFS) {
+      try { await fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva); }
+      catch(e) { console.warn('ensureCajaAbierta: no se pudo escribir caja/'+_sedeECA, e); }
+    }
+    // NUNCA "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (mismo riesgo
+    // de doble-escritura que ya se corrigió en abrirCaja()). El estado local recién se aplica
+    // DESPUES de que la escritura real terminó (o fallo) — nunca antes, para que ningun otro
+    // llamador que llegue mientras tanto pueda ver "ya esta abierta" antes de que sea cierto.
+    DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaAutoNueva);
+    if (!DB.movimientos) DB.movimientos = [];
+    _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
+  })();
+
+  try { await _ensureCajaAbiertaPromise; }
+  finally { _ensureCajaAbiertaPromise = null; }
 }
 
 function checkAutoAbrirCaja() {
