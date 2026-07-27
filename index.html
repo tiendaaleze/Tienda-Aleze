@@ -4915,21 +4915,45 @@ async function ensureCajaAbierta() {
   if (DB.caja.abierta && DB.caja.fecha === fechaHoy) return; // already open today
 
   _ensureCajaAbiertaPromise = (async () => {
+    const _sedeECA = sedeAdminEfectiva();
+
+    // CRITICO — causa raiz real encontrada con prueba en produccion: _cajaSedeEnvuelta()
+    // crea un objeto LOCAL en blanco (abierta:false) para cualquier sede que este
+    // dispositivo/sesion todavia no cargo desde Firestore — SIN verificar nunca que hay
+    // realmente en el servidor. Si se cambia de sede, o la cache local esta "fria" por
+    // cualquier motivo, DB.caja.abierta puede ser false LOCALMENTE aunque el servidor tenga
+    // una caja real, abierta, con saldo — y el auto-abrir de mas abajo pisaria ese estado
+    // real con uno en blanco. Antes de decidir nada, se hace una lectura real y fresca del
+    // servidor — nunca se confia ciegamente en el estado local para esta decision especifica.
+    let _cajaServidor = null;
+    if (fbFS) {
+      try {
+        const snap = await fbFS.collection('caja').doc(_sedeECA).get();
+        if (snap.exists) _cajaServidor = snap.data();
+      } catch(e) { console.warn('ensureCajaAbierta: no se pudo leer el estado real de caja/'+_sedeECA, e); }
+    }
+    // Si el servidor SI tiene una caja abierta y vigente para hoy, no hay nada que abrir —
+    // solo hay que reflejarla localmente (la cache local estaba desactualizada, no el servidor).
+    if (_cajaServidor && _cajaServidor.abierta && _cajaServidor.fecha === fechaHoy) {
+      DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaServidor);
+      return;
+    }
+
     const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
     let inicialNuevo = montoAuto; // fallback: solo si nunca hubo caja previa (primer uso del sistema)
     let inicialEfectivoNuevo = montoAuto;
-    if (DB.caja.abierta && DB.caja.fecha && DB.caja.fecha !== fechaHoy) {
-      const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
-      const saldoEfectivoAnt = ((DB.caja.inicialEfectivo ?? DB.caja.inicial) || 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
-      _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+DB.caja.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:DB.caja.fecha });
+    const _cajaRef = _cajaServidor || DB.caja; // preferir SIEMPRE lo real del servidor sobre lo local
+    if (_cajaRef.abierta && _cajaRef.fecha && _cajaRef.fecha !== fechaHoy) {
+      const saldoAnt = (_cajaRef.inicial||0) + (_cajaRef.ingresos||0) - (_cajaRef.egresos||0);
+      const saldoEfectivoAnt = ((_cajaRef.inicialEfectivo ?? _cajaRef.inicial) || 0) + (_cajaRef.ingresosEfectivo||0) - (_cajaRef.egresos||0) - (_cajaRef.retiros||0);
+      _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+_cajaRef.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:_cajaRef.fecha });
       inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer (todos los medios de pago) es el punto de partida de hoy
       inicialEfectivoNuevo = saldoEfectivoAnt; // mismo encadenado, pero solo con lo que es efectivo físico
       try { fbGuardar(); } catch(e) {}
-    } else if (typeof DB.caja.saldoFinal === 'number') {
-      inicialNuevo = DB.caja.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
-      inicialEfectivoNuevo = (typeof DB.caja.saldoFinalEfectivo === 'number') ? DB.caja.saldoFinalEfectivo : DB.caja.saldoFinal;
+    } else if (typeof _cajaRef.saldoFinal === 'number') {
+      inicialNuevo = _cajaRef.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
+      inicialEfectivoNuevo = (typeof _cajaRef.saldoFinalEfectivo === 'number') ? _cajaRef.saldoFinalEfectivo : _cajaRef.saldoFinal;
     }
-    const _sedeECA = sedeAdminEfectiva();
     const _cajaAutoNueva = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
     if (fbFS) {
       try { await fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva); }
