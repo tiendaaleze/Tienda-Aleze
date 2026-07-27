@@ -203,7 +203,7 @@ if (_esIOS()) {
      antes de seguir.
      ══════════════════════════════════════════════════════════════════════ -->
 <script type="module">
-  import { getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { initializeApp as initializeAppModular } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import {
     getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc,
     collection, query, where, orderBy, limit,
@@ -222,7 +222,7 @@ if (_esIOS()) {
   // iniciarFirebase(), después de que Compat ya haya inicializado la app
   // (si se llamara acá arriba, todavía no existiría ninguna app que obtener).
   window.__fbModular = {
-    getApp,
+    initializeAppModular,
     firestore: { getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
     auth: { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously },
     storage: { getStorage, ref, uploadBytes, getDownloadURL, deleteObject },
@@ -11422,24 +11422,27 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       // la llamada falla con un error claro (manejado en tndPagarEnLinea), no en silencio.
       try { fbFunctions = firebase.functions(); } catch(e) { fbFunctions = null; }
 
-      // ── SDK modular — enganchar a la MISMA app que Compat ya inicializó ─────────
-      // Recién acá tiene sentido llamar getApp(): Compat ya corrió firebase.initializeApp()
-      // arriba, así que ya existe una app para obtener. Si esto falla por cualquier motivo
-      // (script modular no cargó, CDN caído, etc.), el sistema entero sigue funcionando
-      // igual que siempre por Compat — esto es un agregado, nunca un reemplazo, así que
-      // un fallo acá no debe frenar el login.
+      // ── SDK modular — inicializar su PROPIA conexión al mismo proyecto ─────────
+      // CORRECCION: getApp() fallaba con "No Firebase App '[DEFAULT]' has been created" —
+      // Compat y el modulo ES son 2 paquetes cargados por separado desde el CDN (uno como
+      // script clasico, otro como modulo), cada uno con su PROPIO registro interno de apps
+      // en memoria — no comparten estado aunque sean la "misma version". La solucion real es
+      // que el lado modular inicialice SU PROPIA conexion con el mismo FIREBASE_CONFIG —
+      // apunta al mismo proyecto/base de datos real, son 2 conexiones tecnicas distintas a
+      // la misma fuente de verdad, no 2 proyectos distintos. Si esto falla, el sistema entero
+      // sigue funcionando igual por Compat — esto es un agregado, nunca un reemplazo.
       try {
         if (window.__fbModular) {
-          const appModular = window.__fbModular.getApp();
+          const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
           dbModular = window.__fbModular.firestore.getFirestore(appModular);
           authModular = window.__fbModular.auth.getAuth(appModular);
           storageModular = window.__fbModular.storage.getStorage(appModular);
-          console.log('[SDK modular] Enganchado a la app real — listo para empezar a migrar funciones.');
+          console.log('[SDK modular] Conexión propia inicializada — listo para empezar a migrar funciones.');
         } else {
           console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
         }
       } catch(modErr) {
-        console.warn('[SDK modular] No se pudo enganchar (el sistema sigue por Compat sin problema):', modErr.message);
+        console.warn('[SDK modular] No se pudo inicializar (el sistema sigue por Compat sin problema):', modErr.message);
       }
 
       return true;
