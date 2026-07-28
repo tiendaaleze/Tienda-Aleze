@@ -207,7 +207,7 @@ if (_esIOS()) {
   import {
     getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc,
     collection, query, where, orderBy, limit,
-    writeBatch, increment, serverTimestamp, deleteField,
+    writeBatch, runTransaction, increment, serverTimestamp, deleteField,
     onSnapshot, Timestamp
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import {
@@ -223,7 +223,7 @@ if (_esIOS()) {
   // (si se llamara acá arriba, todavía no existiría ninguna app que obtener).
   window.__fbModular = {
     initializeAppModular,
-    firestore: { getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
+    firestore: { getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, runTransaction, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
     auth: { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously },
     storage: { getStorage, ref, uploadBytes, getDownloadURL, deleteObject },
     appCheck: { initializeAppCheck, ReCaptchaV3Provider, getAppCheckToken },
@@ -4082,8 +4082,8 @@ async function doLogin() {
           fbFS.collection('clientes').get(), // clientes: todos — un cliente no "vence", nunca deberia faltar
           fbFS.collection('mermas').where('fecha', '>=', _limiteReconcilia).get(),
           fbFS.collection('movimientos').where('fecha', '>=', _limiteReconcilia).get(),
-          fbFS.collection('promociones').get(), // promociones: todas — ya no vive en aleze/db, esta es la unica fuente
-          fbFS.collection('proveedores').get(), // proveedores: todos — un proveedor no "vence"
+          getDocsM(collectionM(dbModular, 'promociones')), // promociones: todas — ya no vive en aleze/db, esta es la unica fuente [SDK modular]
+          getDocsM(collectionM(dbModular, 'proveedores')), // proveedores: todos — un proveedor no "vence" [SDK modular]
           fbFS.collection('boletas').get() // para reconstruir prov.boletas en memoria (ver mas abajo)
         ]);
         if (!DB.historialVentas) DB.historialVentas = [];
@@ -6576,9 +6576,9 @@ function guardarProveedor() {
     _provFinal = { id: getId(), ...data, boletas: [] };
     DB.proveedores.push(_provFinal);
   }
-  if (fbFS) {
+  if (dbModular) { // [SDK modular]
     const { boletas, ...provSinBoletas } = _provFinal;
-    fbFS.collection('proveedores').doc(String(_provFinal.id)).set(provSinBoletas).catch(e => console.warn('No se pudo guardar proveedores/'+_provFinal.id, e));
+    setDocM(docM(dbModular, 'proveedores', String(_provFinal.id)), provSinBoletas).catch(e => console.warn('No se pudo guardar proveedores/'+_provFinal.id, e));
   }
   cerrarModal('modal-proveedor');
   renderProveedores();
@@ -6596,7 +6596,7 @@ function eliminarProveedor(id) {
   if (fbFS && prov && prov.boletas) {
     prov.boletas.forEach(b => fbFS.collection('boletas').doc(String(b.id)).delete().catch(()=>{}));
   }
-  if (fbFS) fbFS.collection('proveedores').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar proveedores/'+id, e));
+  if (dbModular) deleteDocM(docM(dbModular, 'proveedores', String(id))).catch(e => console.warn('No se pudo borrar proveedores/'+id, e)); // [SDK modular]
   DB.proveedores = DB.proveedores.filter(p => p.id !== id);
   renderProveedores();
 }
@@ -10976,7 +10976,7 @@ function guardarPromocion() {
     _promoFinal = { id: getId(), ...data };
     DB.promociones.push(_promoFinal);
   }
-  if (fbFS) fbFS.collection('promociones').doc(String(_promoFinal.id)).set(_promoFinal).catch(e => console.warn('No se pudo guardar promociones/'+_promoFinal.id, e));
+  if (dbModular) setDocM(docM(dbModular, 'promociones', String(_promoFinal.id)), _promoFinal).catch(e => console.warn('No se pudo guardar promociones/'+_promoFinal.id, e)); // [SDK modular]
   cerrarModal('modal-promocion');
   renderPromociones();
   try { renderPosGrid(); } catch(e) {}
@@ -10991,7 +10991,7 @@ function togglePromo(id) {
     const prodPack = DB.productos.find(x => x.id === p.packProdId);
     if (prodPack) { prodPack.promoActiva = p.activa; fbGuardarProductos(); }
   }
-  if (fbFS) fbFS.collection('promociones').doc(String(id)).set({ activa: p.activa }, { merge: true }).catch(e => console.warn('No se pudo actualizar promociones/'+id, e));
+  if (dbModular) setDocM(docM(dbModular, 'promociones', String(id)), { activa: p.activa }, { merge: true }).catch(e => console.warn('No se pudo actualizar promociones/'+id, e)); // [SDK modular]
   renderPromociones();
   try { renderPosGrid(); } catch(e){}
   try { renderMobPosGrid(); } catch(e){}
@@ -11007,7 +11007,7 @@ function eliminarPromo(id) {
     if (fbFS) fbFS.collection('stock').doc(String(p.packProdId)).delete().catch(()=>{});
   }
   DB.promociones = DB.promociones.filter(x => x.id !== id);
-  if (fbFS) fbFS.collection('promociones').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar promociones/'+id, e));
+  if (dbModular) deleteDocM(docM(dbModular, 'promociones', String(id))).catch(e => console.warn('No se pudo borrar promociones/'+id, e)); // [SDK modular]
   renderPromociones();
 }
 
@@ -11308,6 +11308,12 @@ let dbModular = null;
 let authModular = null;
 let storageModular = null;
 let messagingModular = null;
+// Alias cortos para las funciones modulares de Firestore — se asignan dentro de
+// iniciarFirebase() una vez que window.__fbModular esta confirmado disponible. Evita repetir
+// "window.__fbModular.firestore.X" en cada uno de los puntos de contacto que se van migrando.
+let docM, setDocM, getDocM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
+    queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
+    serverTimestampM, deleteFieldM, onSnapshotM;
 
 // ══════════════════════════════════════════════════════════════════════════
 // Visibilidad real de sincronización — camino completo, no un parche.
@@ -11506,6 +11512,11 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           dbModular = window.__fbModular.firestore.getFirestore(appModular);
           authModular = window.__fbModular.auth.getAuth(appModular);
           storageModular = window.__fbModular.storage.getStorage(appModular);
+          ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
+             updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
+             where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
+             runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
+             deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
           console.log('[SDK modular] Conexión propia inicializada — listo para empezar a migrar funciones.');
         } else {
           console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
