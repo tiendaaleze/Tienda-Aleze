@@ -4091,12 +4091,14 @@ async function doLogin() {
         camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
         _envolverTodosClientes();
         if (data.config && data.config.passwords) Object.assign(PASSWORDS, data.config.passwords);
-        // Caja por sede: formato nuevo (cajas) si existe, si no migra el formato viejo (caja unica -> principal)
-        if (data.cajas) DB._cajas = data.cajas;
-        else if (data.caja) DB._cajas = { principal: data.caja };
+        // CRITICO: caja YA NO se lee de aleze/db.cajas en ningun lado — es una copia vieja,
+        // legado. La unica fuente de verdad es la coleccion dedicada, leida justo abajo. Si
+        // el dispositivo esta genuinamente offline en el primer login de su vida (sin nada
+        // en cache local de IndexedDB todavia), DB._cajas queda en su estado por defecto en
+        // blanco hasta que haya señal — ensureCajaAbierta() ya maneja ese caso con su propio
+        // respaldo offline.
       }
-      // Fase Offline: trae la caja más fresca desde la colección con incremento atómico —
-      // puede tener cambios más recientes que el snapshot de arriba (aleze/db.cajas).
+      // Trae la caja real desde su colección dedicada — única fuente de verdad.
       try {
         const cajaSnap = await fbFS.collection('caja').get();
         cajaSnap.forEach(doc => { DB._cajas[doc.id] = doc.data(); });
@@ -4247,6 +4249,8 @@ currentRole = role;
   // ── PASO 6: Listener en tiempo real (DESPUÉS del render inicial) ──
   fbEscuchar();
   fbEscucharPedidosOnline();
+  fbEscucharCaja();
+  _programarChequeoMedianoche();
   if (currentRole === 'admin') iniciarBackupAutomatico();
   _registrarNotificacionesPush();
 }
@@ -4894,24 +4898,26 @@ function aplicarPreciosProporcionales(cartRef, comboInfo) {
 }
 
 // ── Auto-open caja when date changes or first action of the day ──
-// CRITICO: esta funcion ahora es async y DEBE llamarse con "await" ANTES de construir
-// cualquier lote que toque caja (nunca despues). Antes, cuando la primera venta del dia era
-// lo que disparaba la apertura automatica (nadie habia navegado todavia para que
-// checkAutoAbrirCaja() la abriera antes), el lote de esa venta escribia su incremento a
-// caja primero, y ensureCajaAbierta() llegaba DESPUES y reescribia el documento entero desde
-// cero (ingresos:0, egresos:0, etc.) — borrando lo que la venta acababa de escribir, en TODOS
-// los medios de pago, no solo efectivo. Ahora se espera su escritura ANTES de que la funcion
-// que llama arme su propio lote, asi nunca hay nada que pisar.
-// CRITICO: proteccion contra llamadas concurrentes. checkAutoAbrirCaja() (disparado en CADA
-// navegacion) llama a esta funcion SIN esperarla — y el estado local (DB._cajas[sede]) se
-// actualiza de forma SINCRONICA antes de que la escritura real a Firestore termine. Si justo
-// despues se procesaba una venta (que SI espera correctamente), esa venta veia "ya esta
-// abierta hoy" localmente y seguia de largo con su propio lote — pero si la escritura de
-// apertura de la navegacion (un .set() COMPLETO, no un incremento) llegaba al servidor
-// DESPUES del incremento de la venta, lo pisaba igual que el bug original, solo que por una
-// via distinta. Esta promesa compartida hace que CUALQUIER llamada concurrente, sin importar
-// de que funcion venga, espere la MISMA apertura real en curso, en vez de asumir que ya
-// termino solo porque el estado local ya cambio.
+// CRITICO: usa runTransaction() en vez de leer y escribir por separado. Firestore garantiza
+// que la lectura dentro de una transaccion es SIEMPRE real, del servidor, nunca de cache
+// local — ni siquiera con la persistencia offline activada. Esto cierra de raiz la carrera
+// que causaba "saldo heredado S/0.00" despues de un cierre: antes, un simple .get() podia
+// devolver una version en cache por una fraccion de segundo, incluso estando online.
+// Ademas, si dos dispositivos intentan auto-abrir al mismo instante, Firestore resuelve el
+// orden solo (reintenta la transaccion perdedora automaticamente) — nunca se pisan.
+//
+// Las transacciones NO funcionan sin conexion (limitacion real de Firestore, no una eleccion
+// de diseño). Como la apertura debe funcionar con solo abrir la app, sin importar la señal,
+// hay un respaldo: si la transaccion falla por estar offline, se abre localmente con la
+// mejor informacion disponible en ese momento (igual que el comportamiento historico), sin
+// bloquear ninguna venta. El listener dedicado a caja (fbEscucharCaja) corrige esto solo en
+// cuanto vuelva la señal — el servidor manda siempre, aunque ya se hayan hecho ventas locales
+// con el saldo viejo mientras tanto (decisión confirmada explícitamente).
+//
+// Proteccion contra llamadas concurrentes DENTRO del mismo dispositivo: checkAutoAbrirCaja()
+// (disparado en cada navegación) llama a esta funcion sin esperarla — esta promesa compartida
+// hace que cualquier llamada que llegue mientras una apertura ya esta en curso espere esa
+// MISMA apertura, en vez de arrancar una segunda por su cuenta.
 let _ensureCajaAbiertaPromise = null;
 async function ensureCajaAbierta() {
   if (_ensureCajaAbiertaPromise) { await _ensureCajaAbiertaPromise; return; }
@@ -4920,56 +4926,86 @@ async function ensureCajaAbierta() {
 
   _ensureCajaAbiertaPromise = (async () => {
     const _sedeECA = sedeAdminEfectiva();
+    const cajaRef = fbFS ? fbFS.collection('caja').doc(_sedeECA) : null;
+    let _cajaResultado = null;
+    let _offline = false;
+    let _movApertura = null;
 
-    // CRITICO — causa raiz real encontrada con prueba en produccion: _cajaSedeEnvuelta()
-    // crea un objeto LOCAL en blanco (abierta:false) para cualquier sede que este
-    // dispositivo/sesion todavia no cargo desde Firestore — SIN verificar nunca que hay
-    // realmente en el servidor. Si se cambia de sede, o la cache local esta "fria" por
-    // cualquier motivo, DB.caja.abierta puede ser false LOCALMENTE aunque el servidor tenga
-    // una caja real, abierta, con saldo — y el auto-abrir de mas abajo pisaria ese estado
-    // real con uno en blanco. Antes de decidir nada, se hace una lectura real y fresca del
-    // servidor — nunca se confia ciegamente en el estado local para esta decision especifica.
-    let _cajaServidor = null;
     if (fbFS) {
       try {
-        const snap = await fbFS.collection('caja').doc(_sedeECA).get();
-        if (snap.exists) _cajaServidor = snap.data();
-      } catch(e) { console.warn('ensureCajaAbierta: no se pudo leer el estado real de caja/'+_sedeECA, e); }
-    }
-    // Si el servidor SI tiene una caja abierta y vigente para hoy, no hay nada que abrir —
-    // solo hay que reflejarla localmente (la cache local estaba desactualizada, no el servidor).
-    if (_cajaServidor && _cajaServidor.abierta && _cajaServidor.fecha === fechaHoy) {
-      DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaServidor);
-      return;
+        const _r = await fbFS.runTransaction(async (tx) => {
+          const snap = await tx.get(cajaRef); // lectura garantizada real, nunca de cache
+          const cajaServidor = snap.exists ? snap.data() : null;
+
+          if (cajaServidor && cajaServidor.abierta && cajaServidor.fecha === fechaHoy) {
+            return { caja: cajaServidor, mov: null }; // ya esta correctamente abierta, nada que escribir
+          }
+
+          const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
+          let inicialNuevo = montoAuto;
+          let inicialEfectivoNuevo = montoAuto;
+          if (cajaServidor && cajaServidor.abierta && cajaServidor.fecha && cajaServidor.fecha !== fechaHoy) {
+            const saldoAnt = (cajaServidor.inicial||0) + (cajaServidor.ingresos||0) - (cajaServidor.egresos||0);
+            const saldoEfectivoAnt = ((cajaServidor.inicialEfectivo ?? cajaServidor.inicial) || 0) + (cajaServidor.ingresosEfectivo||0) - (cajaServidor.egresos||0) - (cajaServidor.retiros||0);
+            inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer (todos los medios de pago) es el punto de partida de hoy
+            inicialEfectivoNuevo = saldoEfectivoAnt;
+            const _movCierreId = getId();
+            const _movCierre = { id:_movCierreId, tipo:'cierre-auto', desc:'Cierre automático — '+cajaServidor.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaServidor.fecha, sedeId:_sedeECA };
+            tx.set(fbFS.collection('movimientos').doc(String(_movCierreId)), _movCierre);
+          } else if (cajaServidor && typeof cajaServidor.saldoFinal === 'number') {
+            inicialNuevo = cajaServidor.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
+            inicialEfectivoNuevo = (typeof cajaServidor.saldoFinalEfectivo === 'number') ? cajaServidor.saldoFinalEfectivo : cajaServidor.saldoFinal;
+          }
+
+          const cajaNueva = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
+          tx.set(cajaRef, cajaNueva);
+          const _movAperturaId = getId();
+          const _mov = { id:_movAperturaId, tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy, sedeId:_sedeECA };
+          tx.set(fbFS.collection('movimientos').doc(String(_movAperturaId)), _mov);
+          return { caja: cajaNueva, mov: _mov };
+        });
+        _cajaResultado = _r.caja;
+        _movApertura = _r.mov;
+      } catch(e) {
+        console.warn('ensureCajaAbierta: transacción falló (probablemente sin conexión), usando respaldo local:', e.message);
+        _offline = true;
+      }
+    } else {
+      _offline = true;
     }
 
-    const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
-    let inicialNuevo = montoAuto; // fallback: solo si nunca hubo caja previa (primer uso del sistema)
-    let inicialEfectivoNuevo = montoAuto;
-    const _cajaRef = _cajaServidor || DB.caja; // preferir SIEMPRE lo real del servidor sobre lo local
-    if (_cajaRef.abierta && _cajaRef.fecha && _cajaRef.fecha !== fechaHoy) {
-      const saldoAnt = (_cajaRef.inicial||0) + (_cajaRef.ingresos||0) - (_cajaRef.egresos||0);
-      const saldoEfectivoAnt = ((_cajaRef.inicialEfectivo ?? _cajaRef.inicial) || 0) + (_cajaRef.ingresosEfectivo||0) - (_cajaRef.egresos||0) - (_cajaRef.retiros||0);
-      _pushMovimiento({ tipo:'cierre-auto', desc:'Cierre automático — '+_cajaRef.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:_cajaRef.fecha });
-      inicialNuevo = saldoAnt; // ENCADENA: el saldo real de ayer (todos los medios de pago) es el punto de partida de hoy
-      inicialEfectivoNuevo = saldoEfectivoAnt; // mismo encadenado, pero solo con lo que es efectivo físico
-      try { fbGuardar(); } catch(e) {}
-    } else if (typeof _cajaRef.saldoFinal === 'number') {
-      inicialNuevo = _cajaRef.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
-      inicialEfectivoNuevo = (typeof _cajaRef.saldoFinalEfectivo === 'number') ? _cajaRef.saldoFinalEfectivo : _cajaRef.saldoFinal;
+    if (_offline) {
+      // Respaldo offline: abrir localmente con lo mejor disponible, sin bloquear la venta.
+      // El servidor manda siempre en cuanto vuelva la señal (decisión ya confirmada) — el
+      // listener dedicado a caja corrige esto solo, no hace falta ninguna accion manual.
+      const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
+      let inicialNuevo = montoAuto;
+      let inicialEfectivoNuevo = montoAuto;
+      if (DB.caja.abierta && DB.caja.fecha && DB.caja.fecha !== fechaHoy) {
+        const saldoAnt = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
+        const saldoEfectivoAnt = ((DB.caja.inicialEfectivo ?? DB.caja.inicial) || 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresos||0) - (DB.caja.retiros||0);
+        inicialNuevo = saldoAnt;
+        inicialEfectivoNuevo = saldoEfectivoAnt;
+      } else if (typeof DB.caja.saldoFinal === 'number') {
+        inicialNuevo = DB.caja.saldoFinal;
+        inicialEfectivoNuevo = (typeof DB.caja.saldoFinalEfectivo === 'number') ? DB.caja.saldoFinalEfectivo : DB.caja.saldoFinal;
+      }
+      _cajaResultado = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto-offline' };
+      _movApertura = { id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+') [pendiente de confirmar con el servidor]', monto:0, hora:nowTime(), fecha:fechaHoy, sedeId:_sedeECA };
+      // Se encola para cuando vuelva la señal — Firestore la aplica sola al reconectar; si el
+      // servidor real es distinto, el listener dedicado a caja lo corrige apenas llegue.
+      if (fbFS && cajaRef) cajaRef.set(_cajaResultado, { merge: true }).catch(()=>{});
     }
-    const _cajaAutoNueva = { abierta:true, inicial:inicialNuevo, inicialEfectivo:inicialEfectivoNuevo, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser||'Sistema', fecha:fechaHoy, apertura:'auto' };
-    if (fbFS) {
-      try { await fbFS.collection('caja').doc(_sedeECA).set(_cajaAutoNueva); }
-      catch(e) { console.warn('ensureCajaAbierta: no se pudo escribir caja/'+_sedeECA, e); }
+
+    // NUNCA "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta. El estado
+    // local recién se aplica DESPUES de que la escritura real terminó (o fallo) — nunca
+    // antes, para que ningun otro llamador que llegue mientras tanto vea "ya esta abierta"
+    // antes de que sea cierto.
+    DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaResultado);
+    if (_movApertura) {
+      if (!DB.movimientos) DB.movimientos = [];
+      DB.movimientos.push(_movApertura);
     }
-    // NUNCA "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (mismo riesgo
-    // de doble-escritura que ya se corrigió en abrirCaja()). El estado local recién se aplica
-    // DESPUES de que la escritura real terminó (o fallo) — nunca antes, para que ningun otro
-    // llamador que llegue mientras tanto pueda ver "ya esta abierta" antes de que sea cierto.
-    DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaAutoNueva);
-    if (!DB.movimientos) DB.movimientos = [];
-    _pushMovimiento({ tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy });
   })();
 
   try { await _ensureCajaAbiertaPromise; }
@@ -4997,6 +5033,31 @@ async function checkAutoAbrirCaja() {
     try { renderCaja(); } catch(e){}
     try { renderDashboard(); } catch(e){}
   }
+}
+
+// ── Temporizador de medianoche — mientras la app esta abierta ──────────────────────────────
+// Complementa (no reemplaza) el disparo por accion de checkAutoAbrirCaja(): si alguien tiene
+// la app abierta pasando la medianoche, la transicion de dia se siente automatica, sin
+// necesitar que alguien navegue o procese algo primero. Si NADIE tiene la app abierta a esa
+// hora (lo mas comun, de madrugada), este temporizador simplemente no esta corriendo — ahi
+// sigue siendo la revision retroactiva en la primera accion del dia quien se encarga,
+// exactamente como ya funciona. No hay forma de tener un reloj activo sin que alguien tenga
+// la pagina abierta — esto es una limitacion real del navegador, no una eleccion de diseño.
+let _medianocheTimer = null;
+function _programarChequeoMedianoche() {
+  if (_medianocheTimer) { clearTimeout(_medianocheTimer); _medianocheTimer = null; }
+  const ahora = new Date();
+  const proximaMedianoche = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() + 1, 0, 1, 0);
+  const msHasta = proximaMedianoche.getTime() - ahora.getTime();
+  _medianocheTimer = setTimeout(async () => {
+    try {
+      await ensureCajaAbierta();
+      fbGuardar();
+      try { renderCaja(); } catch(e){}
+      try { renderDashboard(); } catch(e){}
+    } catch(e) { console.warn('[Medianoche] Error en la transicion automatica de dia:', e); }
+    _programarChequeoMedianoche(); // reprogramar para la noche siguiente
+  }, msHasta);
 }
 
 function calcComboDescuento(cartRef) {
@@ -8046,31 +8107,36 @@ function renderCaja() {
 async function abrirCaja() {
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
   const sede = sedeAdminEfectiva();
-  const cajaNueva = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
-  const _movId = getId();
-  const _movData = { id:_movId, tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today(), sedeId: sede };
-
-  // Paquete atomico: la apertura de caja y su movimiento de auditoria viajan juntos.
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('caja').doc(sede), cajaNueva);
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
-  _sincIniciar('apertura_caja_lote', sede);
+  // CRITICO: runTransaction() en vez de lote — garantiza que la lectura es siempre real del
+  // servidor (nunca de cache), igual criterio que ensureCajaAbierta(). Si dos personas abren
+  // caja al mismo instante, Firestore resuelve el orden solo, sin que se pisen entre si.
+  const _movId = getId();
+  let _resultado;
+  _sincIniciar('apertura_caja_manual', sede);
   try {
-    await batch.commit();
-    _sincTerminar('apertura_caja_lote', sede);
+    _resultado = await fbFS.runTransaction(async (tx) => {
+      const cajaRef = fbFS.collection('caja').doc(sede);
+      await tx.get(cajaRef); // lectura formal — garantiza consistencia real con el servidor
+      const cajaNueva = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
+      tx.set(cajaRef, cajaNueva);
+      const _movData = { id:_movId, tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today(), sedeId: sede };
+      tx.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+      return { cajaNueva, _movData };
+    });
+    _sincTerminar('apertura_caja_manual', sede);
   } catch (e) {
-    _sincError('apertura_caja_lote', sede, e, 'la apertura de caja — no se aplicó nada');
+    _sincError('apertura_caja_manual', sede, e, 'la apertura de caja — no se aplicó nada. Revisa tu conexión e intenta de nuevo');
     return;
   }
 
   // NUNCA usar "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (ver la
-  // definicion de la propiedad caja), duplicaria lo que el lote ya escribio. Se envuelve el
-  // objeto nuevo en su Proxy directamente, sin pasar por el setter.
-  DB._cajas[sede] = _crearCajaProxy(sede, cajaNueva);
+  // definicion de la propiedad caja), duplicaria lo que la transaccion ya escribio. Se
+  // envuelve el objeto nuevo en su Proxy directamente, sin pasar por el setter.
+  DB._cajas[sede] = _crearCajaProxy(sede, _resultado.cajaNueva);
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movData);
+  DB.movimientos.push(_resultado._movData);
   renderCaja();
 }
 
@@ -8148,58 +8214,65 @@ function actualizarDiferenciaCierre() {
   notaWrap.style.display = Math.abs(diff) > 5 ? 'block' : 'none';
 }
 async function confirmarCierreCaja() {
-  const saldo = (DB.caja.inicial||0) + (DB.caja.ingresos||0) - (DB.caja.egresos||0);
-  const saldoEfectivo = _saldoEfectivoTeorico();
   const contado = parseFloat(document.getElementById('cc-contado').value);
   if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
-  const diff = Math.round((contado - saldoEfectivo) * 100) / 100;
   const nota = document.getElementById('cc-nota').value.trim();
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
 
-  // Paquete atomico: cierre de caja, arqueo (si aplica) y los movimientos de auditoria
-  // viajan juntos — todo o nada.
+  // CRITICO: runTransaction() en vez de lote — el saldo a cerrar se calcula DENTRO de la
+  // transaccion, leyendo el estado real del servidor en ese instante (nunca de cache local
+  // ni de lo que esta pantalla venia mostrando) — asi una venta de ultimo segundo, ya
+  // confirmada por el servidor pero todavia no reflejada en esta pantalla, no se pierde del
+  // cierre. Si dos personas cierran al mismo instante, Firestore resuelve el orden solo.
   const sede = sedeAdminEfectiva();
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('caja').doc(sede), {
-    abierta: false, fechaCierre: today(), saldoFinal: saldo, saldoFinalEfectivo: contado
-  }, { merge: true });
-
-  const _movCierreId = getId();
-  const _movCierre = { id:_movCierreId, tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today(), sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movCierreId)), _movCierre);
-
-  let _movArqueo = null;
-  if (diff !== 0) {
-    const _movArqueoId = getId();
-    _movArqueo = {
-      id: _movArqueoId, tipo: 'arqueo',
-      desc: `Arqueo — esperado ${sol(saldoEfectivo)}, contado ${sol(contado)} (${diff>0?'sobrante':'faltante'} ${sol(Math.abs(diff))})${nota?' — '+nota:''}`,
-      monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede
-    };
-    batch.set(fbFS.collection('movimientos').doc(String(_movArqueoId)), _movArqueo);
-  }
-
-  _sincIniciar('cierre_caja_lote', sede);
+  let _resultado;
+  _sincIniciar('cierre_caja_manual', sede);
   try {
-    await batch.commit();
-    _sincTerminar('cierre_caja_lote', sede);
+    _resultado = await fbFS.runTransaction(async (tx) => {
+      const cajaRef = fbFS.collection('caja').doc(sede);
+      const snap = await tx.get(cajaRef);
+      if (!snap.exists) throw new Error('No se encontró la caja de esta sede en el servidor.');
+      const cajaServidor = snap.data();
+      const saldo = (cajaServidor.inicial||0) + (cajaServidor.ingresos||0) - (cajaServidor.egresos||0);
+      const saldoEfectivo = (cajaServidor.inicialEfectivo ?? cajaServidor.inicial ?? 0) + (cajaServidor.ingresosEfectivo||0) - (cajaServidor.egresosEfectivo||0) - (cajaServidor.retiros||0);
+      const diff = Math.round((contado - saldoEfectivo) * 100) / 100;
+
+      tx.set(cajaRef, { abierta:false, fechaCierre: today(), saldoFinal: saldo, saldoFinalEfectivo: contado }, { merge: true });
+
+      const _movCierreId = getId();
+      const _movCierre = { id:_movCierreId, tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today(), sedeId: sede };
+      tx.set(fbFS.collection('movimientos').doc(String(_movCierreId)), _movCierre);
+
+      let _movArqueo = null;
+      if (diff !== 0) {
+        const _movArqueoId = getId();
+        _movArqueo = {
+          id: _movArqueoId, tipo: 'arqueo',
+          desc: `Arqueo — esperado ${sol(saldoEfectivo)}, contado ${sol(contado)} (${diff>0?'sobrante':'faltante'} ${sol(Math.abs(diff))})${nota?' — '+nota:''}`,
+          monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede
+        };
+        tx.set(fbFS.collection('movimientos').doc(String(_movArqueoId)), _movArqueo);
+      }
+      return { saldo, saldoEfectivo, _movCierre, _movArqueo };
+    });
+    _sincTerminar('cierre_caja_manual', sede);
   } catch (e) {
-    _sincError('cierre_caja_lote', sede, e, 'el cierre de caja — no se aplicó nada, la caja sigue abierta');
+    _sincError('cierre_caja_manual', sede, e, 'el cierre de caja — no se aplicó nada, la caja sigue abierta. Revisa tu conexión e intenta de nuevo');
     return;
   }
 
-  // El lote ya fue aceptado — recien ahora se refleja en memoria local, con el interruptor
-  // activo para que el Proxy no dispare su propia escritura encima de lo ya guardado.
+  // La transaccion ya fue aceptada — recien ahora se refleja en memoria local, con el
+  // interruptor activo para que el Proxy no dispare su propia escritura encima de lo ya guardado.
   _cajaProxySkipSync = true;
   try {
     DB.caja.abierta = false;
     DB.caja.fechaCierre = today();
-    DB.caja.saldoFinal = saldo;
+    DB.caja.saldoFinal = _resultado.saldo;
     DB.caja.saldoFinalEfectivo = contado;
   } finally { _cajaProxySkipSync = false; }
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movCierre);
-  if (_movArqueo) DB.movimientos.push(_movArqueo);
+  DB.movimientos.push(_resultado._movCierre);
+  if (_resultado._movArqueo) DB.movimientos.push(_resultado._movArqueo);
 
   cerrarModal('modal-cerrar-caja');
   renderCaja();
@@ -11451,6 +11524,7 @@ function _actualizarBadgeSync() {
 let fbStorage = null;     // Firebase Storage — imágenes de productos  
 let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
 let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
+let _fbCajaUnsub = null; // Listener dedicado a la colección caja — unica fuente de verdad
 
 // ── Inicializar Firestore ──
 // RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
@@ -11700,9 +11774,10 @@ function fbEscuchar() {
     camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
     _envolverTodosClientes();
     if (data.config) DB.config = { ...DB.config, ...data.config };
-    // Caja por sede: mismo criterio que en doLogin
-    if (data.cajas) DB._cajas = data.cajas;
-    else if (data.caja) DB._cajas = { principal: data.caja };
+    // CRITICO: caja YA NO se toca desde este listener. Antes, cualquier cambio al documento
+    // combinado (un despliegue, o cualquier otro guardado sin relacion con caja) pisaba
+    // DB._cajas con una copia vieja de aleze/db.cajas — la caja tiene su propio listener
+    // dedicado a la coleccion real (fbEscucharCaja), esta es la unica fuente de verdad ahora.
     try { renderDashboard(); }    catch(e){}
     try { updateAlertCount(); }   catch(e){}
     const activePage = document.querySelector('.page.active');
@@ -11766,6 +11841,31 @@ function fbEscuchar() {
       if (pageId === 'reportes')      { generarReporte(); }
     } catch(e){}
   }, err => { console.warn('Firestore db_ext listener error:', err.code); });
+}
+
+// ── Listener dedicado a la colección caja — única fuente de verdad para DB._cajas ──────────
+// Escucha las 2 sedes a la vez. Cualquier cambio en cualquier dispositivo (o el propio,
+// una vez confirmado por el servidor) se refleja acá, en tiempo real, en cualquier otro
+// dispositivo con la app abierta — sin necesitar recargar ni navegar. Reemplaza por completo
+// la dependencia que antes existía en el documento combinado aleze/db.
+function fbEscucharCaja() {
+  if (!fbFS) return;
+  if (_fbCajaUnsub) { _fbCajaUnsub(); _fbCajaUnsub = null; }
+  _fbCajaUnsub = fbFS.collection('caja').onSnapshot(snapshot => {
+    let huboCambioReal = false;
+    snapshot.forEach(doc => {
+      // Ignorar el eco optimista local (todavía no confirmado por el servidor) — esperar
+      // la confirmación real evita parpadeos y evita reaccionar dos veces al mismo cambio.
+      if (doc.metadata.hasPendingWrites) return;
+      DB._cajas[doc.id] = doc.data();
+      huboCambioReal = true;
+    });
+    if (!huboCambioReal) return;
+    try { renderDashboard(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    if (pageId === 'caja') { try { renderCaja(); } catch(e){} }
+  }, err => { console.warn('Firestore listener error (caja):', err.code); });
 }
 
 // ── Patch DB: interceptar asignaciones de array para auto-guardar ──
