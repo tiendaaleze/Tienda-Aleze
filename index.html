@@ -4035,11 +4035,15 @@ async function doLogin() {
 
       if (snapOp.exists) {
         const data = snapOp.data();
-        const camposOp = ['ventas','clientes','fiados','mermas','movimientos',
-                          'proveedores','promociones','config',
-                          'inventariosMensuales','historialVentas'];
+        // CRITICO: ventas/clientes/fiados/mermas/movimientos/historialVentas YA NO se cargan
+        // de acá — tienen su propia coleccion dedicada, y la reconciliacion de mas abajo (que
+        // SI trae de la coleccion real) es la unica fuente para esos campos ahora. Cargarlos
+        // tambien de esta copia vieja del documento combinado era la causa real del bug de
+        // "clientes fantasma": un cliente borrado de la coleccion real, pero todavia presente
+        // en esta copia vieja, volvia a aparecer en cada login (la reconciliacion solo agrega
+        // lo que falta, nunca quita — nunca corregia esto).
+        const camposOp = ['proveedores','promociones','config','inventariosMensuales'];
         camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
-        _envolverTodosClientes();
         if (data.config && data.config.passwords) Object.assign(PASSWORDS, data.config.passwords);
         // CRITICO: caja YA NO se lee de aleze/db.cajas en ningun lado — es una copia vieja,
         // legado. La unica fuente de verdad es la coleccion dedicada, leida justo abajo. Si
@@ -11553,11 +11557,23 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
       const _limitePodaFiadosStr = _limitePodaFiados.toISOString().split('T')[0];
       DB.fiados = DB.fiados.filter(f => (f.total - f.pagado) > 0.01 || f.fecha >= _limitePodaFiadosStr);
     }
-    // Excluir productos y categorias — tienen su propio documento
+    // CRITICO: ventas/clientes/fiados/mermas/movimientos/historialVentas YA NO se escriben
+    // acá — tienen su propia colección dedicada, con sus propios lotes atómicos, desde hace
+    // rato. Guardarlos TAMBIÉN acá era pura redundancia — y la causa real del bug de
+    // "clientes fantasma que vuelven a aparecer": si un cliente se borraba de la colección
+    // real pero esta copia vieja del documento combinado no se actualizaba a tiempo, el login
+    // (o el listener en tiempo real) lo volvía a cargar desde acá, resucitándolo. Mismo
+    // criterio que ya se aplicó a caja — una sola fuente de verdad por dato, nunca dos.
     const payload = JSON.parse(JSON.stringify(DB));
-  delete payload.productos;
+    delete payload.productos;
     delete payload.categorias;
     delete payload.pedidosOnline;
+    delete payload.ventas;
+    delete payload.clientes;
+    delete payload.fiados;
+    delete payload.mermas;
+    delete payload.movimientos;
+    delete payload.historialVentas;
     // Caja por sede: mandar TODAS las sedes (payload.caja solo trae la de la sesión actual, vía el getter)
     delete payload.caja;
     payload.cajas = DB._cajas;
@@ -11612,11 +11628,13 @@ function fbEscuchar() {
     if (!snapshot.exists) return;
     const data = snapshot.data();
     if (!data) return;
-    // Solo campos operativos (no productos/categorias que vienen de db_productos)
-    const camposOp = ['ventas','clientes','fiados','mermas','movimientos',
-                      'proveedores','promociones','inventariosMensuales','historialVentas'];
+    // CRITICO: mismo criterio que en el login — ventas/clientes/fiados/mermas/movimientos/
+    // historialVentas ya no se tocan desde acá. Antes, CUALQUIER guardado del documento
+    // combinado (de este mismo dispositivo o de otro) disparaba este listener, que pisaba
+    // estas 6 listas locales con lo que hubiera en la copia vieja en ese instante — mismo
+    // riesgo que ya se corrigio para caja, ahora corregido acá tambien.
+    const camposOp = ['proveedores','promociones','inventariosMensuales'];
     camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
-    _envolverTodosClientes();
     if (data.config) DB.config = { ...DB.config, ...data.config };
     // CRITICO: caja YA NO se toca desde este listener. Antes, cualquier cambio al documento
     // combinado (un despliegue, o cualquier otro guardado sin relacion con caja) pisaba
