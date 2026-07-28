@@ -6595,10 +6595,10 @@ function eliminarProveedor(id) {
   }
   const prov = DB.proveedores.find(p => p.id === id);
   // Limpia tambien las boletas de este proveedor en su coleccion propia — si no, quedan huerfanas.
-  if (fbFS && prov && prov.boletas) {
-    prov.boletas.forEach(b => fbFS.collection('boletas').doc(String(b.id)).delete().catch(()=>{}));
+  if (dbModular && prov && prov.boletas) { // [SDK modular]
+    prov.boletas.forEach(b => deleteDocM(docM(dbModular, 'boletas', String(b.id))).catch(()=>{}));
   }
-  if (dbModular) deleteDocM(docM(dbModular, 'proveedores', String(id))).catch(e => console.warn('No se pudo borrar proveedores/'+id, e)); // [SDK modular]
+  if (dbModular) deleteDocM(docM(dbModular, 'proveedores', String(id))).catch(e => console.warn('No se pudo borrar proveedores/'+id, e));
   DB.proveedores = DB.proveedores.filter(p => p.id !== id);
   renderProveedores();
 }
@@ -11006,10 +11006,10 @@ function eliminarPromo(id) {
     fbGuardarProductos();
     // Limpia el documento huérfano en stock/{id} — el pack no trackea stock real (se arma
     // de sus componentes), pero el doc igual quedaría abandonado si no se borra explícito.
-    if (fbFS) fbFS.collection('stock').doc(String(p.packProdId)).delete().catch(()=>{});
+    if (dbModular) deleteDocM(docM(dbModular, 'stock', String(p.packProdId))).catch(()=>{}); // [SDK modular]
   }
   DB.promociones = DB.promociones.filter(x => x.id !== id);
-  if (dbModular) deleteDocM(docM(dbModular, 'promociones', String(id))).catch(e => console.warn('No se pudo borrar promociones/'+id, e)); // [SDK modular]
+  if (dbModular) deleteDocM(docM(dbModular, 'promociones', String(id))).catch(e => console.warn('No se pudo borrar promociones/'+id, e));
   renderPromociones();
 }
 
