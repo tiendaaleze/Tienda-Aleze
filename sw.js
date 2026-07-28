@@ -58,7 +58,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-const CACHE_NAME = 'tienda-aleze-test-v2';
+const CACHE_NAME = 'tienda-aleze-test-v3';
 const BASE_PATH = '/Tienda-Aleze';
 
 // Archivos a pre-cachear al instalar
@@ -124,7 +124,13 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    fetch(event.request)
+    // CRITICO: { cache: 'no-store' } fuerza a que este fetch ignore el cache HTTP normal del
+    // navegador y vaya de verdad a la red — sin esto, "Network First" podia devolver una
+    // respuesta guardada por el navegador mismo (no por este Service Worker) sin llegar
+    // realmente a GitHub Pages, sobre todo en apps instaladas como PWA, mas propensas a
+    // reusar respuestas viejas. Esto explicaba por que el codigo actualizado a veces no se
+    // reflejaba incluso despues de cerrar y volver a abrir.
+    fetch(event.request, { cache: 'no-store' })
       .then(networkResponse => {
         // Respuesta válida — guardar en caché y devolver
         if (networkResponse && networkResponse.status === 200) {
