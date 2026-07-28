@@ -8089,14 +8089,18 @@ function _saldoEfectivoTeorico() {
   return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresosEfectivo||0) - (DB.caja.retiros||0);
 }
 async function abrirRetiroEfectivo() {
+  // CRITICO: ensureCajaAbierta() (con su lectura real al servidor) va PRIMERO, antes de
+  // calcular "disponible" — si esto se calculaba antes, con la cache local todavia fria,
+  // podia bloquear un retiro real diciendo "no hay efectivo" aunque el servidor si lo
+  // tuviera. Ahora el monto disponible siempre se calcula con el estado ya confirmado.
+  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  await ensureCajaAbierta();
   const disponible = _saldoEfectivoTeorico();
   if (disponible <= 0) { alert('No hay efectivo disponible para retirar.'); return; }
   const monto = parseFloat(prompt(`Efectivo disponible en caja: ${sol(disponible)}\n\n¿Cuánto vas a retirar?`));
   if (!monto || isNaN(monto) || monto <= 0) return;
   if (monto > disponible && !confirm(`El monto supera el efectivo disponible (${sol(disponible)}). ¿Continuar de todas formas?`)) return;
   const destino = prompt('¿A dónde va? (ej. "Depósito BCP", "Guardado en casa")') || 'Sin especificar';
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
 
   // Paquete atomico: el retiro (campo de caja) y su movimiento de auditoria viajan juntos.
   const sede = sedeAdminEfectiva();
