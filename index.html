@@ -1524,9 +1524,6 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
           <span class="icon">🚚</span><span class="nav-label">Proveedores</span>
         </div>
       <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
-        <div class="nav-item" onclick="navigate('caja')" title="Apertura y cierre de caja">
-          <span class="icon">💰</span><span class="nav-label">Caja</span>
-        </div>
         <div class="nav-item" onclick="navigate('promociones')" title="Promociones y combos">
           <span class="icon">🎯</span><span class="nav-label">Promociones</span>
         </div>
@@ -1544,10 +1541,12 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
           <span class="icon">⚙️</span><span class="nav-label">Configuración</span>
         </div>
       </div>
- <!-- Clientes, Frecuentes, Mermas, Gastos, Pedidos Online, Fiados e Historial de Ventas:
+ <!-- Clientes, Frecuentes, Mermas, Gastos, Caja, Pedidos Online, Fiados e Historial de Ventas:
       visible para admin y vendedor por igual. Vendedor puede crear/editar mermas y gastos de
       su propia sede (una botella rota o un gasto operativo chico no debería esperar a admin),
-      pero no puede eliminar nada ya creado — eso queda gateado a admin en cada función. -->
+      pero no puede eliminar nada ya creado — eso queda gateado a admin en cada función. Caja
+      es de solo lectura para vendedor — puede ver cuánto debería haber, pero no abrir, cerrar,
+      retirar efectivo ni registrar movimientos manuales, eso sigue siendo admin-only. -->
       <div class="nav-section" id="vendedor-nav">
         <div class="nav-section-label">Clientes</div>
         <div class="nav-item" onclick="navigate('clientes')" title="Gestión de clientes">
@@ -1557,6 +1556,9 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
           <span class="icon">⭐</span><span class="nav-label">Frecuentes</span>
         </div>
         <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
+        <div class="nav-item" onclick="navigate('caja')" title="Ver caja actual">
+          <span class="icon">💰</span><span class="nav-label">Caja</span>
+        </div>
         <div class="nav-item" onclick="navigate('mermas')" title="Registro de mermas y pérdidas">
           <span class="icon">📉</span><span class="nav-label">Mermas</span>
         </div>
@@ -1983,14 +1985,19 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
           <div class="card" style="max-width:420px;margin:2rem auto;text-align:center">
             <div style="font-size:3rem;margin-bottom:1rem">💰</div>
             <h3 style="margin-bottom:1rem">Caja Cerrada</h3>
-            <div class="form-group" style="text-align:left">
-              <label>Monto inicial (S/)</label>
-              <input type="number" class="form-control" id="caja-monto-inicial" placeholder="0.00" />
-              <div style="font-size:.73rem;color:var(--gray-400);margin-top:.25rem" id="caja-auto-hint"></div>
+            <div id="caja-cerrada-admin">
+              <div class="form-group" style="text-align:left">
+                <label>Monto inicial (S/)</label>
+                <input type="number" class="form-control" id="caja-monto-inicial" placeholder="0.00" />
+                <div style="font-size:.73rem;color:var(--gray-400);margin-top:.25rem" id="caja-auto-hint"></div>
+              </div>
+              <div style="display:flex;gap:.5rem">
+                <button type="button" class="btn btn-outline w-full" onclick="guardarMontoAperturaDefault()" title="Guardar como monto por defecto">💾 Guardar como default</button>
+                <button type="button" class="btn btn-accent w-full" onclick="abrirCaja()">Abrir Caja</button>
+              </div>
             </div>
-            <div style="display:flex;gap:.5rem">
-              <button type="button" class="btn btn-outline w-full" onclick="guardarMontoAperturaDefault()" title="Guardar como monto por defecto">💾 Guardar como default</button>
-              <button type="button" class="btn btn-accent w-full" onclick="abrirCaja()">Abrir Caja</button>
+            <div id="caja-cerrada-vendedor" style="display:none;color:var(--gray-400);font-size:.9rem">
+              La caja se abre sola con la primera acción del día. Si sigue cerrada, avisale al administrador.
             </div>
           </div>
         </div>
@@ -2003,12 +2010,12 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
             <div class="stat-card blue" style="border-left-color:var(--info)"><div class="stat-label">💵 Efectivo en caja</div><div class="stat-value" id="caja-efectivo">S/ 0.00</div></div>
             <div class="stat-card"><div class="stat-label">Otros métodos (Yape/tarjeta/etc.)</div><div class="stat-value" id="caja-noefectivo">S/ 0.00</div></div>
           </div>
-          <div style="text-align:right;margin-bottom:1rem">
+          <div id="caja-acciones-admin" style="text-align:right;margin-bottom:1rem">
             <button type="button" class="btn btn-outline" onclick="abrirRetiroEfectivo()">💰 Retirar efectivo</button>
             <button type="button" class="btn btn-danger" onclick="abrirModalCerrarCaja()">Cerrar Caja del Turno</button>
           </div>
           <div class="grid-2">
-            <div class="card">
+            <div class="card" id="caja-registrar-admin">
               <div class="card-title">Movimientos de Caja</div>
               <div class="form-group">
                 <label>Tipo</label>
@@ -3478,8 +3485,10 @@ function fbSincronizarClienteCampo(id, campo, valor) {
 }
 // Interruptor para cuando una operación ya sincronizó el cliente vía su propio lote atómico
 // (venta, fiado, pago, canje...) — evita que el Proxy dispare SU PROPIA escritura independiente
-// encima de lo que el lote ya escribió. Mismo mecanismo que _cajaProxySkipSync, mismo riesgo:
-// sin esto, deuda/puntos/compras/total de CUALQUIER cliente con transacciones se duplicaban en
+// encima de lo que el lote ya escribió. Caja tenía este mismo mecanismo antes y se sacó por
+// completo (ver _cajaSedeEnvuelta) — acá se mantiene porque el Proxy de cliente sigue siendo
+// necesario para otros usos (edición directa desde Clientes, no solo transacciones).
+// Sin esto, deuda/puntos/compras/total de CUALQUIER cliente con transacciones se duplicaban en
 // Firestore en cada venta o fiado — la escritura del lote, más la del Proxy encima.
 let _clienteProxySkipSync = false;
 function _envolverCliente(c) {
@@ -3553,14 +3562,6 @@ function estadoFidelizacion(clienteId) {
 }
 
 // ── Fidelización: colección propia para canjes, mismo patrón que boletas/fiados/mermas ──
-function fbSincronizarCanje(canje) {
-  if (!fbFS || !canje || canje.id == null) return;
-  const data = { ...canje, sedeId: canje.sedeId || currentUserSedeId || 'principal' };
-  _sincIniciar('canje', canje.id);
-  fbFS.collection('canjes').doc(String(canje.id)).set(data)
-    .then(() => _sincTerminar('canje', canje.id))
-    .catch(e => _sincError('canje', canje.id, e, 'el canje de fidelización'));
-}
 
 // Todos los premios que el saldo actual alcanza a cubrir — no solo el más caro (para elegir).
 function premiosDisponibles(clienteId) {
@@ -3788,64 +3789,19 @@ let DB = {
   pedidosOnline: []
 };
 
-// ── Caja por sede + incremento atómico offline-seguro, de una sola vez ──
-// DB.caja sigue funcionando en las 90+ referencias existentes (lecturas Y escrituras) sin
-// tocarlas una por una: el getter rutea a la sede actual, y un Proxy intercepta CUALQUIER
-// asignación sobre esa caja (DB.caja.ingresos = X, DB.caja.abierta = false, etc.) para
-// sincronizarla a Firestore sola — incremento atómico si es un número acumulado (ingresos,
-// egresos...), set directo si es un campo de estado (abierta, saldoFinal, fecha...). Funciona
-// sin señal porque queda en cola local (enablePersistence) y el servidor lo aplica al reconectar,
-// sumando correcto aunque las 2 sedes ajusten caja a la vez sin red.
-const _CAJA_CAMPOS_INCREMENTALES = ['ingresos', 'egresos', 'ingresosEfectivo', 'egresosEfectivo', 'retiros'];
-const _cajaProxiesCreados = new WeakSet();
-
-function fbAjustarCaja(sede, campo, delta) {
-  if (!fbFS || !sede || !delta) return;
-  _sincIniciar('caja', sede);
-  fbFS.collection('caja').doc(String(sede)).set(
-    { [campo]: firebase.firestore.FieldValue.increment(delta) },
-    { merge: true }
-  ).then(() => _sincTerminar('caja', sede))
-   .catch(e => _sincError('caja', sede, e, 'el movimiento de caja'));
-}
-function fbSincronizarCajaCampo(sede, campo, valor) {
-  if (!fbFS || !sede) return;
-  _sincIniciar('caja', sede);
-  fbFS.collection('caja').doc(String(sede)).set({ [campo]: valor }, { merge: true })
-    .then(() => _sincTerminar('caja', sede))
-    .catch(e => _sincError('caja', sede, e, 'el estado de caja'));
-}
-// Interruptor para cuando UNA MISMA operación ya sincronizó caja vía un lote atómico propio
-// (retiro de efectivo, cierre de caja) — evita que el Proxy dispare SU PROPIA escritura
-// independiente encima de lo que el lote ya escribió (mismo riesgo de doble-escritura que ya
-// se encontró y corrigió en traslado y apertura de caja).
-let _cajaProxySkipSync = false;
-function _crearCajaProxy(sede, cajaObj) {
-  const proxy = new Proxy(cajaObj, {
-    set(target, prop, value) {
-      if (_cajaProxySkipSync) { target[prop] = value; return true; }
-      if (_CAJA_CAMPOS_INCREMENTALES.includes(prop) && typeof value === 'number' && typeof target[prop] === 'number') {
-        const delta = Math.round((value - target[prop]) * 100) / 100;
-        target[prop] = value;
-        if (delta !== 0) fbAjustarCaja(sede, prop, delta);
-      } else {
-        target[prop] = value;
-        fbSincronizarCajaCampo(sede, prop, value);
-      }
-      return true;
-    }
-  });
-  _cajaProxiesCreados.add(proxy);
-  return proxy;
-}
+// ── Caja por sede — mismo patrón que inventario: objeto plano, escritura SIEMPRE explícita
+// dentro del propio lote/transacción de cada función, nunca automática en segundo plano.
+// ANTES había un Proxy acá que escribía a Firestore por su cuenta cada vez que se le asignaba
+// un campo (DB.caja.ingresos = X, etc.) — y dependía de que cada una de las 20+ funciones que
+// tocan caja se acordara de desactivarlo antes de aplicar localmente lo que su propio lote ya
+// había escrito. Bastaba con que UNA se olvidara para duplicar el dinero — y así fue: 6
+// funciones distintas tenían exactamente ese olvido. Ahora es estructuralmente imposible que
+// vuelva a pasar: no hay nada escuchando la asignación, así que no hay nada que pueda escribir
+// por sorpresa. Cada función sigue escribiendo a Firestore explícitamente, como siempre lo
+// hizo — lo único que cambia es que la copia local ya no dispara una segunda escritura sola.
 function _cajaSedeEnvuelta(sede) {
-  let actual = DB._cajas[sede];
-  if (!actual) {
-    actual = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
-    DB._cajas[sede] = _crearCajaProxy(sede, actual);
-  } else if (!_cajaProxiesCreados.has(actual)) {
-    // Objeto recién cargado de Firestore (plano, sin envolver todavía) -> envolver ahora
-    DB._cajas[sede] = _crearCajaProxy(sede, actual);
+  if (!DB._cajas[sede]) {
+    DB._cajas[sede] = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
   }
   return DB._cajas[sede];
 }
@@ -3854,11 +3810,10 @@ Object.defineProperty(DB, 'caja', {
     return _cajaSedeEnvuelta(sedeAdminEfectiva());
   },
   set(v) {
-    // Reasignación completa (abrir/cerrar caja) — no es un incremento, es un estado nuevo.
-    const sede = sedeAdminEfectiva();
-    DB._cajas[sede] = _crearCajaProxy(sede, v);
-    if (fbFS) fbFS.collection('caja').doc(String(sede)).set(v).catch(e => console.warn('No se pudo sincronizar caja/'+sede, e));
-    try { fbGuardar(); } catch(e) {}
+    // Reasignación completa (abrir/cerrar caja) — la escritura a Firestore ya la hizo, de
+    // forma explícita, la función que llama (dentro de su propio lote o transacción). Esto
+    // solo actualiza la copia local, igual que "prod.stockPorSede[sede] = X" en inventario.
+    DB._cajas[sedeAdminEfectiva()] = v;
   },
   configurable: true
 });
@@ -3931,11 +3886,6 @@ const _LOGO_B64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAAB
 const _LOGIN_MAX_INTENTOS = 3;
 const _LOGIN_BLOQUEO_MS   = 5 * 60 * 1000; // 5 minutos
 let _loginIntervalo = null;
-
-function _loginBloqueado() {
-  const ts = parseInt(localStorage.getItem('aleze_bloqueo') || '0');
-  return ts > Date.now();
-}
 
 function _registrarIntento() {
   const n = parseInt(localStorage.getItem('aleze_intentos') || '0') + 1;
@@ -4460,7 +4410,6 @@ function getCategoriaNombre(id) {
 function getProveedorNombre(id) { const p = DB.proveedores.find(p => p.id == id); return p ? p.nombre : '-'; }
 function getClienteNombre(id) { const c = DB.clientes.find(c => c.id == id); return c ? (c.alias||c.nombre) : 'Anónimo'; }
 function getMesActual() { return today().substring(0,7); }
-function getAnoActual() { return today().substring(0,4); }
 function precioSugerido(costo, margen) { return Math.ceil(costo*(1+margen/100)*10)/10; }
 function getNivel(totalAnual) { return [...DB_EXT.niveles].sort((a,b)=>b.umbral-a.umbral).find(n=>totalAnual>=n.umbral)||null; }
 
@@ -4997,11 +4946,10 @@ async function ensureCajaAbierta() {
       if (fbFS && cajaRef) cajaRef.set(_cajaResultado, { merge: true }).catch(()=>{});
     }
 
-    // NUNCA "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta. El estado
-    // local recién se aplica DESPUES de que la escritura real terminó (o fallo) — nunca
-    // antes, para que ningun otro llamador que llegue mientras tanto vea "ya esta abierta"
-    // antes de que sea cierto.
-    DB._cajas[_sedeECA] = _crearCajaProxy(_sedeECA, _cajaResultado);
+    // El estado local recién se aplica DESPUES de que la escritura real terminó (o fallo) —
+    // nunca antes, para que ningun otro llamador que llegue mientras tanto vea "ya esta
+    // abierta" antes de que sea cierto.
+    DB._cajas[_sedeECA] = _cajaResultado;
     if (_movApertura) {
       if (!DB.movimientos) DB.movimientos = [];
       DB.movimientos.push(_movApertura);
@@ -5290,15 +5238,14 @@ async function procesarVenta() {
       finally { _clienteProxySkipSync = false; }
     }
   }
-  // CRITICO: sin este interruptor, el Proxy de caja detecta la asignacion de mas abajo y
-  // dispara SU PROPIA escritura al servidor (fbAjustarCaja) ademas de la que ya hizo el lote
-  // atomico — la MISMA venta contada 2 veces en el saldo real. Confirmado como causa directa
-  // de los montos duplicados/triplicados observados.
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.ingresos = (DB.caja.ingresos||0) + total;
-    if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
-  } finally { _cajaProxySkipSync = false; }
+  // CRITICO: antes, un Proxy detectaba esta asignacion y disparaba SU PROPIA escritura al
+  // servidor ademas de la que ya hizo el lote atomico — la MISMA venta contada 2 veces en el
+  // saldo real. Confirmado como causa directa de los montos duplicados/triplicados
+  // observados. Ahora caja es un objeto plano, igual que el stock — esta linea SOLO actualiza
+  // la copia local, sin disparar nada por su cuenta.
+  DB.caja.ingresos = (DB.caja.ingresos||0) + total;
+  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
+  
   DB.historialVentas.push(_ventaFinal);
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
@@ -5613,7 +5560,6 @@ if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.c
   renderInvTable(prods);
 }
 
-function exportInventario() { alert('Función de exportación: En la versión conectada a Google Sheets, los datos se exportan automáticamente.'); }
 
 // ── Fase 6 arquitectura multi-sede: stock por sede ──
 // ajustarStockSede() es el UNICO lugar que muta stock — así prod.stock (total consolidado,
@@ -7111,14 +7057,6 @@ async function guardarBoleta() {
 // Fiados: prioridad máxima de visibilidad — un fiado que no se guarda de verdad es
 // deuda real que el negocio pierde el rastro de cobrar. Mismo mecanismo que el resto,
 // pero es el caso donde más importa que la alerta llegue si el error es permanente.
-function fbSincronizarFiado(fiado) {
-  if (!fbFS || !fiado || fiado.id == null) return;
-  const data = { ...fiado, sedeId: fiado.sedeId || currentUserSedeId || 'principal' };
-  _sincIniciar('fiado', fiado.id);
-  fbFS.collection('fiados').doc(String(fiado.id)).set(data)
-    .then(() => _sincTerminar('fiado', fiado.id))
-    .catch(e => _sincError('fiado', fiado.id, e, 'el fiado — esta deuda podría no quedar registrada'));
-}
 function fbSincronizarMerma(merma) {
   if (!fbFS || !merma || merma.id == null) return;
   const data = { ...merma, sedeId: merma.sedeId || currentUserSedeId || 'principal' };
@@ -7126,14 +7064,6 @@ function fbSincronizarMerma(merma) {
   fbFS.collection('mermas').doc(String(merma.id)).set(data)
     .then(() => _sincTerminar('merma', merma.id))
     .catch(e => _sincError('merma', merma.id, e, 'la merma'));
-}
-function fbSincronizarGasto(gasto) {
-  if (!fbFS || !gasto || gasto.id == null) return;
-  const data = { ...gasto, sedeId: gasto.sedeId || currentUserSedeId || 'principal' };
-  _sincIniciar('gasto', gasto.id);
-  fbFS.collection('gastos').doc(String(gasto.id)).set(data)
-    .then(() => _sincTerminar('gasto', gasto.id))
-    .catch(e => _sincError('gasto', gasto.id, e, 'el gasto'));
 }
 function fbSincronizarBoleta(boleta, proveedorId) {
   if (!fbFS || !boleta || boleta.id == null) return;
@@ -7189,11 +7119,9 @@ async function abrirPagoBoleta(provId, idx) {
   b.pagado = _pagadoNuevo;
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.egresos = (DB.caja.egresos||0) + monto;
-    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
-  } finally { _cajaProxySkipSync = false; }
+  DB.caja.egresos = (DB.caja.egresos||0) + monto;
+  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  
   fbGuardar();
   filtrarBoletas();
   renderProveedores();
@@ -7685,13 +7613,10 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
     try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100); }
     finally { _clienteProxySkipSync = false; }
   }
-  // CRITICO: mismo interruptor que procesarVenta — evita que el Proxy dispare su propia
-  // escritura ademas de la que ya hizo el lote atomico.
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.ingresos += montoTotal;
-    if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
-  } finally { _cajaProxySkipSync = false; }
+  // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
+  DB.caja.ingresos += montoTotal;
+  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
+  
   if (!DB.historialVentas) DB.historialVentas = [];
   _hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
   if (!DB.movimientos) DB.movimientos = [];
@@ -7773,32 +7698,6 @@ Escribe 1 para confirmar:`;
   } else {
     alert('Opción no válida. No se realizó ningún cambio.');
   }
-}
-function compartirResumenFiado(cid) {
-  const cli = DB.clientes.find(c => c.id === cid);
-  const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
-  const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
-  const desde = document.getElementById('fi-desde')?.value || '';
-  const hasta = document.getElementById('fi-hasta')?.value || '';
-  const estado = document.getElementById('fi-estado')?.value || '';
-  let fiados = DB.fiados.filter(f => f.clienteId === cid);
-  if (desde) fiados = fiados.filter(f => f.fecha >= desde);
-  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
-  if (estado === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
-  if (estado === 'pagado') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
-  const totalPend = Math.round(fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
-  let msg = `Hola ${nombre}, su resumen de fiados en *${DB.config.nombre||'Tienda Aleze'}*:\n`;
-  if (desde || hasta) msg += `📅 Período: ${desde ? formatDate(desde) : 'inicio'} al ${hasta ? formatDate(hasta) : 'hoy'}\n`;
-  msg += '\n';
-  fiados.forEach(f => {
-    const pend = Math.round((f.total - f.pagado) * 100) / 100;
-    msg += `📌 ${formatDate(f.fecha)}: ${f.items.map(i => i.nombre + ' x' + i.cant).join(', ')}`;
-    msg += ` → ${sol(f.total)}`;
-    msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
-  });
-  msg += `\n*Total pendiente: ${sol(totalPend)}*\nGracias 🙏`;
-  const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-  window.open(url, '_blank');
 }
 
 function toggleFiadoDetalle(id) {
@@ -7899,12 +7798,10 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
     try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - monto) * 100) / 100); }
     finally { _clienteProxySkipSync = false; }
   }
-  // CRITICO: mismo interruptor — evita la doble escritura del Proxy.
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.ingresos += monto;
-    if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
-  } finally { _cajaProxySkipSync = false; }
+  // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
+  DB.caja.ingresos += monto;
+  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
+  
   if (!DB.historialVentas) DB.historialVentas = [];
   DB.historialVentas.push(_pagoFiado);
   if (!DB.movimientos) DB.movimientos = [];
@@ -8093,15 +7990,27 @@ function compartirHistorialWhatsapp() {
 
 // ===================== CAJA =====================
 function renderCaja() {
+  const _esAdmin = currentRole === 'admin';
   const _banner = document.getElementById('caja-sede-banner');
   if (_banner) {
-    if (currentRole === 'admin' && _sedeAdminOverride) {
+    if (_esAdmin && _sedeAdminOverride) {
       _banner.style.display = 'block';
       _banner.textContent = `⚠️ Estás operando la caja de "${_sedeAdminOverride}" — no la tuya. Tus ventas en POS siguen siendo de tu sede real. Cambia esto arriba, junto a tu nombre.`;
     } else {
       _banner.style.display = 'none';
     }
   }
+  // Vendedor: solo lectura — ve los mismos números que admin, pero sin controles para
+  // abrir/cerrar caja, retirar efectivo, ni registrar movimientos manuales.
+  const _accionesAdmin = document.getElementById('caja-acciones-admin');
+  if (_accionesAdmin) _accionesAdmin.style.display = _esAdmin ? '' : 'none';
+  const _registrarAdmin = document.getElementById('caja-registrar-admin');
+  if (_registrarAdmin) _registrarAdmin.style.display = _esAdmin ? '' : 'none';
+  const _cerradaAdmin = document.getElementById('caja-cerrada-admin');
+  if (_cerradaAdmin) _cerradaAdmin.style.display = _esAdmin ? '' : 'none';
+  const _cerradaVendedor = document.getElementById('caja-cerrada-vendedor');
+  if (_cerradaVendedor) _cerradaVendedor.style.display = _esAdmin ? 'none' : '';
+
   if (DB.caja.abierta) {
     document.getElementById('caja-cerrada').style.display = 'none';
     document.getElementById('caja-abierta').style.display = 'block';
@@ -8109,18 +8018,21 @@ function renderCaja() {
   } else {
     document.getElementById('caja-cerrada').style.display = 'block';
     document.getElementById('caja-abierta').style.display = 'none';
- const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
-    const saldoHeredado = typeof DB.caja.saldoFinal === 'number' ? DB.caja.saldoFinal : montoAuto;
-    const elMonto = document.getElementById('caja-monto-inicial');
-    const hint = document.getElementById('caja-auto-hint');
-    if (elMonto) elMonto.value = saldoHeredado;
-    if (hint) hint.textContent = typeof DB.caja.saldoFinal === 'number'
-      ? `Saldo real heredado del cierre anterior: S/ ${saldoHeredado.toFixed(2)} (editable si hiciste un conteo físico distinto)`
-      : (montoAuto > 0 ? `Monto automático configurado: S/ ${montoAuto.toFixed(2)}` : 'Sin monto automático — configúralo en Configuración');
+    if (_esAdmin) {
+      const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
+      const saldoHeredado = typeof DB.caja.saldoFinal === 'number' ? DB.caja.saldoFinal : montoAuto;
+      const elMonto = document.getElementById('caja-monto-inicial');
+      const hint = document.getElementById('caja-auto-hint');
+      if (elMonto) elMonto.value = saldoHeredado;
+      if (hint) hint.textContent = typeof DB.caja.saldoFinal === 'number'
+        ? `Saldo real heredado del cierre anterior: S/ ${saldoHeredado.toFixed(2)} (editable si hiciste un conteo físico distinto)`
+        : (montoAuto > 0 ? `Monto automático configurado: S/ ${montoAuto.toFixed(2)}` : 'Sin monto automático — configúralo en Configuración');
+    }
   }
 }
 
 async function abrirCaja() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede abrir caja. Podés ver el estado actual, pero no modificarlo.'); return; }
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
   const sede = sedeAdminEfectiva();
   if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
@@ -8147,16 +8059,15 @@ async function abrirCaja() {
     return;
   }
 
-  // NUNCA usar "DB.caja = ..." acá — ese setter escribe a Firestore por su cuenta (ver la
-  // definicion de la propiedad caja), duplicaria lo que la transaccion ya escribio. Se
-  // envuelve el objeto nuevo en su Proxy directamente, sin pasar por el setter.
-  DB._cajas[sede] = _crearCajaProxy(sede, _resultado.cajaNueva);
+  // La escritura real ya la hizo la transacción de arriba — esto solo actualiza la copia local.
+  DB._cajas[sede] = _resultado.cajaNueva;
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_resultado._movData);
   renderCaja();
 }
 
 function guardarMontoAperturaDefault() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede configurar el monto de apertura.'); return; }
   const m = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
   DB.config.montoAperturaAuto = m;
   fbGuardar();
@@ -8171,6 +8082,7 @@ function _saldoEfectivoTeorico() {
   return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresosEfectivo||0) - (DB.caja.retiros||0);
 }
 async function abrirRetiroEfectivo() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede retirar efectivo. Podés ver el estado actual, pero no modificarlo.'); return; }
   // CRITICO: ensureCajaAbierta() (con su lectura real al servidor) va PRIMERO, antes de
   // calcular "disponible" — si esto se calculaba antes, con la cache local todavia fria,
   // podia bloquear un retiro real diciendo "no hay efectivo" aunque el servidor si lo
@@ -8202,10 +8114,9 @@ async function abrirRetiroEfectivo() {
     return;
   }
 
-  // El lote ya fue aceptado — recien ahora se refleja en memoria local. El interruptor evita
-  // que el Proxy de caja dispare su propia escritura encima de lo que el lote ya escribió.
-  _cajaProxySkipSync = true;
-  try { DB.caja.retiros = (DB.caja.retiros||0) + monto; } finally { _cajaProxySkipSync = false; }
+  // El lote ya fue aceptado — recien ahora se refleja en memoria local. Caja es un objeto
+  // plano, esta asignacion solo actualiza la copia local.
+  DB.caja.retiros = (DB.caja.retiros||0) + monto;
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   renderCaja();
@@ -8230,6 +8141,7 @@ function actualizarDiferenciaCierre() {
   notaWrap.style.display = Math.abs(diff) > 5 ? 'block' : 'none';
 }
 async function confirmarCierreCaja() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cerrar caja. Podés ver el estado actual, pero no modificarlo.'); return; }
   const contado = parseFloat(document.getElementById('cc-contado').value);
   if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
   const nota = document.getElementById('cc-nota').value.trim();
@@ -8277,15 +8189,12 @@ async function confirmarCierreCaja() {
     return;
   }
 
-  // La transaccion ya fue aceptada — recien ahora se refleja en memoria local, con el
-  // interruptor activo para que el Proxy no dispare su propia escritura encima de lo ya guardado.
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.abierta = false;
-    DB.caja.fechaCierre = today();
-    DB.caja.saldoFinal = _resultado.saldo;
-    DB.caja.saldoFinalEfectivo = contado;
-  } finally { _cajaProxySkipSync = false; }
+  // La transacción ya fue aceptada — recién ahora se refleja en memoria local.
+  DB.caja.abierta = false;
+  DB.caja.fechaCierre = today();
+  DB.caja.saldoFinal = _resultado.saldo;
+  DB.caja.saldoFinalEfectivo = contado;
+  
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_resultado._movCierre);
   if (_resultado._movArqueo) DB.movimientos.push(_resultado._movArqueo);
@@ -8375,6 +8284,7 @@ function _renderMovsTabla(movsVis) {
 }
 
 async function registrarMovimiento() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar movimientos manuales. Podés ver el estado actual, pero no modificarlo.'); return; }
   const tipo = document.getElementById('mov-tipo').value;
   const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
   const desc = document.getElementById('mov-desc').value;
@@ -8401,11 +8311,9 @@ async function registrarMovimiento() {
     return;
   }
 
-  _cajaProxySkipSync = true;
-  try {
-    if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; }
-    else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
-  } finally { _cajaProxySkipSync = false; }
+  if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; }
+  else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
+  
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
@@ -9704,10 +9612,6 @@ function cerrarScanner() {
 }
 
 // Mantener compatibilidad con llamadas antiguas
-function buscarPorCodigo() {
-  procesarCodigoEscaneado(document.getElementById('scanner-manual').value.trim());
-}
-
 // ===================== WHATSAPP IMAGEN =====================
 async function compartirWhatsapp() {
   const ticket = document.getElementById('ticket-print');
@@ -9891,21 +9795,6 @@ function renderFrecuentes() {
 }
 
 // Premio sugerido al vender
-function getPremioSugerido(clienteId) {
-  const c = DB.clientes.find(x => x.id === clienteId);
-  if (!c) return null;
-  const nv = getNivel(c.total);
-  if (!nv) return null;
-  const cands = DB.productos.filter(p => {
-    if (p.precio > nv.max || p.stock <= 0) return false;
-    const vencePronto = p.venc && diasHasta(p.venc) <= 14 && diasHasta(p.venc) >= 0;
-   const fuenteVentas = [...(DB.ventas||[]), ...(DB.historialVentas||[]).filter(h=>h.origen==='online')];
-    const bajaRot = fuenteVentas.reduce((s,v) => s + (v.items.find(i => i.prodId===p.id)?.cant||0), 0) < 3;
-    return vencePronto || bajaRot;
-  });
-  const prod = cands.sort((a,b) => a.precio - b.precio)[0] || null;
-  return { nivel: nv, producto: prod };
-}
 
 // ===================== POS - Cliente info y premio =====================
 function onClienteChange() {
@@ -10121,31 +10010,28 @@ async function guardarGasto() {
     return;
   }
 
-  // CRITICO: mismo interruptor — todo el bloque de abajo toca DB.caja directamente, sin esto
-  // el Proxy dispara su propia escritura ademas de la que ya hizo el lote atomico.
-  _cajaProxySkipSync = true;
-  try {
-    if (_editingGastoId) {
-      const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
-      const diff = monto - old.monto;
-      old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
-      if (diff !== 0) {
-        if (diff > 0) {
-          DB.caja.egresos = (DB.caja.egresos||0) + diff;
-          if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
-        } else {
-          DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
-          if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + diff);
-          DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
-          DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
-        }
+  // Caja es un objeto plano — todo el bloque de abajo solo actualiza la copia local.
+  if (_editingGastoId) {
+    const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
+    const diff = monto - old.monto;
+    old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
+    if (diff !== 0) {
+      if (diff > 0) {
+        DB.caja.egresos = (DB.caja.egresos||0) + diff;
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
+      } else {
+        DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + diff);
+        DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
+        DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
       }
-    } else {
-      DB_EXT.gastos.push(_gastoFinal);
-      DB.caja.egresos = (DB.caja.egresos||0) + monto;
-      if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
     }
-  } finally { _cajaProxySkipSync = false; }
+  } else {
+    DB_EXT.gastos.push(_gastoFinal);
+    DB.caja.egresos = (DB.caja.egresos||0) + monto;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  }
+  
   if (_movData) { if (!DB.movimientos) DB.movimientos = []; DB.movimientos.push(_movData); }
 
   fbGuardar();
@@ -10187,11 +10073,9 @@ async function eliminarGasto(id) {
     }
 
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
-    _cajaProxySkipSync = true;
-    try {
-      DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
-      DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
-    } finally { _cajaProxySkipSync = false; }
+    DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
+    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
+  
     if (!DB.movimientos) DB.movimientos = [];
     DB.movimientos.push(_movData);
     fbGuardar();
@@ -10411,11 +10295,9 @@ async function confirmarAddCapital() {
   DB_EXT.capital.total += monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) + monto;
   DB_EXT.capital.hist.push({ tipo:'aporte', fecha: today(), desc, monto, acum });
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
-    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
-  } finally { _cajaProxySkipSync = false; }
+  DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
+  DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
+  
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   fbGuardarExt();
@@ -10511,11 +10393,9 @@ async function confirmarPagoCuota() {
   DB_EXT.capital.prestamoPagado = (DB_EXT.capital.prestamoPagado||0) + monto;
   const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) - monto;
   DB_EXT.capital.hist.push({ tipo:'pago_prestamo', fecha, desc, monto: -monto, acum });
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.egresos = (DB.caja.egresos||0) + monto;
-    DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
-  } finally { _cajaProxySkipSync = false; }
+  DB.caja.egresos = (DB.caja.egresos||0) + monto;
+  DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   fbGuardarExt();
@@ -11311,28 +11191,6 @@ function mobRenderCart() {
   try { updatePosCartBadge(); } catch(e) {}
 }
 
-function mobChangeQty(i, delta) {
-  const prod = DB.productos.find(p => p.id === cart[i].prodId);
-  const step = cart[i].tipo === 'granel' ? 0.25 : 1;
-  cart[i].cant = Math.max(step, Math.min(prod ? stockEnSede(prod) : 999, cart[i].cant + delta * step));
-  mobRenderCart(); mobCalcTotal(); mobUpdateBar();
-}
-
-function mobRemoveItem(i) {
-  cart.splice(i, 1);
-  mobRenderCart(); mobCalcTotal(); mobUpdateBar();
-}
-
-function mobClearCart() {
-  if (cart.length && !confirm('¿Vaciar el carrito?')) return;
-  cart = [];
-  mobRenderCart(); mobCalcTotal(); mobUpdateBar();
-  const search = document.getElementById('mob-pos-search');
-  if (search) search.value = '';
-  renderMobPosGrid();
-  toggleMobCart(); // close drawer
-}
-
 function mobCalcTotal() {
   // Delegado al calcTotal unificado
   calcTotal();
@@ -11738,41 +11596,6 @@ function fbGuardarProductos() {
   }, 1200);
 }
 
-// ── Fase 1 arquitectura multi-sede: escritura doble en colección ventas/{id} ──
-// No bloqueante — un fallo acá nunca debe afectar el guardado de historialVentas.
-// sedeId por defecto 'principal' si no hay currentUserSedeId (ver Sección 3 hoja de ruta).
-// Venta: junto con fiado, la de mayor prioridad — es la transacción central del negocio.
-function fbSincronizarVenta(venta) {
-  if (!fbFS || !venta || venta.id == null) return;
-  const data = { ...venta, sedeId: venta.sedeId || currentUserSedeId || 'principal' };
-  _sincIniciar('venta', venta.id);
-  fbFS.collection('ventas').doc(String(venta.id)).set(data)
-    .then(() => _sincTerminar('venta', venta.id))
-    .catch(e => _sincError('venta', venta.id, e, 'la venta'));
-}
-
-// ── Fase 4 arquitectura multi-sede: escritura doble en colección movimientos/{id} ──
-// Mismo criterio que fbSincronizarVenta: no bloqueante, sedeId por defecto 'principal'.
-function fbSincronizarMovimiento(mov) {
-  if (!fbFS || !mov || mov.id == null) return;
-  const data = { ...mov, sedeId: mov.sedeId || currentUserSedeId || 'principal' };
-  _sincIniciar('movimiento', mov.id);
-  fbFS.collection('movimientos').doc(String(mov.id)).set(data)
-    .then(() => _sincTerminar('movimiento', mov.id))
-    .catch(e => _sincError('movimiento', mov.id, e, 'el movimiento de caja'));
-}
-// Push no-transaccional: agrega id si falta, empuja a DB.movimientos local, sincroniza a la colección nueva.
-function _pushMovimiento(mov) {
-  if (mov.id == null) mov.id = getId();
-  // Mismo criterio de raiz: si quien llama no especifico sede, usar la sede efectiva
-  // (respeta el cambio de sede del admin) en vez de dejar que el fallback de
-  // fbSincronizarMovimiento use la sede de login.
-  if (!mov.sedeId) mov.sedeId = sedeAdminEfectiva();
-  if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(mov);
-  fbSincronizarMovimiento(mov);
-  return mov;
-}
 
 // ── Escuchar cambios de OTROS dispositivos ──
 // doc 'db' → operaciones  |  doc 'db_productos' → catálogo
@@ -11913,10 +11736,8 @@ function fbPatchDB() {
   // garantizada por transaccion — esta linea, sin proteccion, escribia directo al servidor
   // (via el Proxy) si algun documento de caja de pruebas anteriores no tenia el campo fecha,
   // pisando la fecha real con un string vacio ANTES de que cualquier otra logica corriera.
-  _cajaProxySkipSync = true;
-  try {
-    if (DB.caja.fecha === undefined || DB.caja.fecha === null) DB.caja.fecha = '';
-  } finally { _cajaProxySkipSync = false; }
+  if (DB.caja.fecha === undefined || DB.caja.fecha === null) DB.caja.fecha = '';
+  
   if (!DB.historialVentas) DB.historialVentas = [];
   // Migrate DB.ventas into historialVentas if historialVentas is empty but ventas has data
   if (DB.historialVentas.length === 0 && DB.ventas && DB.ventas.length > 0) {
@@ -12266,9 +12087,7 @@ async function corregirMetodoPago(id) {
 
   v.metodo = metodoNuevo;
   if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
-    _cajaProxySkipSync = true;
-    try { DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) + _deltaEfectivo); }
-    finally { _cajaProxySkipSync = false; }
+ DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) + _deltaEfectivo); 
   }
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
@@ -12495,12 +12314,10 @@ async function guardarActualizarVenta() {
       prod.stockPorSede[_sedeDev] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDev]||0)+delta)*1000)/1000);
       prod.stock = stockTotal(prod);
     });
-    // CRITICO: mismo interruptor — evita la doble escritura del Proxy.
-    _cajaProxySkipSync = true;
-    try {
-      DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-      if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
-    } finally { _cajaProxySkipSync = false; }
+    // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
+    DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
+  
     if (!vDB.devoluciones) vDB.devoluciones = [];
     vDB.devoluciones.push(_devolucionEntry);
     vDB.estado         = 'anulado';
@@ -12623,12 +12440,10 @@ async function guardarActualizarVenta() {
   });
   vDB.total  = nuevoTotal;
   vDB.estado = nuevoTotal === 0 ? 'anulado' : 'parcial';
-  // CRITICO: mismo interruptor — evita la doble escritura del Proxy.
-  _cajaProxySkipSync = true;
-  try {
-    DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
-  } finally { _cajaProxySkipSync = false; }
+  // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
+  DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
+  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
+  
   if (!vDB.devoluciones) vDB.devoluciones = [];
   vDB.devoluciones.push(_devolucionEntryP);
   if (!DB.movimientos) DB.movimientos = [];
@@ -13318,12 +13133,10 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       } finally { _clienteProxySkipSync = false; }
       p.estado = 'entregado';
       if (_esPagado) {
-        // CRITICO: mismo interruptor — evita la doble escritura del Proxy.
-        _cajaProxySkipSync = true;
-        try {
-          DB.caja.ingresos += p.total;
-          if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
-        } finally { _cajaProxySkipSync = false; }
+        // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
+        DB.caja.ingresos += p.total;
+        if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
+      
       }
       if (!DB.movimientos) DB.movimientos = [];
       DB.movimientos.push(_movData);
@@ -14628,7 +14441,7 @@ async function _vaciarColeccion(nombreColeccion) {
 function _reiniciarCajaTodasLasSedes() {
   const vacia = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
   ['principal', 'Tienda Aleze II'].forEach(sede => {
-    DB._cajas[sede] = _crearCajaProxy(sede, { ...vacia });
+    DB._cajas[sede] = { ...vacia };
     if (fbFS) fbFS.collection('caja').doc(sede).set(vacia).catch(()=>{});
   });
 }
