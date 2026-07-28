@@ -4027,10 +4027,11 @@ async function doLogin() {
 
   if (fbFS) {
     try {
-      const [snapOp, snapProd, snapExt] = await Promise.all([
+      const [snapOp, snapProd, snapExt, snapConfig] = await Promise.all([
         fbDocRef().get(),
         fbProdDocRef().get(),
-        fbFS.collection('aleze').doc('db_ext').get()
+        fbFS.collection('aleze').doc('db_ext').get(),
+        fbFS.collection('aleze').doc('config').get()
       ]);
 
       if (snapOp.exists) {
@@ -4042,15 +4043,19 @@ async function doLogin() {
         // "clientes fantasma": un cliente borrado de la coleccion real, pero todavia presente
         // en esta copia vieja, volvia a aparecer en cada login (la reconciliacion solo agrega
         // lo que falta, nunca quita — nunca corregia esto).
-        const camposOp = ['proveedores','promociones','config','inventariosMensuales'];
+        const camposOp = ['proveedores','promociones','inventariosMensuales'];
         camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
-        if (data.config && data.config.passwords) Object.assign(PASSWORDS, data.config.passwords);
         // CRITICO: caja YA NO se lee de aleze/db.cajas en ningun lado — es una copia vieja,
         // legado. La unica fuente de verdad es la coleccion dedicada, leida justo abajo. Si
         // el dispositivo esta genuinamente offline en el primer login de su vida (sin nada
         // en cache local de IndexedDB todavia), DB._cajas queda en su estado por defecto en
         // blanco hasta que haya señal — ensureCajaAbierta() ya maneja ese caso con su propio
         // respaldo offline.
+      }
+      // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
+      if (snapConfig.exists) {
+        DB.config = { ...DB.config, ...snapConfig.data() };
+        if (DB.config.passwords) Object.assign(PASSWORDS, DB.config.passwords);
       }
       // Trae la caja real desde su colección dedicada — única fuente de verdad.
       try {
@@ -11509,6 +11514,23 @@ function fbGuardarExt() {
   }, 1200);
 }
 
+// ── Configuración: documento propio, separado de aleze/db ──────────────────────────────────
+// Antes vivía como un campo más dentro de aleze/db, guardado y cargado junto con
+// ventas/clientes/etc — misma duplicidad que ya se corrigió para esos 6 campos. config es un
+// objeto único (no una lista de registros), así que le alcanza con su propio documento, no
+// necesita una colección con un documento por registro como ventas o clientes.
+function fbGuardarConfig() {
+  if (!fbFS) return;
+  clearTimeout(window._fbConfigTimer);
+  window._fbConfigTimer = setTimeout(() => {
+    _sincIniciar('config', 'config');
+    fbFS.collection('aleze').doc('config')
+      .set(JSON.parse(JSON.stringify(DB.config || {})))
+      .then(() => _sincTerminar('config', 'config'))
+      .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
+  }, 1200);
+}
+
 // ── Referencias Firestore ──
 // db        → operaciones, ventas, caja, clientes, fiados, mermas, etc.
 // db_productos → productos + categorias (documento separado, más liviano)
@@ -11574,6 +11596,8 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
     delete payload.mermas;
     delete payload.movimientos;
     delete payload.historialVentas;
+    // config: mismo criterio, ahora tiene su propio documento (ver fbGuardarConfig).
+    delete payload.config;
     // Caja por sede: mandar TODAS las sedes (payload.caja solo trae la de la sesión actual, vía el getter)
     delete payload.caja;
     payload.cajas = DB._cajas;
@@ -11581,6 +11605,9 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
     fbDocRef().set(payload)
       .then(() => { _fbWritingDB = false; setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('aleze_db', 'db'); })
       .catch(e => { _fbWritingDB = false; _fbEscribiendo = false; _sincError('aleze_db', 'db', e, 'los datos generales (ventas, fiados, movimientos, caja, clientes)'); });
+    // config no depende de este mismo debounce — se guarda con su propio timer, así un
+    // guardado de ventas/caja no demora ni se acopla al guardado de configuración y viceversa.
+    fbGuardarConfig();
   }, 1200);
 }
 
@@ -11595,10 +11622,20 @@ function fbGuardarProductos() {
     if (_fbWritingProd) { _fbSaveTimerProd = setTimeout(_tryGuardarProd, 500); return; }
     _fbEscribiendo = true;
     _fbWritingProd = true;
+    // CRITICO: antes se embebía DB.config COMPLETO acá — pero db_productos es de lectura
+    // pública (lo lee la tienda online sin necesitar sesión), y config incluye usuariosStaff
+    // (emails y roles del personal), que no tiene ningún motivo para ser público. Ahora solo
+    // se copian los campos que la tienda pública realmente necesita mostrar.
+    const _configPublico = {
+      nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
+      whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
+      requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
+      pasarelaPago: DB.config?.pasarelaPago
+    };
     const payload = {
       productos:  JSON.parse(JSON.stringify(DB.productos)),
       categorias: JSON.parse(JSON.stringify(DB.categorias)),
-      config:     JSON.parse(JSON.stringify(DB.config))
+      config:     JSON.parse(JSON.stringify(_configPublico))
     };
     _sincIniciar('db_productos', 'db_productos');
     fbProdDocRef().set(payload)
