@@ -5232,6 +5232,8 @@ async function procesarVenta() {
   DB.caja.ingresos = (DB.caja.ingresos||0) + total;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + total;
   DB.historialVentas.push(_ventaFinal);
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardar();
   fbGuardarProductos();
 
@@ -5370,6 +5372,8 @@ async function cobrarFiado() {
     } finally { _clienteProxySkipSync = false; }
   }
   DB.historialVentas.push(_ventaFiado);
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardar();
   fbGuardarProductos();
 
@@ -7101,8 +7105,8 @@ async function abrirPagoBoleta(provId, idx) {
   batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
 
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${b.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede });
+  const _movData = { id:_movId, tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${b.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   _sincIniciar('pago_boleta_lote', b.id);
   try {
@@ -7115,6 +7119,8 @@ async function abrirPagoBoleta(provId, idx) {
 
   b.pagos = _pagosNuevo;
   b.pagado = _pagadoNuevo;
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   _cajaProxySkipSync = true;
   try {
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
@@ -7582,8 +7588,8 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   }, { merge: true });
 
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today(), sedeId: _sedeEPG });
+  const _movData = { id:_movId, tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today(), sedeId: _sedeEPG };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(montoTotal) };
   if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(montoTotal);
@@ -7615,6 +7621,8 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
   if (!DB.historialVentas) DB.historialVentas = [];
   _hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardar();
   renderFiados();
   updateAlertCount();
@@ -7789,8 +7797,8 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   }, { merge: true });
 
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
+  const _movData = { id:_movId, tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(monto) };
   if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(monto);
@@ -7822,6 +7830,8 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   if (!DB.historialVentas) DB.historialVentas = [];
   DB.historialVentas.push(_pagoFiado);
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardar();
   cerrarModal('modal-pago-fiado');
   renderFiados();
@@ -8192,9 +8202,6 @@ async function confirmarCierreCaja() {
 }
 
 function updateCajaStats() {
-  const ventasHoy = DB.historialVentas.filter(v => v.fecha === today() &&
-  ((v.origen === 'pos' && v.estado === 'completado') ||
- (v.origen === 'online' && v.estado === 'completado')));
   const ingresos = DB.caja.ingresos;
   const egresos = DB.caja.egresos;
   document.getElementById('caja-inicial').textContent = sol(DB.caja.inicial);
@@ -8238,6 +8245,15 @@ const saldo = DB.caja.inicial + ingresos - egresos;
 
 // ── Fase 4: pintar tabla de movimientos — separado para reusar entre ruta local y ruta consultada ──
 function _renderMovsTabla(movsVis) {
+  // CRITICO: esta variable vivia en updateCajaStats() pero nunca se usaba ahi — se usa ACA,
+  // para el grafico de "Ventas por metodo de pago". Como _renderMovsTabla() es una funcion
+  // separada (se llama tambien desde la ruta de _fetchMovimientosRango), nunca tenia acceso
+  // a esa variable — tiraba ReferenceError sin capturar, cortando la funcion a mitad de
+  // camino cada vez que se pintaba Caja (por eso el grafico salia vacio, y cualquier cosa
+  // que dependiera de que esta funcion terminara bien tambien se veia afectada).
+  const ventasHoy = DB.historialVentas.filter(v => v.fecha === today() &&
+    ((v.origen === 'pos' && v.estado === 'completado') ||
+     (v.origen === 'online' && v.estado === 'completado')));
   document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => {
     const esFiado = m.tipo === 'fiado';
     const esNeutro = esFiado || m.tipo === 'info' || m.tipo === 'arqueo' || m.tipo === 'traslado';
@@ -8255,7 +8271,9 @@ function _renderMovsTabla(movsVis) {
   const metodos = {};
   ventasHoy.forEach(v => metodos[v.metodo] = (metodos[v.metodo]||0) + v.total);
   if (chartMetodos) chartMetodos.destroy();
-  const ctx2 = document.getElementById('chart-metodos').getContext('2d');
+  const _canvasMetodos = document.getElementById('chart-metodos');
+  if (!_canvasMetodos) return; // defensivo: si el canvas no esta en el DOM en este momento, no truena
+  const ctx2 = _canvasMetodos.getContext('2d');
   chartMetodos = new Chart(ctx2, {
     type: 'doughnut',
     data: { labels: Object.keys(metodos), datasets: [{ data: Object.values(metodos), backgroundColor: ['#7C3AED','#10B981','#F59E0B','#3B82F6','#EF4444','#8B5CF6','#06B6D4','#84CC16'] }] },
@@ -8278,8 +8296,8 @@ async function registrarMovimiento() {
     [campoEfectivo]: firebase.firestore.FieldValue.increment(monto)
   }, { merge: true });
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today(), sedeId: sede });
+  const _movData = { id:_movId, tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today(), sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   _sincIniciar('mov_manual_lote', _movId);
   try {
@@ -8295,6 +8313,8 @@ async function registrarMovimiento() {
     if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; }
     else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
   } finally { _cajaProxySkipSync = false; }
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
   updateCajaStats();
 }
@@ -8412,8 +8432,8 @@ async function confirmarTraslado() {
     [`stockPorSede.${destino}`]: firebase.firestore.FieldValue.increment(cantidad)
   }, { merge: true });
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'traslado', desc:`Traslado: ${prod.nombre} x${cantidad} ${prod.unidad} — ${origen} → ${destino}`, monto:0, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: origen });
+  const _movData = { id:_movId, tipo:'traslado', desc:`Traslado: ${prod.nombre} x${cantidad} ${prod.unidad} — ${origen} → ${destino}`, monto:0, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: origen };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   _sincIniciar('traslado_lote', prod.id);
   try {
@@ -8423,6 +8443,8 @@ async function confirmarTraslado() {
     _sincError('traslado_lote', prod.id, e, 'el traslado — no se aplicó nada, el stock sigue completo en la sede de origen');
     return;
   }
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
 
   // NUNCA usar ajustarStockSede() acá — esa función escribe a Firestore por su cuenta
   // (fbIncrementarStock), lo que aplicaría el mismo cambio DOS VECES ya que el lote de arriba
@@ -9961,6 +9983,7 @@ async function guardarGasto() {
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const batch = fbFS.batch();
   let _gastoFinal, _movDesc, _movMonto, _movTipo, _cajaUpdate = {};
+  let _movData = null; // solo se crea un movimiento si realmente hay algo que registrar
 
   if (_editingGastoId) {
     const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
@@ -9982,8 +10005,8 @@ async function guardarGasto() {
       }
       batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
       const _movId = getId();
-      batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-        { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede });
+      _movData = { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+      batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
     }
   } else {
     _gastoFinal = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sede };
@@ -9992,8 +10015,8 @@ async function guardarGasto() {
     if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(monto);
     batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
     const _movId = getId();
-    batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-      { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede });
+    _movData = { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
+    batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
   }
 
   _sincIniciar('gasto_lote', _gastoFinal.id);
@@ -10025,6 +10048,7 @@ async function guardarGasto() {
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
     if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
   }
+  if (_movData) { if (!DB.movimientos) DB.movimientos = []; DB.movimientos.push(_movData); }
 
   fbGuardar();
   fbGuardarExt();
@@ -10052,8 +10076,8 @@ async function eliminarGasto(id) {
       ingresosEfectivo: firebase.firestore.FieldValue.increment(gasto.monto)
     }, { merge: true });
     const _movId = getId();
-    batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-      { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede });
+    const _movData = { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede };
+    batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
     _sincIniciar('elim_gasto_lote', id);
     try {
@@ -10070,6 +10094,8 @@ async function eliminarGasto(id) {
       DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
       DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
     } finally { _cajaProxySkipSync = false; }
+    if (!DB.movimientos) DB.movimientos = [];
+    DB.movimientos.push(_movData);
     fbGuardar();
   } else {
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
@@ -10272,8 +10298,8 @@ async function confirmarAddCapital() {
     ingresosEfectivo: firebase.firestore.FieldValue.increment(monto)
   }, { merge: true });
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede });
+  const _movData = { id:_movId, tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   _sincIniciar('add_capital_lote', _movId);
   try {
@@ -10292,6 +10318,8 @@ async function confirmarAddCapital() {
     DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
     DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   } finally { _cajaProxySkipSync = false; }
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardarExt();
   cerrarModal('modal-add-capital');
   renderCapital();
@@ -10370,8 +10398,8 @@ async function confirmarPagoCuota() {
     egresosEfectivo: firebase.firestore.FieldValue.increment(monto)
   }, { merge: true });
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede });
+  const _movData = { id:_movId, tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   _sincIniciar('pago_cuota_lote', _movId);
   try {
@@ -10390,6 +10418,8 @@ async function confirmarPagoCuota() {
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
     DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
   } finally { _cajaProxySkipSync = false; }
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardarExt();
   cerrarModal('modal-pago-cuota');
   renderCapital();
@@ -12090,8 +12120,8 @@ async function corregirMetodoPago(id) {
       { ingresosEfectivo: firebase.firestore.FieldValue.increment(_deltaEfectivo) }, { merge: true });
   }
   const _movId = getId();
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-    { id:_movId, tipo:'info', desc:`Corrección método venta #${v.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede });
+  const _movData = { id:_movId, tipo:'info', desc:`Corrección método venta #${v.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
   _sincIniciar('correccion_metodo_lote', v.id);
   try {
@@ -12108,6 +12138,8 @@ async function corregirMetodoPago(id) {
     try { DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) + _deltaEfectivo); }
     finally { _cajaProxySkipSync = false; }
   }
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
   fbGuardar();
   try { renderHistorialVentas(); } catch(e){}
   try { renderCaja(); } catch(e){}
@@ -12295,11 +12327,12 @@ async function guardarActualizarVenta() {
     });
 
     const _movId = getId();
-    batch.set(fbFS.collection('movimientos').doc(String(_movId)), {
+    const _movData = {
       id: _movId, tipo: 'egreso',
       desc: `Reembolso anulación venta — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
       monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDev
-    });
+    };
+    batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
 
     const _cajaUpdate = { egresos: firebase.firestore.FieldValue.increment(montoReembolso) };
     if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(montoReembolso);
@@ -12337,6 +12370,8 @@ async function guardarActualizarVenta() {
     vDB.estado         = 'anulado';
     vDB.total          = 0;
     vDB.fechaAnulacion = _vDBActualizada.fechaAnulacion;
+    if (!DB.movimientos) DB.movimientos = [];
+    DB.movimientos.push(_movData);
 
     fbGuardar();
     fbGuardarProductos();
@@ -12418,11 +12453,12 @@ async function guardarActualizarVenta() {
   batchP.set(fbFS.collection('ventas').doc(String(vDB.id)), _vDBActualizadaP);
 
   const _movIdP = getId();
-  batchP.set(fbFS.collection('movimientos').doc(String(_movIdP)), {
+  const _movDataP = {
     id: _movIdP, tipo: 'egreso',
     desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
     monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDevP
-  });
+  };
+  batchP.set(fbFS.collection('movimientos').doc(String(_movIdP)), _movDataP);
 
   const _cajaUpdateP = { egresos: firebase.firestore.FieldValue.increment(montoReembolso) };
   if (metodo === 'Efectivo') _cajaUpdateP.egresosEfectivo = firebase.firestore.FieldValue.increment(montoReembolso);
@@ -12455,6 +12491,8 @@ async function guardarActualizarVenta() {
   if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
   if (!vDB.devoluciones) vDB.devoluciones = [];
   vDB.devoluciones.push(_devolucionEntryP);
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movDataP);
 
   fbGuardar();
   fbGuardarProductos();
@@ -13083,16 +13121,17 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       }
 
       const _movId = getId();
+      let _movData;
       if (_esPagado) {
         batch.set(fbFS.collection('caja').doc(_sedeDespacho), {
           ingresos: firebase.firestore.FieldValue.increment(p.total),
           ...(p.metodo === 'Efectivo' ? { ingresosEfectivo: firebase.firestore.FieldValue.increment(p.total) } : {})
         }, { merge: true });
-        batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-          { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho });
+        _movData = { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
+        batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
       } else {
-        batch.set(fbFS.collection('movimientos').doc(String(_movId)),
-          { id:_movId, tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho });
+        _movData = { id:_movId, tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
+        batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
       }
 
       batch.update(fbFS.collection('pedidos_online').doc(String(p.id)), {
@@ -13142,6 +13181,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         DB.caja.ingresos += p.total;
         if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
       }
+      if (!DB.movimientos) DB.movimientos = [];
+      DB.movimientos.push(_movData);
 
       fbGuardar();
       fbGuardarProductos();
