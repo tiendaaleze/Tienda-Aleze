@@ -3734,8 +3734,7 @@ const DB_EXT = {
   gastosRec: [
     {id:1, desc:'Energía eléctrica mensual', tipo:'Energía', monto:80},
     {id:2, desc:'Transporte de mercadería', tipo:'Transporte', monto:50}
-  ],
-  inventariosMensuales: []
+  ]
 };
 
 let DB = {
@@ -3859,7 +3858,6 @@ function resetAppState() {
   _vaciarCampo('proveedores', []);
   _vaciarCampo('promociones', []);
 try { Object.defineProperty(DB, 'pedidosOnline', { value: [], writable: true, configurable: true, enumerable: true }); } catch(e) { DB.pedidosOnline = []; }
-  _vaciarCampo('inventariosMensuales', []);
   _vaciarCampo('historialVentas', []);
 
   // caja y config: asignación directa (no están en el patch de setters)
@@ -4043,7 +4041,7 @@ async function doLogin() {
         // "clientes fantasma": un cliente borrado de la coleccion real, pero todavia presente
         // en esta copia vieja, volvia a aparecer en cada login (la reconciliacion solo agrega
         // lo que falta, nunca quita — nunca corregia esto).
-        const camposOp = ['proveedores','promociones','inventariosMensuales'];
+        const camposOp = ['proveedores']; // inventariosMensuales era campo muerto, eliminado
         camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
         // CRITICO: caja YA NO se lee de aleze/db.cajas en ningun lado — es una copia vieja,
         // legado. La unica fuente de verdad es la coleccion dedicada, leida justo abajo. Si
@@ -4093,18 +4091,20 @@ async function doLogin() {
       // solo agrega lo que el documento combinado no tenga.
       try {
         const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
-        const [ventasSnap, fiadosSnap, clientesSnap, mermasSnap, movimientosSnap] = await Promise.all([
+        const [ventasSnap, fiadosSnap, clientesSnap, mermasSnap, movimientosSnap, promocionesSnap] = await Promise.all([
           fbFS.collection('ventas').where('fecha', '>=', _limiteReconcilia).get(),
           fbFS.collection('fiados').get(), // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
           fbFS.collection('clientes').get(), // clientes: todos — un cliente no "vence", nunca deberia faltar
           fbFS.collection('mermas').where('fecha', '>=', _limiteReconcilia).get(),
-          fbFS.collection('movimientos').where('fecha', '>=', _limiteReconcilia).get()
+          fbFS.collection('movimientos').where('fecha', '>=', _limiteReconcilia).get(),
+          fbFS.collection('promociones').get() // promociones: todas — ya no vive en aleze/db, esta es la unica fuente
         ]);
         if (!DB.historialVentas) DB.historialVentas = [];
         if (!DB.fiados) DB.fiados = [];
         if (!DB.clientes) DB.clientes = [];
         if (!DB.mermas) DB.mermas = [];
         if (!DB.movimientos) DB.movimientos = [];
+        if (!DB.promociones) DB.promociones = [];
 
         const _reconciliar = (snap, arr, idKey) => {
           const ids = new Set(arr.map(x => String(x[idKey])));
@@ -4117,11 +4117,12 @@ async function doLogin() {
         const _rClientes  = _reconciliar(clientesSnap, DB.clientes, 'id');
         const _rMermas    = _reconciliar(mermasSnap, DB.mermas, 'id');
         const _rMovs      = _reconciliar(movimientosSnap, DB.movimientos, 'id');
+        const _rPromos    = _reconciliar(promocionesSnap, DB.promociones, 'id');
         _envolverTodosClientes(); // los clientes recien agregados tambien necesitan su Proxy
 
-        const _totalReconciliado = _rVentas + _rFiados + _rClientes + _rMermas + _rMovs;
+        const _totalReconciliado = _rVentas + _rFiados + _rClientes + _rMermas + _rMovs + _rPromos;
         if (_totalReconciliado) {
-          console.warn(`[Reconciliación] Recuperados: ${_rVentas} venta(s), ${_rFiados} fiado(s), ${_rClientes} cliente(s), ${_rMermas} merma(s), ${_rMovs} movimiento(s) que faltaban en el documento combinado.`);
+          console.warn(`[Reconciliación] Recuperados: ${_rVentas} venta(s), ${_rFiados} fiado(s), ${_rClientes} cliente(s), ${_rMermas} merma(s), ${_rMovs} movimiento(s), ${_rPromos} promocion(es) que faltaban en el documento combinado.`);
         }
       } catch(e) { console.warn('[Offline] No se pudo reconciliar datos frescos:', e); }
 
@@ -10949,13 +10950,18 @@ function guardarPromocion() {
     imagen, packProdId, packCodigo,
     sedeId: document.getElementById('promo-sede')?.value || ''
   };
+  // CRITICO: promociones ahora tiene su propia coleccion (mismo criterio que ventas,
+  // clientes, etc.) — ya no depende de guardarse como parte de aleze/db via fbGuardar().
+  let _promoFinal;
   if (editingPromoId) {
     const idx = DB.promociones.findIndex(x => x.id === editingPromoId);
     if (idx >= 0) DB.promociones[idx] = { ...DB.promociones[idx], ...data };
+    _promoFinal = DB.promociones[idx];
   } else {
-    DB.promociones.push({ id: getId(), ...data });
+    _promoFinal = { id: getId(), ...data };
+    DB.promociones.push(_promoFinal);
   }
-  fbGuardar();
+  if (fbFS) fbFS.collection('promociones').doc(String(_promoFinal.id)).set(_promoFinal).catch(e => console.warn('No se pudo guardar promociones/'+_promoFinal.id, e));
   cerrarModal('modal-promocion');
   renderPromociones();
   try { renderPosGrid(); } catch(e) {}
@@ -10970,7 +10976,7 @@ function togglePromo(id) {
     const prodPack = DB.productos.find(x => x.id === p.packProdId);
     if (prodPack) { prodPack.promoActiva = p.activa; fbGuardarProductos(); }
   }
-  fbGuardar();
+  if (fbFS) fbFS.collection('promociones').doc(String(id)).set({ activa: p.activa }, { merge: true }).catch(e => console.warn('No se pudo actualizar promociones/'+id, e));
   renderPromociones();
   try { renderPosGrid(); } catch(e){}
   try { renderMobPosGrid(); } catch(e){}
@@ -10986,7 +10992,7 @@ function eliminarPromo(id) {
     if (fbFS) fbFS.collection('stock').doc(String(p.packProdId)).delete().catch(()=>{});
   }
   DB.promociones = DB.promociones.filter(x => x.id !== id);
-  fbGuardar();
+  if (fbFS) fbFS.collection('promociones').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar promociones/'+id, e));
   renderPromociones();
 }
 
@@ -11598,6 +11604,7 @@ _fbSaveTimer = setTimeout(function _tryGuardar() {
     delete payload.historialVentas;
     // config: mismo criterio, ahora tiene su propio documento (ver fbGuardarConfig).
     delete payload.config;
+    delete payload.promociones;
     // Caja por sede: mandar TODAS las sedes (payload.caja solo trae la de la sesión actual, vía el getter)
     delete payload.caja;
     payload.cajas = DB._cajas;
@@ -11670,7 +11677,7 @@ function fbEscuchar() {
     // combinado (de este mismo dispositivo o de otro) disparaba este listener, que pisaba
     // estas 6 listas locales con lo que hubiera en la copia vieja en ese instante — mismo
     // riesgo que ya se corrigio para caja, ahora corregido acá tambien.
-    const camposOp = ['proveedores','promociones','inventariosMensuales'];
+    const camposOp = ['proveedores']; // inventariosMensuales era campo muerto, eliminado
     camposOp.forEach(k => { if (k in data && k in DB) DB[k] = data[k]; });
     if (data.config) DB.config = { ...DB.config, ...data.config };
     // CRITICO: caja YA NO se toca desde este listener. Antes, cualquier cambio al documento
@@ -11771,8 +11778,12 @@ function fbEscucharCaja() {
 // Solo las colecciones que el usuario modifica activamente
 // Columnas que van al doc 'db' (operaciones)
 // caja NO va aquí — tiene su propio getter/setter por sede, definido junto a la declaración de DB.
-const _fbPatchColsOp   = ['ventas','clientes','fiados','mermas','movimientos',
-                           'proveedores','promociones','inventariosMensuales'];
+// CRITICO: ventas/clientes/fiados/mermas/movimientos/promociones YA NO necesitan este
+// interceptor — tienen su propia coleccion con escritura explicita en cada funcion, no
+// dependen de que una reasignacion de array dispare fbGuardar() por su cuenta. Solo queda
+// proveedores, todavia sin migrar. inventariosMensuales era un campo muerto (la data real
+// siempre vivio en DB_EXT.inventariosMensuales, con su propio documento) — eliminado.
+const _fbPatchColsOp   = ['proveedores'];
 // Columnas que van al doc 'db_productos' (catálogo)
 const _fbPatchColsProd = ['productos','categorias'];
 
