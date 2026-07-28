@@ -3585,10 +3585,10 @@ async function procesarCanje(clienteId, premioId) {
   // justo antes de confirmar — reduce la ventana de riesgo al tiempo de esta consulta, no a
   // toda la sesión. No es una transacción (rompería el trabajo offline ya hecho) — si no hay
   // conexión, sigue con el chequeo local, igual que antes de este fix.
-  if (fbFS) {
+  if (dbModular) { // [SDK modular]
     try {
-      const doc = await fbFS.collection('clientes').doc(String(clienteId)).get();
-      if (doc.exists) {
+      const doc = await getDocM(docM(dbModular, 'clientes', String(clienteId)));
+      if (doc.exists()) { // en modular, exists es un METODO, no una propiedad
         const saldoReal = doc.data().puntos || 0;
         if (saldoReal < premio.puntos) {
           alert(`⚠️ El saldo de este cliente cambió (probablemente ya se procesó un canje desde otro dispositivo). Saldo actual: ${saldoReal} puntos — no se completó este canje.`);
@@ -3610,21 +3610,21 @@ async function procesarCanje(clienteId, premioId) {
   // Paquete atomico: puntos descontados, canje registrado, y si aplica la merma del producto
   // premio, viajan juntos — sin esto podian perderse puntos de un cliente sin que quedara
   // registro del canje (o al reves), exactamente el riesgo de fidelizacion duplicada descrito.
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return null; }
-  const batch = fbFS.batch();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return null; } // [SDK modular]
+  const batch = writeBatchM(dbModular);
   let _merma = null, _prodPremio = null;
 
   if (premio.tipo === 'producto' && premio.prodId) {
     const prod = DB.productos.find(p => p.id === premio.prodId);
     if (prod) {
-      batch.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(-1) }, { merge: true });
+      batch.set(docM(dbModular, 'stock', String(prod.id)),
+        { [`stockPorSede.${sede}`]: incrementM(-1) }, { merge: true });
       _merma = {
         id: getId(), prodId: prod.id, cant: 1, motivo: 'Canje de fidelización',
         obs: `Canje: ${premio.nombre} — ${getClienteNombre(clienteId)}`,
         fecha: today(), usuario: currentUser, sedeId: sede
       };
-      batch.set(fbFS.collection('mermas').doc(String(_merma.id)), _merma);
+      batch.set(docM(dbModular, 'mermas', String(_merma.id)), _merma);
       canje.prodId = prod.id;
       canje.costoAsociado = prod.costo || 0;
       _prodPremio = prod;
@@ -3633,9 +3633,9 @@ async function procesarCanje(clienteId, premioId) {
     canje.montoDescuento = premio.monto || 0;
   }
 
-  batch.set(fbFS.collection('canjes').doc(String(canje.id)), canje);
-  batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
-    puntos: firebase.firestore.FieldValue.increment(-premio.puntos)
+  batch.set(docM(dbModular, 'canjes', String(canje.id)), canje);
+  batch.set(docM(dbModular, 'clientes', String(clienteId)), {
+    puntos: incrementM(-premio.puntos)
   }, { merge: true });
 
   _sincIniciar('canje_lote', canje.id);
@@ -4076,15 +4076,17 @@ async function doLogin() {
       // solo agrega lo que el documento combinado no tenga.
       try {
         const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
+        // [SDK modular] toda la reconciliacion migrada junta, para no mezclar compat y modular
+        // en el mismo Promise.all.
         const [ventasSnap, fiadosSnap, clientesSnap, mermasSnap, movimientosSnap, promocionesSnap, proveedoresSnap, boletasSnap] = await Promise.all([
-          fbFS.collection('ventas').where('fecha', '>=', _limiteReconcilia).get(),
-          fbFS.collection('fiados').get(), // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
-          fbFS.collection('clientes').get(), // clientes: todos — un cliente no "vence", nunca deberia faltar
-          fbFS.collection('mermas').where('fecha', '>=', _limiteReconcilia).get(),
-          fbFS.collection('movimientos').where('fecha', '>=', _limiteReconcilia).get(),
-          getDocsM(collectionM(dbModular, 'promociones')), // promociones: todas — ya no vive en aleze/db, esta es la unica fuente [SDK modular]
-          getDocsM(collectionM(dbModular, 'proveedores')), // proveedores: todos — un proveedor no "vence" [SDK modular]
-          fbFS.collection('boletas').get() // para reconstruir prov.boletas en memoria (ver mas abajo)
+          getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', _limiteReconcilia))),
+          getDocsM(collectionM(dbModular, 'fiados')), // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
+          getDocsM(collectionM(dbModular, 'clientes')), // clientes: todos — un cliente no "vence", nunca deberia faltar
+          getDocsM(queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _limiteReconcilia))),
+          getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', _limiteReconcilia))),
+          getDocsM(collectionM(dbModular, 'promociones')), // promociones: todas — ya no vive en aleze/db, esta es la unica fuente
+          getDocsM(collectionM(dbModular, 'proveedores')), // proveedores: todos — un proveedor no "vence"
+          getDocsM(collectionM(dbModular, 'boletas')) // para reconstruir prov.boletas en memoria (ver mas abajo)
         ]);
         if (!DB.historialVentas) DB.historialVentas = [];
         if (!DB.fiados) DB.fiados = [];
@@ -4139,7 +4141,7 @@ async function doLogin() {
       // documento separado (db_ext) pero tiene exactamente el mismo riesgo de quedar viejo.
       try {
         const _limiteReconciliaGastos = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
-        const gastosSnap = await fbFS.collection('gastos').where('fecha', '>=', _limiteReconciliaGastos).get();
+        const gastosSnap = await getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconciliaGastos))); // [SDK modular]
         if (!DB_EXT.gastos) DB_EXT.gastos = [];
         const _idsGastos = new Set(DB_EXT.gastos.map(g => String(g.id)));
         let _rGastos = 0;
@@ -7083,10 +7085,10 @@ async function guardarBoleta() {
 // deuda real que el negocio pierde el rastro de cobrar. Mismo mecanismo que el resto,
 // pero es el caso donde más importa que la alerta llegue si el error es permanente.
 function fbSincronizarMerma(merma) {
-  if (!fbFS || !merma || merma.id == null) return;
+  if (!dbModular || !merma || merma.id == null) return; // [SDK modular]
   const data = { ...merma, sedeId: merma.sedeId || currentUserSedeId || 'principal' };
   _sincIniciar('merma', merma.id);
-  fbFS.collection('mermas').doc(String(merma.id)).set(data)
+  setDocM(docM(dbModular, 'mermas', String(merma.id)), data)
     .then(() => _sincTerminar('merma', merma.id))
     .catch(e => _sincError('merma', merma.id, e, 'la merma'));
 }
@@ -8523,8 +8525,8 @@ if (!prod) { alert('Producto no encontrado. Recarga el inventario.'); return; }
   // Paquete atomico: el descuento de stock y el registro de la merma viajan juntos — sin esto,
   // el stock podia descontarse sin que la merma quedara registrada (perdida sin motivo ni
   // rastro), o la merma quedar registrada sin el descuento real (inventario desincronizado).
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  const batch = fbFS.batch();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const batch = writeBatchM(dbModular);
 
 if (editingMermaId) {
     const old = DB.mermas.find(x => x.id === editingMermaId);
@@ -8543,13 +8545,13 @@ if (editingMermaId) {
     _acumular(prod, -cant); // aplicar el nuevo descuento
     const _deltasStock = [];
     _deltasPorProducto.forEach(({prod: p, delta}) => {
-      batch.set(fbFS.collection('stock').doc(String(p.id)),
-        { [`stockPorSede.${_sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+      batch.set(docM(dbModular, 'stock', String(p.id)),
+        { [`stockPorSede.${_sede}`]: incrementM(delta) }, { merge: true });
       _deltasStock.push({ prod: p, delta });
     });
 
     const _mermaActualizada = { ...old, prodId, cant, motivo, obs, sedeId: _sede };
-    batch.set(fbFS.collection('mermas').doc(String(old.id)), _mermaActualizada);
+    batch.set(docM(dbModular, 'mermas', String(old.id)), _mermaActualizada);
 
     _sincIniciar('merma_lote', old.id);
     try {
@@ -8569,9 +8571,9 @@ if (editingMermaId) {
   } else {
     if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
     const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede };
-    batch.set(fbFS.collection('stock').doc(String(prod.id)),
-      { [`stockPorSede.${_sede}`]: firebase.firestore.FieldValue.increment(-cant) }, { merge: true });
-    batch.set(fbFS.collection('mermas').doc(String(nuevaMerma.id)), nuevaMerma);
+    batch.set(docM(dbModular, 'stock', String(prod.id)),
+      { [`stockPorSede.${_sede}`]: incrementM(-cant) }, { merge: true });
+    batch.set(docM(dbModular, 'mermas', String(nuevaMerma.id)), nuevaMerma);
 
     _sincIniciar('merma_lote', nuevaMerma.id);
     try {
@@ -8614,18 +8616,18 @@ async function _confirmarElimMerma() {
   if (!opcion) { alert('Selecciona una opción antes de continuar.'); return; }
   const m = DB.mermas.find(x => x.id === _mermaElimId);
   if (!m) { cerrarModal('modal-confirmar-eliminar-merma'); return; }
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   const _restaurar = opcion.value === 'restaurar';
   const prod = _restaurar ? DB.productos.find(p => p.id === m.prodId) : null;
 
   // Paquete atomico: restaurar stock (si aplica) y borrar la merma viajan juntos.
-  const batch = fbFS.batch();
+  const batch = writeBatchM(dbModular);
   if (_restaurar && prod) {
-    batch.set(fbFS.collection('stock').doc(String(prod.id)),
-      { [`stockPorSede.${m.sedeId || sedeAdminEfectiva()}`]: firebase.firestore.FieldValue.increment(m.cant) }, { merge: true });
+    batch.set(docM(dbModular, 'stock', String(prod.id)),
+      { [`stockPorSede.${m.sedeId || sedeAdminEfectiva()}`]: incrementM(m.cant) }, { merge: true });
   }
-  batch.delete(fbFS.collection('mermas').doc(String(_mermaElimId)));
+  batch.delete(docM(dbModular, 'mermas', String(_mermaElimId)));
 
   _sincIniciar('elim_merma_lote', _mermaElimId);
   try {
@@ -8931,8 +8933,8 @@ function reporteGastos(desde, hasta, sede) {
 function reporteFidelizacion(desde, hasta, sede) {
   document.getElementById('rep-stats').innerHTML = '⏳ Cargando...';
   document.getElementById('rep-tabla-wrap').innerHTML = '';
-  if (!fbFS) { document.getElementById('rep-stats').innerHTML = 'Sin conexión.'; return; }
-  fbFS.collection('canjes').where('fecha', '>=', desde).where('fecha', '<=', hasta).get().then(snap => {
+  if (!dbModular) { document.getElementById('rep-stats').innerHTML = 'Sin conexión.'; return; } // [SDK modular]
+  getDocsM(queryM(collectionM(dbModular, 'canjes'), whereM('fecha', '>=', desde), whereM('fecha', '<=', hasta))).then(snap => {
     let canjes = snap.docs.map(d => d.data());
     if (sede) canjes = canjes.filter(c => (c.sedeId||'principal') === sede);
 
@@ -9757,9 +9759,9 @@ function cambiarMultiplicadorCategoria(catId, valor) {
 function renderCanjesHistorial() {
   const el = document.getElementById('fid-canjes-historial');
   if (!el) return;
-  if (!fbFS) { el.innerHTML = ''; return; }
+  if (!dbModular) { el.innerHTML = ''; return; } // [SDK modular]
   el.innerHTML = '⏳ Cargando...';
-  fbFS.collection('canjes').orderBy('fecha', 'desc').limit(20).get().then(snap => {
+  getDocsM(queryM(collectionM(dbModular, 'canjes'), orderByM('fecha', 'desc'), limitM(20))).then(snap => {
     if (snap.empty) { el.innerHTML = '<div style="color:var(--gray-400);padding:.5rem">Sin canjes todavía.</div>'; return; }
     el.innerHTML = snap.docs.map(d => {
       const c = d.data();
@@ -9986,9 +9988,9 @@ async function guardarGasto() {
   // Paquete atomico: el gasto, el ajuste de caja y el movimiento viajan juntos — sin esto,
   // podia salir plata de caja sin gasto que lo respalde, o quedar el gasto registrado sin
   // que caja lo refleje.
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-  const batch = fbFS.batch();
+  const batch = writeBatchM(dbModular);
   let _gastoFinal, _movDesc, _movMonto, _movTipo, _cajaUpdate = {};
   let _movData = null; // solo se crea un movimiento si realmente hay algo que registrar
 
@@ -9997,33 +9999,33 @@ async function guardarGasto() {
     if (!old) return;
     const diff = monto - old.monto;
     _gastoFinal = { ...old, tipo, desc, monto, fecha, metodo };
-    batch.set(fbFS.collection('gastos').doc(String(old.id)), _gastoFinal);
+    batch.set(docM(dbModular, 'gastos', String(old.id)), _gastoFinal);
     if (diff !== 0) {
       if (diff > 0) {
-        _cajaUpdate.egresos = firebase.firestore.FieldValue.increment(diff);
-        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(diff);
+        _cajaUpdate.egresos = incrementM(diff);
+        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
         _movTipo = 'egreso'; _movDesc = `Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`; _movMonto = diff;
       } else {
-        _cajaUpdate.egresos = firebase.firestore.FieldValue.increment(diff); // diff negativo, resta
-        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(diff);
-        _cajaUpdate.ingresos = firebase.firestore.FieldValue.increment(Math.abs(diff));
-        _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(Math.abs(diff));
+        _cajaUpdate.egresos = incrementM(diff); // diff negativo, resta
+        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
+        _cajaUpdate.ingresos = incrementM(Math.abs(diff));
+        _cajaUpdate.ingresosEfectivo = incrementM(Math.abs(diff));
         _movTipo = 'ingreso'; _movDesc = `Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`; _movMonto = Math.abs(diff);
       }
-      batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+      batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
       const _movId = getId();
       _movData = { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
-      batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+      batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
     }
   } else {
     _gastoFinal = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sede };
-    batch.set(fbFS.collection('gastos').doc(String(_gastoFinal.id)), _gastoFinal);
-    _cajaUpdate.egresos = firebase.firestore.FieldValue.increment(monto);
-    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(monto);
-    batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+    batch.set(docM(dbModular, 'gastos', String(_gastoFinal.id)), _gastoFinal);
+    _cajaUpdate.egresos = incrementM(monto);
+    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(monto);
+    batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
     const _movId = getId();
     _movData = { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
-    batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+    batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
   }
 
   _sincIniciar('gasto_lote', _gastoFinal.id);
@@ -10074,19 +10076,19 @@ async function eliminarGasto(id) {
   if (!confirm('¿Eliminar este gasto? Se devolverá el monto al efectivo disponible como corrección.')) return;
 
   if (gasto && gasto.monto > 0) {
-    if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
     await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
     const sede = sedeAdminEfectiva();
     // Paquete atomico: borrar el gasto, devolver el efectivo y registrar el movimiento juntos.
-    const batch = fbFS.batch();
-    batch.delete(fbFS.collection('gastos').doc(String(id)));
-    batch.set(fbFS.collection('caja').doc(sede), {
-      ingresos: firebase.firestore.FieldValue.increment(gasto.monto),
-      ingresosEfectivo: firebase.firestore.FieldValue.increment(gasto.monto)
+    const batch = writeBatchM(dbModular);
+    batch.delete(docM(dbModular, 'gastos', String(id)));
+    batch.set(docM(dbModular, 'caja', sede), {
+      ingresos: incrementM(gasto.monto),
+      ingresosEfectivo: incrementM(gasto.monto)
     }, { merge: true });
     const _movId = getId();
     const _movData = { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede };
-    batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+    batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
     _sincIniciar('elim_gasto_lote', id);
     try {
@@ -10106,7 +10108,7 @@ async function eliminarGasto(id) {
     fbGuardar();
   } else {
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
-    if (fbFS) fbFS.collection('gastos').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar gastos/'+id, e));
+    if (dbModular) deleteDocM(docM(dbModular, 'gastos', String(id))).catch(e => console.warn('No se pudo borrar gastos/'+id, e)); // [SDK modular]
   }
   fbGuardarExt();
   renderGastos();
@@ -10532,7 +10534,7 @@ async function sincronizarMermasInventario() {
     alert('No hay diferencias negativas verificadas para sincronizar.\nMarca el check ✅ en los productos con faltantes confirmados.');
     return;
   }
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   // Paquete atomico: TODAS las mermas del conteo y sus ajustes de stock viajan juntos —
   // mismo criterio que guardarMerma(). Firestore permite maximo 500 operaciones por lote —
@@ -10542,11 +10544,11 @@ async function sincronizarMermasInventario() {
   const _CHUNK = 200;
   for (let i = 0; i < _pendientes.length; i += _CHUNK) {
     const trozo = _pendientes.slice(i, i + _CHUNK);
-    const batch = fbFS.batch();
+    const batch = writeBatchM(dbModular);
     trozo.forEach(({prod, delta, merma}) => {
-      batch.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
-      batch.set(fbFS.collection('mermas').doc(String(merma.id)), merma);
+      batch.set(docM(dbModular, 'stock', String(prod.id)),
+        { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
+      batch.set(docM(dbModular, 'mermas', String(merma.id)), merma);
     });
 
     _sincIniciar('inv_mensual_lote', fechaInv + '_' + i);
