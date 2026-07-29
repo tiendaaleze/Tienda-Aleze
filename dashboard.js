@@ -1,0 +1,141 @@
+// ===================== DASHBOARD =====================
+function renderDashboard() {
+  // Guard: solo renderizar si hay sesión activa
+  if (!currentUser) return;
+  const hLogoImg = document.getElementById('header-logo-img');
+  if (hLogoImg && !hLogoImg.src) hLogoImg.src = _LOGO_B64;
+  const hoy = today();
+  const mes = getMesActual();
+  // Dashboard es diario — tiene más sentido por sede que consolidado, igual que el resto de
+  // las pantallas operativas. sueldos/gastos recurrentes/capital quedan sin filtrar más abajo
+  // porque son costos compartidos de todo el negocio, no atribuibles a una sede en particular.
+  const _sedeDash = sedeAdminEfectiva();
+  // Use historialVentas as source of truth (reflects annulments/returns)
+  const hvAll = (DB.historialVentas || []).filter(v => (v.sedeId || 'principal') === _sedeDash);
+  const ventasHoy = hvAll.filter(v => v.fecha === hoy && v.estado !== 'anulado' && v.estado !== 'fiado' && v.origen !== 'pago_fiado');
+  const fiadosCobradosHoy = hvAll.filter(v => v.fecha === hoy && v.origen === 'pago_fiado').reduce((s,v) => s + (v.total||0), 0);
+  const totalHoy = ventasHoy.reduce((s, v) => s + (v.total||0), 0);
+  const txHoy = ventasHoy.length;
+document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobradosHoy);
+  document.getElementById('dash-ventas-num').textContent = txHoy + ' transacciones';
+
+  // Rentabilidad hoy (cost uses actual item prices from historial)
+  const costoHoy = ventasHoy.reduce((s,v) => s + (v.items||[]).reduce((ss,i) => {
+    const p = DB.productos.find(x=>x.id===i.prodId);
+    return ss + (p ? p.costo * i.cant : 0);
+  }, 0), 0);
+  // Mermas del día
+  const mermasHoy = (DB.mermas||[]).filter(m=>m.fecha===hoy && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
+    const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
+  },0);
+  const gastosHoy = (DB_EXT.gastos||[]).filter(g=>g.fecha===hoy && (g.sedeId||'principal')===_sedeDash).reduce((s,g)=>s+g.monto,0);
+  const costoFiadosHoy = hvAll.filter(v => v.fecha === hoy && v.origen === 'pago_fiado').reduce((s,v) => {
+    // Costo real guardado al momento del pago (exacto, por item) — si no existe, es un pago anterior a este arreglo, se aproxima por proporción.
+    if (v.costoAsociado != null) return s + v.costoAsociado;
+ const fiado = (v.fiadoId ? DB.fiados.find(f => f.id === v.fiadoId) : null) || DB.fiados.find(f => f.clienteId === v.clienteId && f.total > 0);
+    if (!fiado) return s;
+    const prop = Math.min(1, v.total / fiado.total);
+    return s + (fiado.items||[]).reduce((ss,i) => ss + ((i.costoUnitario||0) * i.cant * prop), 0);
+  }, 0);
+  document.getElementById('dash-rent').textContent = sol(totalHoy + fiadosCobradosHoy - costoHoy - costoFiadosHoy - gastosHoy - mermasHoy);
+
+  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p, _sedeDash) <= p.stockMin).length;
+  document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0 && stockEnSede(p, _sedeDash) > 0).length;
+
+  // Deuda en fiados — por sede, mismo criterio que el resto del dashboard. Capital se retiró
+  // de acá (sigue disponible en su propia pantalla) — es algo de largo plazo, no algo del día.
+  const _fiadosPendDash = (DB.fiados||[]).filter(f => (f.sedeId||'principal') === _sedeDash && (f.total - f.pagado) > 0.01);
+  const _deudaTotalDash = _fiadosPendDash.reduce((s,f) => s + (f.total - f.pagado), 0);
+  document.getElementById('dash-fiados-deuda').textContent = sol(_deudaTotalDash);
+  document.getElementById('dash-fiados-clientes').textContent = new Set(_fiadosPendDash.map(f=>f.clienteId)).size + ' cliente(s)';
+
+  // Pedidos online pendientes — no se filtra por sede: "quien despacha decide", cualquiera
+  // puede necesitar verlo antes de que se asigne a una sede especifica.
+  document.getElementById('dash-pedidos-pend').textContent = (DB.pedidosOnline||[]).filter(p => p.estado === 'pendiente').length;
+
+  // Panel financiero mensual
+  const ventasMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado').reduce((s,v)=>s+(v.total||0),0);
+  const gastosMes = (DB_EXT.gastos||[]).filter(g=>g.fecha&&g.fecha.startsWith(mes) && (g.sedeId||'principal')===_sedeDash).reduce((s,g)=>s+g.monto,0);
+  // Sueldos/gastos recurrentes/capital: costos compartidos de todo el negocio, no por sede — quedan sin filtrar a propósito.
+  const sueldosMes = Object.values(DB_EXT.sueldos||{}).reduce((s,v)=>s+v,0);
+  const gastosRec = (DB_EXT.gastosRec||[]).reduce((s,g)=>s+g.monto,0);
+  const costoMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado')
+    .reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
+  const mermasMes = (DB.mermas||[]).filter(m=>m.fecha&&m.fecha.startsWith(mes) && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
+    const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
+  },0);
+  const rentReal = ventasMes - costoMes - gastosMes - sueldosMes - gastosRec - mermasMes - DB_EXT.capital.cuota;
+  const deficit = rentReal - DB_EXT.capital.meta;
+  document.getElementById('fin-cuota').textContent = sol(DB_EXT.capital.cuota);
+  document.getElementById('fin-ing').textContent = sol(ventasMes);
+  document.getElementById('fin-def').innerHTML = `<span style="color:${deficit>=0?'var(--accent)':'var(--danger)'}">${deficit>=0?'+':''}${sol(deficit)}</span>`;
+  document.getElementById('fin-rr').innerHTML = `<span style="color:${rentReal>=0?'var(--accent)':'var(--danger)'}">${sol(rentReal)}</span>`;
+
+  const alertas = getAlertas().slice(0, 5);
+  const icons = { danger: '🔴', warning: '🟡', info: '🔵', success: '🟢' };
+  document.getElementById('dash-alertas-list').innerHTML = alertas.length === 0
+    ? '<p style="color:var(--gray-500);font-size:0.85rem">✅ Sin alertas</p>'
+    : alertas.map(a => `<div class="alert-item ${a.tipo}"><span>${icons[a.tipo]}</span><div class="alert-text"><strong>${a.titulo}</strong><span>${a.sub}</span></div></div>`).join('');
+
+  // Top clientes por gasto — insignia de puntos real (antes usaba el sistema de niveles
+  // viejo, sin relación con Fidelización). "Cerca" muestra el mismo aviso que en POS/ticket.
+  const sortedCli = [...DB.clientes].sort((a,b)=>(b.total||0)-(a.total||0)).slice(0,5);
+  const crowns = ['🥇','🥈','🥉','4️⃣','5️⃣'];
+  document.getElementById('dash-frecuentes').innerHTML = sortedCli.map((c,i) => {
+    const est = estadoFidelizacion(c.id);
+    let badgeFid = `<span class="badge" style="background:var(--gray-100);color:var(--gray-500)">${c.puntos||0} pts</span>`;
+    if (est.estado === 'premio_disponible') badgeFid = `<span class="badge badge-gold">🎉 Premio disponible</span>`;
+    else if (est.estado === 'cerca') badgeFid = `<span class="badge badge-gold">🎁 Faltan ${est.faltan} pts</span>`;
+    return `<div class="flex-between" style="padding:.35rem 0;border-bottom:1px solid var(--gray-100)"><span>${crowns[i]} <strong style="font-size:.85rem">${c.alias||c.nombre}</strong></span><div style="text-align:right"><div style="font-size:.85rem;font-weight:700;color:var(--primary)">${sol(c.total||0)}</div>${badgeFid}</div></div>`;
+  }).join('');
+
+  // Cumpleaños próximos
+  const hd = new Date();
+  const cumples = DB.clientes.filter(c=>c.cumple).map(c => {
+    const [,m,d] = c.cumple.split('-');
+    const diff = Math.ceil((new Date(hd.getFullYear(),parseInt(m)-1,parseInt(d)) - hd) / 86400000);
+    return {...c, diff};
+  }).filter(c=>c.diff>=0&&c.diff<=30).sort((a,b)=>a.diff-b.diff).slice(0,5);
+  document.getElementById('dash-cumples').innerHTML = cumples.length === 0
+    ? '<p style="font-size:.82rem;color:var(--gray-500)">Sin cumpleaños en los próximos 30 días</p>'
+    : cumples.map(c => `<div class="flex-between" style="padding:.35rem 0;border-bottom:1px solid var(--gray-100)"><span style="font-size:.85rem">🎂 <strong>${c.alias||c.nombre}</strong></span><span class="badge badge-${c.diff===0?'green':c.diff<=2?'orange':'blue'}">${c.diff===0?'¡HOY!':c.diff===1?'Mañana':'En '+c.diff+' días'}</span></div>`).join('');
+
+  // Birthday banner
+  const cb = DB.clientes.filter(c => { if(!c.cumple)return false; const[,m,d]=c.cumple.split('-'); return parseInt(m)-1===hd.getMonth()&&parseInt(d)===hd.getDate(); });
+  if(cb.length){ document.getElementById('bday-banner').style.display='block'; document.getElementById('bday-msg').textContent='Cumpleaños: '+cb.map(c=>c.alias||c.nombre).join(', '); }
+  else document.getElementById('bday-banner').style.display='none';
+
+  renderChartVentas();
+}
+
+function irAStockBajo() {
+  navigate('inventario');
+  document.getElementById('inv-estado').value = 'bajo';
+  filterInventario();
+}
+
+function irAVencimientos() {
+  navigate('inventario');
+  document.getElementById('inv-estado').value = 'vence';
+  filterInventario();
+}
+
+function renderChartVentas() {
+  const labels = [];
+  const data = [];
+  const hvAll = DB.historialVentas || [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const ds = d.toISOString().split('T')[0];
+    labels.push(d.toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric' }));
+    data.push(hvAll.filter(v => v.fecha === ds && v.estado !== 'anulado').reduce((s, v) => s + (v.total||0), 0));
+  }
+  if (chartVentas) chartVentas.destroy();
+  const ctx = document.getElementById('chart-ventas').getContext('2d');
+  chartVentas = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Ventas (S/)', data, backgroundColor: '#7C3AED', borderRadius: 6 }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, responsive: true }
+  });
+}
+
