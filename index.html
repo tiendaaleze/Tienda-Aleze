@@ -205,7 +205,8 @@ if (_esIOS()) {
 <script type="module">
   import { initializeApp as initializeAppModular } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import {
-    getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc,
+    getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+    doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc,
     collection, query, where, orderBy, limit,
     writeBatch, runTransaction, increment, serverTimestamp, deleteField,
     onSnapshot, Timestamp
@@ -223,7 +224,7 @@ if (_esIOS()) {
   // (si se llamara acá arriba, todavía no existiría ninguna app que obtener).
   window.__fbModular = {
     initializeAppModular,
-    firestore: { getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, runTransaction, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
+    firestore: { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, runTransaction, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
     auth: { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously },
     storage: { getStorage, ref, uploadBytes, getDownloadURL, deleteObject },
     appCheck: { initializeAppCheck, ReCaptchaV3Provider, getAppCheckToken },
@@ -3979,8 +3980,8 @@ async function doLogin() {
 
   // ── PASO 1.5: Verificar versión ──
   try {
-    const verSnap = await fbFS.collection('aleze').doc('version').get();
-    if (verSnap.exists) {
+    const verSnap = await getDocM(docM(dbModular, 'aleze', 'version')); // [SDK modular]
+    if (verSnap.exists()) { // en modular, exists es un METODO, no una propiedad
       const requerida = verSnap.data().minVersion || '1.0.0';
       if (APP_VERSION < requerida) {
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Ingresar'; }
@@ -4237,10 +4238,10 @@ async function _registrarNotificacionesPush() {
 
     // El token ES el id del documento — asi un mismo dispositivo nunca duplica su registro,
     // y si el usuario cambia (otro cajero entra con el mismo celular) el token se actualiza solo.
-    await fbFS.collection('staff_tokens').doc(token).set({
+    await setDocM(docM(dbModular, 'staff_tokens', token), { // [SDK modular]
       usuario: currentUser || 'desconocido',
       sedeId: currentUserSedeId || 'principal',
-      ultimaActividad: firebase.firestore.FieldValue.serverTimestamp()
+      ultimaActividad: serverTimestampM()
     }, { merge: true });
     console.log('[FCM] Dispositivo registrado para notificaciones push.');
   } catch (e) {
@@ -5723,9 +5724,9 @@ function editarProducto(id) {
     const pv = document.getElementById(`prod-img-extra-${slot}-preview`);
     if (pv) pv.innerHTML = '🖼️';
   });
-  if (p.tieneDetalle && fbFS) {
-    fbFS.collection('productos_detalle').doc(String(id)).get().then(doc => {
-      if (!doc.exists) return;
+  if (p.tieneDetalle && dbModular) { // [SDK modular]
+    getDocM(docM(dbModular, 'productos_detalle', String(id))).then(doc => {
+      if (!doc.exists()) return; // en modular, exists es un METODO, no una propiedad
       const d = doc.data();
       document.getElementById('prod-desc-extendida').value = d.descripcion || '';
       (d.imagenesExtra || []).forEach((url, i) => {
@@ -5840,15 +5841,15 @@ function onProdImgExtraSelect(e, slot) {
 // Escribe/borra el registro de detalle — colección aparte, lectura pública (la tienda no
 // tiene login), escritura solo admin.
 function fbGuardarDetalleProducto(prodId, detalle) {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   _sincIniciar('detalle_producto', prodId);
-  fbFS.collection('productos_detalle').doc(String(prodId)).set(detalle)
+  setDocM(docM(dbModular, 'productos_detalle', String(prodId)), detalle)
     .then(() => _sincTerminar('detalle_producto', prodId))
     .catch(e => _sincError('detalle_producto', prodId, e, 'el detalle del producto'));
 }
 function fbBorrarDetalleProducto(prodId) {
-  if (!fbFS) return;
-  fbFS.collection('productos_detalle').doc(String(prodId)).delete().catch(()=>{});
+  if (!dbModular) return; // [SDK modular]
+  deleteDocM(docM(dbModular, 'productos_detalle', String(prodId))).catch(()=>{});
 }
 
 function limpiarImgProd() {
@@ -11511,7 +11512,26 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       try {
         if (window.__fbModular) {
           const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
-          dbModular = window.__fbModular.firestore.getFirestore(appModular);
+          // CRITICO: getFirestore(appModular) crea la conexión SIN persistencia offline —
+          // fbFS (Compat) tiene la suya propia activada más abajo con enablePersistence(), pero
+          // son 2 conexiones completamente independientes, cada una con su propio caché. Sin
+          // esto, cada función ya migrada a dbModular (procesarVenta incluida) perdía el
+          // soporte offline que tenía en su versión anterior — mismo comportamiento
+          // multi-pestaña que Compat, con initializeFirestore + persistentLocalCache en vez de
+          // getFirestore simple.
+          try {
+            dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
+              localCache: window.__fbModular.firestore.persistentLocalCache({
+                tabManager: window.__fbModular.firestore.persistentMultipleTabManager()
+              })
+            });
+          } catch (persistErr) {
+            // Si la persistencia no se puede activar (ej. navegador sin IndexedDB, modo
+            // incognito en algunos navegadores), se sigue igual con la conexión simple — sin
+            // offline, pero sin romper el resto del sistema.
+            console.warn('[SDK modular] No se pudo activar persistencia offline, sigue sin ella:', persistErr.message);
+            dbModular = window.__fbModular.firestore.getFirestore(appModular);
+          }
           authModular = window.__fbModular.auth.getAuth(appModular);
           storageModular = window.__fbModular.storage.getStorage(appModular);
           ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
@@ -11519,7 +11539,7 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
              where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
              runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
              deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
-          console.log('[SDK modular] Conexión propia inicializada — listo para empezar a migrar funciones.');
+          console.log('[SDK modular] Conexión propia inicializada con persistencia offline — listo para empezar a migrar funciones.');
         } else {
           console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
         }
@@ -11611,7 +11631,7 @@ function fbGuardar() {
 // ── Guardar solo productos y categorias en documento separado ──
 // Se llama únicamente cuando el admin edita inventario/categorias
 function fbGuardarProductos() {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   if (!fbAuth || !fbAuth.currentUser) return;
   _fbLastWriteProdTs = Date.now();
   clearTimeout(_fbSaveTimerProd);
@@ -11635,7 +11655,7 @@ function fbGuardarProductos() {
       config:     JSON.parse(JSON.stringify(_configPublico))
     };
     _sincIniciar('db_productos', 'db_productos');
-    fbProdDocRef().set(payload)
+    setDocM(docM(dbModular, 'aleze', 'db_productos'), payload) // [SDK modular]
       .then(() => {
         _fbProdCacheTs = Date.now(); // actualizar timestamp caché
         _fbWritingProd = false;
@@ -11658,11 +11678,11 @@ function fbEscuchar() {
   // El listener de db_productos (catálogo) sigue siendo necesario y activo, abajo.
 
   // Listener db_productos (catálogo — solo si otro dispositivo admin cambia inventario)
-  fbProdDocRef().onSnapshot(snapshot => {
+  onSnapshotM(docM(dbModular, 'aleze', 'db_productos'), snapshot => { // [SDK modular]
     if (_fbEscribiendo) return;
     if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
     if (Date.now() - _fbLastWriteProdTs < 2000) return;
-    if (!snapshot.exists) return;
+    if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
     const data = snapshot.data();
     if (!data) return;
     if (data.productos)  DB.productos  = data.productos;
@@ -11681,11 +11701,11 @@ function fbEscuchar() {
   }, err => { console.warn('Firestore db_productos listener error:', err.code); });
 
   // Listener para DB_EXT (sueldos, gastos, capital, niveles, navidad)
-  fbFS.collection('aleze').doc('db_ext').onSnapshot(snapshot => {
+  onSnapshotM(docM(dbModular, 'aleze', 'db_ext'), snapshot => { // [SDK modular]
     if (_fbEscribiendo) return;
     if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
     if (Date.now() - _fbLastWriteTs < 2000) return;
-    if (!snapshot.exists) return;
+    if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
     const ext = snapshot.data();
     if (!ext) return;
     Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
@@ -11708,9 +11728,9 @@ function fbEscuchar() {
 // dispositivo con la app abierta — sin necesitar recargar ni navegar. Reemplaza por completo
 // la dependencia que antes existía en el documento combinado aleze/db.
 function fbEscucharCaja() {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   if (_fbCajaUnsub) { _fbCajaUnsub(); _fbCajaUnsub = null; }
-  _fbCajaUnsub = fbFS.collection('caja').onSnapshot(snapshot => {
+  _fbCajaUnsub = onSnapshotM(collectionM(dbModular, 'caja'), snapshot => {
     let huboCambioReal = false;
     snapshot.forEach(doc => {
       // Ignorar el eco optimista local (todavía no confirmado por el servidor) — esperar
@@ -12510,13 +12530,13 @@ function notificarNuevoPedido(pedido) {
 }
 
 function fbEscucharPedidosOnline() {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   // Limpiar listener previo si existe
   if (_pedidosOnlineUnsub) { _pedidosOnlineUnsub(); _pedidosOnlineUnsub = null; }
 
-  _pedidosOnlineUnsub = fbFS.collection('pedidos_online')
-    .orderBy('fecha', 'desc')
-    .onSnapshot(snapshot => {
+  _pedidosOnlineUnsub = onSnapshotM(
+    queryM(collectionM(dbModular, 'pedidos_online'), orderByM('fecha', 'desc')),
+    snapshot => {
 if (_fbEscribiendo) return;
       if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
       if (_pedidosLoaded && Date.now() - _fbLastWriteTs < 2000) return;
@@ -12874,8 +12894,8 @@ function guardarEdicionPedido() {
   p.fechaEdicion = today() + ' ' + nowTime();
 
   // Actualizar documento en colección pedidos_online (Firestore)
-  if (fbFS) {
-    fbFS.collection('pedidos_online').doc(String(p.id)).update({
+  if (dbModular) { // [SDK modular]
+    updateDocM(docM(dbModular, 'pedidos_online', String(p.id)), {
       items:       p.items,
       metodo:      p.metodo,
       entrega:     p.entrega,
@@ -13199,8 +13219,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       return;
     }
     DB.pedidosOnline = DB.pedidosOnline.filter(x => String(x.id) !== String(id));
-    if (fbFS) {
-      fbFS.collection('pedidos_online').doc(String(id)).delete()
+    if (dbModular) { // [SDK modular]
+      deleteDocM(docM(dbModular, 'pedidos_online', String(id)))
         .catch(e => console.warn('pedidos_online delete error:', e.code));
     }
     fbGuardar();
@@ -13211,8 +13231,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
   }
   // Estados: procesado, cancelado — solo cambiar estado
   p.estado = nuevoEstado;
-  if (fbFS) {
-    fbFS.collection('pedidos_online').doc(String(p.id)).update({
+  if (dbModular) { // [SDK modular]
+    updateDocM(docM(dbModular, 'pedidos_online', String(p.id)), {
       estado: nuevoEstado, cajero: currentUser || 'admin',
       fechaEntrega: null, horaEntrega: null
     }).catch(e => console.warn('pedidos_online update error:', e.code));
@@ -13909,9 +13929,9 @@ function tndVerDetalle(prodId) {
   tndRenderPanel();
   document.getElementById('tnd-overlay').classList.add('open');
   document.getElementById('tnd-panel').classList.add('open');
-  if (fbFS) {
-    fbFS.collection('productos_detalle').doc(String(prodId)).get().then(doc => {
-      _tndDetalleData = doc.exists ? doc.data() : {};
+  if (dbModular) { // [SDK modular]
+    getDocM(docM(dbModular, 'productos_detalle', String(prodId))).then(doc => {
+      _tndDetalleData = doc.exists() ? doc.data() : {}; // en modular, exists es un METODO
       if (_tndStep === 'detalle-producto' && _tndDetalleProdId === prodId) tndRenderPanel();
     }).catch(() => { _tndDetalleData = {}; });
   } else {
@@ -14182,7 +14202,7 @@ async function tndPagarEnLinea() {
       metodo: 'Pago en línea', estado: 'pendiente', pagoEstado: 'sin_iniciar',
       fecha: new Date().toISOString(), origen: 'web'
     };
-    await fbFS.collection('pedidos_online').doc(String(pedido.id)).set(pedido);
+    await setDocM(docM(dbModular, 'pedidos_online', String(pedido.id)), pedido); // [SDK modular]
 
     const crearSesion = fbFunctions.httpsCallable('crearSesionPago');
     const resultado = await crearSesion({ pedidoId: pedido.id, monto: pedido.total, moneda: 'PEN' });
@@ -14337,9 +14357,9 @@ async function tndEnviarPedido() {
   // antes se mostraba "pedido enviado" SIEMPRE, sin esperar a que el guardado terminara de
   // verdad. Si fallaba, el pedido quedaba en un array local que nunca llega a ningun lado, y
   // el cliente jamas se enteraba. Ahora se espera la confirmacion real antes de avisar exito.
-  if (fbFS) {
+  if (dbModular) { // [SDK modular]
     try {
-      await fbFS.collection('pedidos_online').doc(String(pedido.id)).set(pedido);
+      await setDocM(docM(dbModular, 'pedidos_online', String(pedido.id)), pedido);
     } catch (e) {
       console.warn('pedidos_online write error:', e.code);
       _tndEnviando = false;
