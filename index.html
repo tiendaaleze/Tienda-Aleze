@@ -10147,22 +10147,15 @@ async function iniciarFirebase() {
      const appCheckInstance = firebase.appCheck(fbApp);
 appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       console.log('[AppCheck] activado correctamente');
-      // Esperar el primer token ANTES de que arranque la ráfaga de lecturas del login (PASO 3)
-      // — generar el primer token de reCAPTCHA v3 no es instantáneo (baja su propio script y
-      // hace su propia verificación contra Google), y sin esto esa ráfaga inicial completa
-      // salía sin token adjunto. 3s resultó insuficiente en redes móviles — el propio patrón
-      // reportado (a veces carga el nombre real, a veces el de respaldo) confirmaba que la
-      // carrera se perdía justo ahí. Con 8s de margen: si reCAPTCHA está realmente caído o
-      // bloqueado, el login sigue igual, no se queda esperando para siempre.
-      try {
-        await Promise.race([
-          appCheckInstance.getToken(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
-        ]);
-        console.log('[AppCheck] primer token listo antes de leer datos');
-      } catch(tokErr) {
-        console.warn('[AppCheck] no se pudo confirmar el primer token a tiempo, continuando igual:', tokErr.message);
-      }
+      // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
+      // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
+      // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
+      // arrancar. Esa espera manual, en la práctica, agregaba varios segundos GARANTIZADOS a
+      // cada login sin necesidad real, y coincidía con las fallas de reconciliación
+      // reportadas ("no se pudo reconciliar caja/datos/gastos frescos") — pedir un token de
+      // más, a mano, justo antes de la ráfaga real de lecturas, competía por el mismo recurso
+      // en vez de ayudar. Si el primerísimo pedido sale sin token adjunto todavía, el manejo
+      // ya construido (Promise.allSettled en el login) lo absorbe sin romper nada.
     } catch(acErr) {
       console.warn('[AppCheck] no activado — la app sigue funcionando:', acErr.message);
     }
