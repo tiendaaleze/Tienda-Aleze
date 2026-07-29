@@ -4030,24 +4030,24 @@ async function doLogin() {
       // migrar ventas/clientes/fiados/mermas/movimientos/historialVentas/config/promociones/
       // proveedores, cada uno a su propia colección/documento. La reconciliación de más abajo
       // (que trae de las colecciones reales) es ahora la única fuente para todo eso.
-      const [snapProd, snapExt, snapConfig] = await Promise.all([
-        fbProdDocRef().get(),
-        fbFS.collection('aleze').doc('db_ext').get(),
-        fbFS.collection('aleze').doc('config').get()
+      const [snapProd, snapExt, snapConfig] = await Promise.all([ // [SDK modular]
+        getDocM(docM(dbModular, 'aleze', 'db_productos')),
+        getDocM(docM(dbModular, 'aleze', 'db_ext')),
+        getDocM(docM(dbModular, 'aleze', 'config'))
       ]);
 
       // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
-      if (snapConfig.exists) {
+      if (snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
         DB.config = { ...DB.config, ...snapConfig.data() };
         if (DB.config.passwords) Object.assign(PASSWORDS, DB.config.passwords);
       }
       // Trae la caja real desde su colección dedicada — única fuente de verdad.
       try {
-        const cajaSnap = await fbFS.collection('caja').get();
+        const cajaSnap = await getDocsM(collectionM(dbModular, 'caja'));
         cajaSnap.forEach(doc => { DB._cajas[doc.id] = doc.data(); });
       } catch(e) { console.warn('[Offline] No se pudo reconciliar caja fresca:', e); }
 
-      if (snapProd.exists) {
+      if (snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snapProd.data();
         if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
@@ -4134,7 +4134,7 @@ async function doLogin() {
 
       aplicarNombreNegocio();
 
-      if (snapExt.exists) {
+      if (snapExt.exists()) { // en modular, exists es un METODO, no una propiedad
         const ext = snapExt.data();
         Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
       }
@@ -4343,9 +4343,9 @@ async function navigate(page) {
         if (_selSede) _selSede.value = '';
       }
     }
-    if (fbFS && DB.productos.length === 0) {
-      fbProdDocRef().get().then(snap => {
-        if (snap.exists) {
+    if (dbModular && DB.productos.length === 0) { // [SDK modular]
+      getDocM(docM(dbModular, 'aleze', 'db_productos')).then(snap => {
+        if (snap.exists()) { // en modular, exists es un METODO, no una propiedad
           const pd = snap.data();
           if (pd.productos)  DB.productos  = pd.productos;
           if (pd.categorias) DB.categorias = pd.categorias;
@@ -11556,13 +11556,12 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
 
 // ── Referencia al documento DB_EXT (sueldos, gastos, capital, niveles, etc.) ──
 function fbGuardarExt() {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   clearTimeout(window._fbExtTimer);
   window._fbExtTimer = setTimeout(() => {
     _fbEscribiendo = true;
     _sincIniciar('db_ext', 'db_ext');
-    fbFS.collection('aleze').doc('db_ext')
-      .set(JSON.parse(JSON.stringify(DB_EXT)))
+    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(JSON.stringify(DB_EXT)))
       .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
       .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'gastos/capital/configuración extendida'); });
   }, 1200);
@@ -11574,23 +11573,15 @@ function fbGuardarExt() {
 // objeto único (no una lista de registros), así que le alcanza con su propio documento, no
 // necesita una colección con un documento por registro como ventas o clientes.
 function fbGuardarConfig() {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   clearTimeout(window._fbConfigTimer);
   window._fbConfigTimer = setTimeout(() => {
     _sincIniciar('config', 'config');
-    fbFS.collection('aleze').doc('config')
-      .set(JSON.parse(JSON.stringify(DB.config || {})))
+    setDocM(docM(dbModular, 'aleze', 'config'), JSON.parse(JSON.stringify(DB.config || {})))
       .then(() => _sincTerminar('config', 'config'))
       .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
   }, 1200);
 }
-
-// ── Referencias Firestore ──
-// db        → operaciones, ventas, caja, clientes, fiados, mermas, etc.
-// db_productos → productos + categorias (documento separado, más liviano)
-//               Lo leen: admin al iniciar + tienda online (caché 5 min)
-function fbDocRef()      { return fbFS.collection('aleze').doc('db'); }
-function fbProdDocRef()  { return fbFS.collection('aleze').doc('db_productos'); }
 
 // ── Guardar operaciones (excluye productos y categorias) ──
 // Debounce 1200ms — agrupa cambios rápidos en 1 sola escritura
@@ -11841,9 +11832,9 @@ window.onload = async function() {
     try {
       // Carga inicial pre-login: solo el catálogo público (db_productos).
       // 'db' y 'db_ext' ahora requieren sesión — se cargan en PASO 3 del login.
-      const snapProd = await fbProdDocRef().get();
+      const snapProd = await getDocM(docM(dbModular, 'aleze', 'db_productos')); // [SDK modular]
 
-      if (snapProd.exists) {
+      if (snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snapProd.data();
         if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
@@ -14463,13 +14454,13 @@ function _semillaDemo(hoy) {
 // Sin esto, Reset limpia lo local pero deja el historial completo intacto en Firestore — un
 // reset que no resetea de verdad. No bloqueante — si falla, el reset local ya ocurrió igual.
 async function _vaciarColeccion(nombreColeccion) {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   try {
-    const snap = await fbFS.collection(nombreColeccion).get();
+    const snap = await getDocsM(collectionM(dbModular, nombreColeccion));
     if (snap.empty) return;
     const docs = snap.docs;
     for (let i = 0; i < docs.length; i += 450) {
-      const batch = fbFS.batch();
+      const batch = writeBatchM(dbModular);
       docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
@@ -14483,7 +14474,7 @@ function _reiniciarCajaTodasLasSedes() {
   const vacia = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
   ['principal', 'Tienda Aleze II'].forEach(sede => {
     DB._cajas[sede] = { ...vacia };
-    if (fbFS) fbFS.collection('caja').doc(sede).set(vacia).catch(()=>{});
+    if (dbModular) setDocM(docM(dbModular, 'caja', sede), vacia).catch(()=>{}); // [SDK modular]
   });
 }
 
@@ -14501,7 +14492,7 @@ const RESET_CONFIG = {
       DB.clientes.forEach(c => { c.compras = 0; c.total = 0; c.deuda = 0; });
       DB_EXT.gastos = [];
    DB_EXT.capital = { total: 0, cuota: 0, meta: 0, recuperado: 0, prestamo: 0, prestamoPagado: 0, hist: [] };
-      const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); fbDocRef().set(_payload); fbGuardarExt();
+      const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); setDocM(docM(dbModular, 'aleze', 'db'), _payload); fbGuardarExt(); // [SDK modular]
       ['ventas','fiados','mermas','movimientos','gastos'].forEach(_vaciarColeccion);
       try { renderDashboard(); } catch(e) {}
       try { updateAlertCount(); } catch(e) {}
@@ -15196,11 +15187,11 @@ const _BACKUP_COLECCIONES_COMPLETAS = ['boletas', 'fiados', 'mermas', 'gastos', 
 const _BACKUP_COLECCIONES_30DIAS = ['ventas', 'movimientos'];
 
 async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
-  if (!fbFS) return [];
+  if (!dbModular) return []; // [SDK modular]
   try {
-    let query = fbFS.collection(nombreColeccion);
-    if (filtrarDesde) query = query.where('fecha', '>=', filtrarDesde);
-    const snap = await query.get();
+    const colRef = collectionM(dbModular, nombreColeccion);
+    const q = filtrarDesde ? queryM(colRef, whereM('fecha', '>=', filtrarDesde)) : colRef;
+    const snap = await getDocsM(q);
     return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
   } catch (e) {
     console.warn('_leerColeccionParaBackup: error en ' + nombreColeccion, e);
@@ -15209,7 +15200,7 @@ async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
 }
 
 async function _ejecutarBackup() {
-  if (!fbFS || !currentUser) return;
+  if (!dbModular || !currentUser) return; // [SDK modular]
   const ahora = new Date();
   const key = 'backup_' + ahora.toISOString().replace(/[:.]/g, '-').substring(0, 16);
   const hace30dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -15225,16 +15216,16 @@ async function _ejecutarBackup() {
   payload._backupColecciones = [..._BACKUP_COLECCIONES_COMPLETAS, ..._BACKUP_COLECCIONES_30DIAS];
 
   try {
-    await fbFS.collection('aleze_backups').doc(key).set(payload);
+    await setDocM(docM(dbModular, 'aleze_backups', key), payload);
     // Un documento aparte por cada colección propia — evita el límite de 1 MB por documento.
     const trabajos = [
       ..._BACKUP_COLECCIONES_COMPLETAS.map(async col => {
         const items = await _leerColeccionParaBackup(col);
-        return fbFS.collection('aleze_backups').doc(key + '__' + col).set({ items });
+        return setDocM(docM(dbModular, 'aleze_backups', key + '__' + col), { items });
       }),
       ..._BACKUP_COLECCIONES_30DIAS.map(async col => {
         const items = await _leerColeccionParaBackup(col, hace30dias);
-        return fbFS.collection('aleze_backups').doc(key + '__' + col).set({ items });
+        return setDocM(docM(dbModular, 'aleze_backups', key + '__' + col), { items });
       }),
     ];
     await Promise.all(trabajos);
@@ -15251,10 +15242,10 @@ function iniciarBackupAutomatico() {
 }
 
 function verBackups() {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   const el = document.getElementById('backup-lista');
   el.innerHTML = '⏳ Cargando respaldos...';
-  fbFS.collection('aleze_backups').orderBy('_backupTs', 'desc').limit(10).get()
+  getDocsM(queryM(collectionM(dbModular, 'aleze_backups'), orderByM('_backupTs', 'desc'), limitM(10)))
     .then(snap => {
       // Solo documentos principales (sin '__') — los de cada colección son satélites del principal.
       const principales = snap.docs.filter(d => !d.id.includes('__'));
@@ -15271,8 +15262,8 @@ function verBackups() {
 async function restaurarBackup(id) {
   if (!confirm('⚠️ ¿Restaurar este respaldo? Los datos actuales (catálogo, stock, ventas, caja, clientes y todo lo demás) se reemplazarán por completo.')) return;
   try {
-    const doc = await fbFS.collection('aleze_backups').doc(id).get();
-    if (!doc.exists) { alert('Respaldo no encontrado.'); return; }
+    const doc = await getDocM(docM(dbModular, 'aleze_backups', id)); // [SDK modular]
+    if (!doc.exists()) { alert('Respaldo no encontrado.'); return; } // en modular, exists es un METODO
     const data = doc.data();
     const colecciones = data._backupColecciones || [];
     delete data._backupTs; delete data._backupUser; delete data._backupColecciones;
@@ -15285,20 +15276,20 @@ async function restaurarBackup(id) {
     data._resetToken = true;
 
     // 1) Documento principal (legado + config)
-    await fbDocRef().set(data);
+    await setDocM(docM(dbModular, 'aleze', 'db'), data);
     // 2) Catálogo completo (productos + categorías + stockPorSede, ya incluido en cada producto)
-    await fbProdDocRef().set({ productos, categorias, config: DB.config || {} });
+    await setDocM(docM(dbModular, 'aleze', 'db_productos'), { productos, categorias, config: DB.config || {} });
     // 3) Cada colección propia: vaciar la actual y volver a escribir lo respaldado
     for (const col of colecciones) {
       await _vaciarColeccion(col);
-      const satDoc = await fbFS.collection('aleze_backups').doc(id + '__' + col).get();
-      if (satDoc.exists) {
+      const satDoc = await getDocM(docM(dbModular, 'aleze_backups', id + '__' + col));
+      if (satDoc.exists()) { // en modular, exists es un METODO
         const items = satDoc.data().items || [];
         for (let i = 0; i < items.length; i += 450) {
-          const batch = fbFS.batch();
+          const batch = writeBatchM(dbModular);
           items.slice(i, i + 450).forEach(item => {
             const { _id, ...resto } = item;
-            batch.set(fbFS.collection(col).doc(String(_id)), resto);
+            batch.set(docM(dbModular, col, String(_id)), resto);
           });
           await batch.commit();
         }
