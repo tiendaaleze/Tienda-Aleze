@@ -11498,17 +11498,11 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
     // ────────────────────────────────────────────────────────────────────────
 
    fbFS  = firebase.firestore();
-      // CRITICO: fbFS ya no hace NINGUNA operacion real de Firestore — la migracion completa
-      // al SDK modular movio absolutamente todo (las 157 referencias originales) a dbModular,
-      // que tiene su PROPIA persistencia offline multi-pestaña (mas abajo, con
-      // initializeFirestore + persistentLocalCache). Tener 2 conexiones separadas, cada una
-      // con su propio mecanismo de coordinacion multi-pestaña vía IndexedDB, compitiendo por
-      // el mismo almacenamiento del navegador, es la causa mas probable de los errores
-      // "permission-denied" y las demoras de varios minutos en el login y en la tienda online
-      // que aparecieron justo despues de activarle persistencia a dbModular — confirmado con
-      // rastros extensos de indexeddb_persistence.ts en la consola, consistentes en distintos
-      // navegadores. Se elimina esta llamada por completo: no protege nada real, y probablemente
-      // esta generando la contencion.
+      // fbFS ya no hace ninguna operación real de Firestore — la migración completa al SDK
+      // modular movió todo (las 157 referencias originales) a dbModular. Por eso ya no tiene
+      // enablePersistence() acá — tenerlo generaba una segunda coordinación multi-pestaña vía
+      // IndexedDB compitiendo con la de dbModular, causando permission-denied y demoras de
+      // varios minutos (ya corregido, quitando esa llamada).
       fbAuth = firebase.auth();
       fbStorage = firebase.storage();
       // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
@@ -11528,23 +11522,26 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       try {
         if (window.__fbModular) {
           const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
-          // CRITICO: getFirestore(appModular) crea la conexión SIN persistencia offline —
-          // fbFS (Compat) tiene la suya propia activada más abajo con enablePersistence(), pero
-          // son 2 conexiones completamente independientes, cada una con su propio caché. Sin
-          // esto, cada función ya migrada a dbModular (procesarVenta incluida) perdía el
-          // soporte offline que tenía en su versión anterior — mismo comportamiento
-          // multi-pestaña que Compat, con initializeFirestore + persistentLocalCache en vez de
-          // getFirestore simple.
+          // CRITICO: persistentMultipleTabManager() (coordinación entre pestañas vía
+          // IndexedDB) tiene problemas conocidos y documentados en navegadores móviles —
+          // especialmente Safari iOS y los WebView de apps instaladas — donde la negociación
+          // de "qué pestaña tiene el control" puede colgarse por minutos enteros, exactamente
+          // el patrón reportado: escritorio rápido, móvil/PWA demorando mas de un minuto. En
+          // un teléfono casi nunca hay 2 pestañas reales de la misma sesión compitiendo, así
+          // que el beneficio es minimo comparado con el riesgo. Se usa persistencia de una
+          // sola pestaña — sigue funcionando sin señal igual, solo que si alguien abre 2
+          // pestañas del sistema a la vez en la misma compu, la segunda cae al respaldo sin
+          // persistencia de mas abajo (no rompe nada, solo pierde cache offline en esa pestaña
+          // extra puntual).
           try {
             dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
-              localCache: window.__fbModular.firestore.persistentLocalCache({
-                tabManager: window.__fbModular.firestore.persistentMultipleTabManager()
-              })
+              localCache: window.__fbModular.firestore.persistentLocalCache({})
             });
           } catch (persistErr) {
             // Si la persistencia no se puede activar (ej. navegador sin IndexedDB, modo
-            // incognito en algunos navegadores), se sigue igual con la conexión simple — sin
-            // offline, pero sin romper el resto del sistema.
+            // incognito en algunos navegadores, u otra pestaña ya tiene la persistencia
+            // tomada), se sigue igual con la conexión simple — sin offline en esta pestaña
+            // puntual, pero sin romper el resto del sistema.
             console.warn('[SDK modular] No se pudo activar persistencia offline, sigue sin ella:', persistErr.message);
             dbModular = window.__fbModular.firestore.getFirestore(appModular);
           }
