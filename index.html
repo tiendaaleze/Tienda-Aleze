@@ -3453,7 +3453,13 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
 // Nombres visibles enmascarados — nadie que vea la pantalla de login o el nombre de
 // "cajero" en un ticket sabe quien es realmente cada persona. "Aleze" = admin, "Aleze N" =
 // vendedor N en el orden en que se fueron sumando (Aleze I = primer vendedor, etc.).
-const PASSWORDS = { 'Aleze': '1234', 'Aleze I': '1234', 'Aleze II': '1234', 'Aleze III': '1234' };
+// La contraseña real de cada usuario vive SOLO en Firebase Authentication, gestionada
+// directamente ahí — nunca en el código ni en Firestore. doLogin() autentica con
+// signInWithEmailAndPassword() usando lo que la persona tipea en el momento, contra Firebase
+// mismo — nunca compara contra nada guardado localmente. Antes existía una constante PASSWORDS
+// acá que no participaba en esa autenticación real (era codigo muerto, con valores de relleno
+// que nunca se comparaban contra nada) — eliminada para no dejar ni la apariencia de que el
+// sistema maneja contraseñas por su cuenta.
 
 // Mapeo nombre visible → correo Firebase Auth (para reglas de seguridad Firestore). Este es el
 // respaldo de emergencia que usa fbPatchDB() SOLO si DB.config.usuariosStaff llega vacio desde
@@ -4046,7 +4052,6 @@ async function doLogin() {
       // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
       if (snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
         DB.config = { ...DB.config, ...snapConfig.data() };
-        if (DB.config.passwords) Object.assign(PASSWORDS, DB.config.passwords);
       }
       // Trae la caja real desde su colección dedicada — única fuente de verdad.
       try {
