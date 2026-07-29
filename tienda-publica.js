@@ -1,0 +1,1170 @@
+// ===================== TIENDA PÚBLICA (/tienda) =====================
+// La tienda se carga en una capa separada cuando la ruta es /tienda
+let _tiendaCart = [];
+let _tiendaUser = null; // {nombre, tel, dir}
+
+// ── Carrito persistente — localStorage ───────────────────────────────────────
+// El clienteId es único por dispositivo/navegador (no requiere login)
+// ── Identidad real del cliente en tienda pública: el teléfono es la llave, no un token
+// aleatorio por dispositivo — así cambiar de equipo o borrar el navegador ya no pierde el
+// historial ni los puntos. localStorage queda solo como comodidad (recordar quién es en ESTE
+// equipo), nunca como la fuente de verdad — esa es siempre la búsqueda en DB.clientes.
+// Escribe DIRECTO a clientes/{id} — no via fbGuardar() (el documento viejo completo exige
+// isAdmin() sin excepcion; un visitante de la tienda nunca esta autenticado, esa escritura
+// fallaba en silencio). La regla de clientes ahora permite esto especificamente, validado.
+function tndSincronizarClientePublico(cli, esNuevo) {
+  if (!dbModular) return; // [SDK modular]
+  const data = esNuevo
+    ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: cli.cumple||'', compras: 0, total: 0, deuda: 0, puntos: 0 }
+    : { nombre: cli.nombre, alias: cli.alias };
+  _sincIniciar('cliente_publico', cli.id);
+  // Antes esto seleccionaba entre 'set' y 'set' (los 2 branches eran identicos) — simplificado
+  // de paso, era codigo muerto disfrazado de logica condicional.
+  setDocM(docM(dbModular, 'clientes', String(cli.id)), data, esNuevo ? {} : { merge: true })
+    .then(() => _sincTerminar('cliente_publico', cli.id))
+    .catch(e => _sincError('cliente_publico', cli.id, e, 'tus datos', true));
+}
+
+// Asíncrona: DB.clientes nunca se carga entera para un visitante público (evita traer todo
+// el listado solo para identificar a uno) — si no está en memoria, consulta Firestore SOLO por
+// ese teléfono puntual. Devuelve una Promise<clienteId>.
+async function tndResolverCliente(nombre, tel) {
+  const telLimpio = (tel || '').replace(/\s/g, '');
+  if (!telLimpio || telLimpio.length < 7) return null;
+  let cli = DB.clientes.find(c => (c.tel || '').replace(/\s/g, '') === telLimpio);
+  if (!cli && dbModular) { // [SDK modular]
+    try {
+      const snap = await getDocsM(queryM(collectionM(dbModular, 'clientes'), whereM('tel', '==', telLimpio), limitM(1)));
+      if (!snap.empty) {
+        const doc = snap.docs[0];
+        cli = _envolverCliente({ id: parseInt(doc.id), ...doc.data() });
+        DB.clientes.push(cli);
+      }
+    } catch(e) { console.warn('tndResolverCliente: no se pudo consultar clientes por telefono', e); }
+  }
+  if (cli) {
+    if (nombre && nombre.trim() && cli.nombre !== nombre.trim()) {
+      cli.nombre = nombre.trim();
+      if (!cli.alias) cli.alias = nombre.trim();
+      tndSincronizarClientePublico(cli, false);
+    }
+  } else {
+    cli = _envolverCliente({ id: getId(), nombre: nombre || 'Cliente', alias: nombre || 'Cliente', tel: telLimpio, dir: '', cumple: '', compras: 0, total: 0, deuda: 0, puntos: 0 });
+    DB.clientes.push(cli);
+    tndSincronizarClientePublico(cli, true);
+  }
+  try { localStorage.setItem('aleze_tnd_cid_real', String(cli.id)); } catch(e) {}
+  return cli.id;
+}
+
+// Recupera el cliente real ya identificado en este equipo (si lo hay) — no crea nada nuevo,
+// solo consulta la comodidad local. Si no hay nada guardado, el visitante sigue anónimo hasta
+// que escriba su teléfono (al pedir, o al querer ver sus puntos).
+function tndGetClienteIdReal() {
+  try {
+    const cached = localStorage.getItem('aleze_tnd_cid_real');
+    if (cached) {
+      const id = parseInt(cached);
+      if (DB.clientes.find(c => c.id === id)) return id;
+    }
+  } catch(e) {}
+  return null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Verificación SMS de teléfono (Firebase Phone Auth) — CONSTRUIDA COMPLETA,
+// pero dormida detrás de DB.config.requiereVerificacionSMS (false por defecto).
+// Con el flag apagado, nada de esto se llama — tndResolverCliente() sigue
+// siendo el único mecanismo activo. Cuando exista pasarela de pago real,
+// activar el flag alcanza para que esta verificación se vuelva obligatoria.
+// ══════════════════════════════════════════════════════════════════════════
+let _tndRecaptchaVerifier = null;
+let _tndConfirmationResult = null;
+
+function _tndFormatearTelefonoPeru(tel) {
+  const limpio = (tel || '').replace(/\D/g, '');
+  if (limpio.startsWith('51') && limpio.length === 11) return '+' + limpio;
+  return '+51' + limpio.replace(/^51/, '');
+}
+
+// Envía el código por SMS al teléfono dado. Requiere fbAuth (ya inicializado para login
+// de staff — se reutiliza, no es un servicio aparte) y el contenedor reCAPTCHA invisible.
+function tndEnviarCodigoSMS(tel) {
+  if (!fbAuth) { alert('Servicio no disponible por el momento. Intenta más tarde.'); return Promise.resolve(false); }
+  const telE164 = _tndFormatearTelefonoPeru(tel);
+  try {
+    if (!_tndRecaptchaVerifier) {
+      _tndRecaptchaVerifier = new firebase.auth.RecaptchaVerifier('tnd-recaptcha-container', { size: 'invisible' });
+    }
+    return fbAuth.signInWithPhoneNumber(telE164, _tndRecaptchaVerifier)
+      .then(confirmationResult => {
+        _tndConfirmationResult = confirmationResult;
+        return true;
+      })
+      .catch(e => {
+        console.warn('[SMS] Error al enviar código:', e);
+        alert('No se pudo enviar el código. Verifica el número e intenta de nuevo.\n' + (e.message || ''));
+        return false;
+      });
+  } catch(e) {
+    console.warn('[SMS] Error de reCAPTCHA:', e);
+    alert('No se pudo iniciar la verificación. Intenta de nuevo.');
+    return Promise.resolve(false);
+  }
+}
+
+// Confirma el código de 6 dígitos que el cliente recibió por SMS.
+function tndVerificarCodigoSMS(codigo) {
+  if (!_tndConfirmationResult) { alert('Primero solicita el código.'); return Promise.resolve(false); }
+  return _tndConfirmationResult.confirm(codigo)
+    .then(() => {
+      try { localStorage.setItem('aleze_tnd_sms_verificado', '1'); } catch(e) {}
+      _tndConfirmationResult = null;
+      return true;
+    })
+    .catch(e => {
+      console.warn('[SMS] Código incorrecto:', e);
+      alert('Código incorrecto. Intenta de nuevo.');
+      return false;
+    });
+}
+
+// Sesión larga (acordado): una vez verificado en este equipo, no se vuelve a pedir código
+// salvo que el propio flujo de pago (a futuro) lo exija explícitamente aparte.
+function tndTelefonoYaVerificado() {
+  try { return localStorage.getItem('aleze_tnd_sms_verificado') === '1'; } catch(e) { return false; }
+}
+
+// ── Envoltorio de activación: hoy (flag apagado) llama directo a tndResolverCliente().
+// El día que el flag esté en true, exige verificación SMS antes de resolver la identidad,
+// salvo que este equipo ya la haya hecho antes (sesión larga). callback recibe el clienteId.
+function tndResolverClienteConVerificacion(nombre, tel, callback) {
+  if (!DB.config.requiereVerificacionSMS || tndTelefonoYaVerificado()) {
+    tndResolverCliente(nombre, tel).then(callback);
+    return;
+  }
+  _tndPendienteNombre = nombre;
+  _tndPendienteTel = tel;
+  _tndPendienteCallback = callback;
+  _tndStep = 'verificar-sms';
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+}
+let _tndPendienteNombre = null, _tndPendienteTel = null, _tndPendienteCallback = null;
+
+function tndSolicitarCodigoUI() {
+  const tel = _tndPendienteTel;
+  document.getElementById('tnd-sms-status').textContent = '⏳ Enviando código...';
+  tndEnviarCodigoSMS(tel).then(ok => {
+    if (ok) {
+      document.getElementById('tnd-sms-status').textContent = '✅ Código enviado a ' + tel;
+      document.getElementById('tnd-sms-paso2').style.display = 'block';
+    } else {
+      document.getElementById('tnd-sms-status').textContent = '';
+    }
+  });
+}
+
+function tndConfirmarCodigoUI() {
+  const codigo = document.getElementById('tnd-sms-codigo')?.value.trim();
+  if (!codigo || codigo.length < 4) { alert('Ingresa el código recibido.'); return; }
+  tndVerificarCodigoSMS(codigo).then(ok => {
+    if (ok && _tndPendienteCallback) {
+      const cb = _tndPendienteCallback;
+      const nombrePend = _tndPendienteNombre, telPend = _tndPendienteTel;
+      _tndPendienteNombre = _tndPendienteTel = _tndPendienteCallback = null;
+      tndResolverCliente(nombrePend, telPend).then(cb);
+    }
+  });
+}
+
+// Guarda el carrito actual en localStorage
+function tndSaveCart() {
+  try {
+    localStorage.setItem('aleze_tnd_cart', JSON.stringify(_tiendaCart));
+  } catch(e) {}
+}
+
+// Restaura el carrito desde localStorage — valida stock y precio actual
+function tndLoadCart() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('aleze_tnd_cart') || '[]');
+    _tiendaCart = saved
+      .map(item => {
+        const prod = (DB.productos || []).find(p => p.id === item.prodId);
+        if (!prod || stockTotal(prod) <= 0) return null; // producto sin stock (consolidado, tienda pública)
+        if (prod.venc && prod.venc < today()) return null; // producto vencido
+        return { ...item, precio: prod.precio, nombre: prod.nombre }; // precio actualizado
+      })
+      .filter(Boolean);
+    tndSaveCart(); // limpia entradas inválidas
+  } catch(e) { _tiendaCart = []; }
+}
+
+// Guarda datos del cliente para pre-rellenar en próxima visita
+function tndSaveUser(nombre, tel) {
+  try {
+    localStorage.setItem('aleze_tnd_user', JSON.stringify({ nombre, tel }));
+  } catch(e) {}
+}
+
+// Carga datos guardados del cliente
+function tndLoadUser() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('aleze_tnd_user') || 'null');
+    if (saved) _tiendaUser = saved;
+  } catch(e) {}
+}
+
+function initTienda() {
+  // Ocultar login y app del sistema
+  document.getElementById('login-screen').classList.remove('visible');
+  const appEl = document.getElementById('app');
+  if (appEl) appEl.style.display = 'none';
+  try { hideSplash(); } catch(e) {}
+  // Mostrar tienda
+  let tiendaEl = document.getElementById('tienda-publica');
+  if (!tiendaEl) {
+    tiendaEl = document.createElement('div');
+    tiendaEl.id = 'tienda-publica';
+    document.body.appendChild(tiendaEl);
+  }
+  tiendaEl.style.display = 'block';
+
+  // Helper interno: inicializar datos persistidos y renderizar
+  function _initTiendaConDatos() {
+    if (!DB.productos || DB.productos.length === 0) {
+      // Productos aún no disponibles — mostrar mensaje en lugar de pantalla en blanco
+      tiendaEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:60vh;color:#6B7280;font-size:1rem">Cargando catálogo...</div>';
+      return;
+    }
+    tndGetClienteIdReal();
+    tndLoadUser();
+    tndLoadCart();
+    tndUpdateCartBadge();
+    _renderTienda();
+    // Link directo a un producto (#/producto/123) — mismo catálogo ya cargado, cero lecturas
+    // adicionales al detectar el hash; solo el detalle (si lo tiene) se trae bajo demanda.
+    const _hashMatch = window.location.hash.match(/^#\/producto\/(\d+)/);
+    if (_hashMatch) {
+      const _prodIdHash = parseInt(_hashMatch[1]);
+      if (DB.productos.find(p => p.id === _prodIdHash)) tndVerDetalle(_prodIdHash);
+    }
+  }
+
+  // Siempre cargar desde Firebase — sin condición de caché para garantizar datos frescos
+  if (dbModular) { // [SDK modular]
+    getDocM(docM(dbModular, 'aleze', 'db_productos')).then(snap => {
+      if (snap.exists()) { // en modular, exists es un METODO, no una propiedad
+        const pd = snap.data();
+        if (pd.productos)  DB.productos  = pd.productos;
+        if (pd.categorias) DB.categorias = pd.categorias;
+        if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
+        _fbProdCacheTs = Date.now();
+      }
+      // Fase Offline: stock más fresco, mismo criterio que en el login.
+      return getDocsM(collectionM(dbModular, 'stock')).then(stockSnap => {
+        stockSnap.forEach(doc => {
+          const prod = DB.productos.find(p => String(p.id) === doc.id);
+          const d = doc.data();
+          if (prod && d && d.stockPorSede) { prod.stockPorSede = d.stockPorSede; prod.stock = stockTotal(prod); }
+        });
+      }).catch(() => {});
+    }).then(() => {
+      _initTiendaConDatos();
+    }).catch(() => _initTiendaConDatos());
+  } else {
+    _initTiendaConDatos();
+  }
+}
+
+// Tienda pública: siempre stock consolidado entre sedes — el cliente no elige sede, despacha quien confirme (ver Fase 6).
+function _getStockBadge(p) {
+  const _stockPub = stockTotal(p);
+  if (_stockPub <= 0) return '<span class="badge badge-red">Agotado</span>';
+  if (_stockPub <= p.stockMin) return '<span class="badge badge-orange">Últimas unidades</span>';
+  return '<span class="badge badge-green">Disponible</span>';
+}
+
+function _getPromoTienda(p) {
+  const hoy = today();
+  const promoActivas = (DB.promociones||[]).filter(pr => pr.activa && pr.hasta >= hoy && !pr.sedeId);
+  return promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
+}
+function _renderTienda() {
+  try {
+  const tiendaEl = document.getElementById('tienda-publica');
+  if (!tiendaEl) { console.warn('tienda-publica no encontrado'); return; }
+  const config   = DB.config || {};
+  const nombre   = config.nombre    || 'Tienda Aleze';
+  const dir      = config.direccion || '';
+  const waNum    = config.whatsappTienda || '980037284';
+
+  tiendaEl.innerHTML = `
+<style>
+#tienda-publica {
+  font-family:'Segoe UI',system-ui,sans-serif;
+  background:#f3f4f6;
+  min-height:100vh;
+  overflow-y:auto;
+  overflow-x:hidden;
+}
+.tnd-header {
+  background:linear-gradient(135deg,#5B21B6,#7C3AED);
+  color:white;
+  padding:1rem 1.5rem;
+  position:sticky;top:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;
+  box-shadow:0 2px 8px rgba(0,0,0,0.15);
+}
+.tnd-brand { font-size:1.2rem;font-weight:800;display:flex;align-items:center;gap:.5rem; }
+.tnd-cart-btn {
+  background:rgba(255,255,255,.2);border:1.5px solid rgba(255,255,255,.4);
+  color:white;padding:.5rem 1rem;border-radius:10px;cursor:pointer;
+  font-weight:700;font-size:.9rem;position:relative;
+}
+.tnd-cart-count {
+  position:absolute;top:-8px;right:-8px;
+  background:#EF4444;color:white;
+  border-radius:50%;width:20px;height:20px;
+  font-size:.7rem;font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+}
+.tnd-main { max-width:1100px;margin:0 auto;padding:1.25rem; }
+.tnd-search-bar {
+  display:flex;gap:.5rem;margin-bottom:1rem;
+  background:white;border-radius:12px;padding:.6rem 1rem;
+  box-shadow:0 1px 4px rgba(0,0,0,.08);
+}
+.tnd-search-bar input {
+  flex:1;border:none;outline:none;font-size:.95rem;background:transparent;
+}
+.tnd-cats { display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;margin-bottom:1.25rem;scrollbar-width:none;-webkit-overflow-scrolling:touch; }
+.tnd-cat-tag {
+  padding:.25rem .6rem;border-radius:20px;cursor:pointer;
+  border:1.5px solid #e5e7eb;background:white;
+  font-size:.75rem;font-weight:600;color:#6b7280;transition:all .15s;
+  white-space:nowrap;
+}
+.tnd-cat-tag.active { background:#7C3AED;color:white;border-color:#7C3AED; }
+.tnd-grid {
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1rem;
+}
+.tnd-prod-card {
+  background:white;border-radius:14px;padding:1rem;
+  box-shadow:0 1px 4px rgba(0,0,0,.08);cursor:pointer;
+  transition:all .15s;border:2px solid transparent;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+  position:relative;
+}
+.tnd-prod-card:hover:not(.agotado) { border-color:#7C3AED;transform:translateY(-2px); }
+.tnd-prod-card.agotado { opacity:.6;cursor:not-allowed; }
+.tnd-prod-icon { font-size:2.5rem;margin-bottom:.4rem; }
+.tnd-prod-name { font-size:.85rem;font-weight:700;color:#1f2937;margin-bottom:.25rem;line-height:1.2; }
+.tnd-prod-price { font-size:1.1rem;font-weight:800;color:#7C3AED; }
+.tnd-prod-price-orig { font-size:.75rem;color:#9ca3af;text-decoration:line-through; }
+.tnd-prod-promo { position:absolute;top:8px;left:8px;color:white;font-size:.63rem;font-weight:700;padding:2px 7px;border-radius:4px;z-index:1;background:#EF4444; }
+.tnd-prod-badge { position:absolute;top:8px;right:8px; }
+.tnd-panel-overlay {
+  position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;
+}
+.tnd-panel-overlay.open { display:block; }
+.tnd-panel {
+  position:fixed;top:0;right:0;bottom:0;width:min(420px,100vw);
+  background:white;z-index:201;transform:translateX(100%);
+  transition:transform .3s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;box-shadow:-4px 0 20px rgba(0,0,0,.15);
+}
+.tnd-panel.open { transform:translateX(0); }
+.tnd-panel-header {
+  padding:1rem 1.25rem;border-bottom:1px solid #e5e7eb;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+}
+.tnd-panel-header h3 { font-size:1.1rem;font-weight:700; }
+.tnd-panel-close {
+  background:#f3f4f6;border:none;width:32px;height:32px;border-radius:50%;
+  cursor:pointer;font-size:1.1rem;
+}
+.tnd-panel-body { flex:1;overflow-y:auto;padding:1rem 1.25rem; }
+.tnd-panel-footer { padding:1rem 1.25rem;border-top:1px solid #e5e7eb;flex-shrink:0; }
+.tnd-cart-item {
+  display:flex;align-items:center;gap:.6rem;
+  padding:.6rem;background:#f9fafb;border-radius:10px;margin-bottom:.5rem;
+}
+.tnd-cart-item-icon { font-size:1.5rem; }
+.tnd-cart-item-info { flex:1; }
+.tnd-cart-item-name { font-size:.82rem;font-weight:700;color:#1f2937; }
+.tnd-cart-item-price { font-size:.78rem;color:#7C3AED;font-weight:600; }
+.tnd-qty-btn { width:28px;height:28px;border-radius:6px;background:#e5e7eb;border:none;cursor:pointer;font-size:1rem; }
+.tnd-qty-btn:hover { background:#7C3AED;color:white; }
+.tnd-qty-val { font-size:.9rem;font-weight:700;min-width:24px;text-align:center; }
+.tnd-btn { width:100%;padding:.8rem;border-radius:10px;border:none;cursor:pointer;font-size:1rem;font-weight:700; }
+.tnd-btn-primary { background:#7C3AED;color:white; }
+.tnd-btn-primary:hover { background:#5B21B6; }
+.tnd-btn-accent { background:#10B981;color:white; }
+.tnd-btn-outline { background:white;color:#374151;border:1.5px solid #d1d5db;margin-top:.5rem; }
+.tnd-step { display:none; }
+.tnd-step.active { display:block; }
+.tnd-user-area { background:#EDE9FE;border-radius:10px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.85rem; }
+.tnd-delivery-box { background:#FEF3C7;border-radius:10px;padding:.75rem 1rem;margin:.75rem 0;font-size:.82rem;color:#92400E;border-left:4px solid #F59E0B; }
+.tnd-form-group { margin-bottom:.75rem; }
+.tnd-form-group label { display:block;font-size:.78rem;font-weight:700;color:#4b5563;margin-bottom:.3rem; }
+.tnd-form-group input, .tnd-form-group select {
+  width:100%;padding:.6rem .75rem;border:1.5px solid #e5e7eb;
+  border-radius:8px;font-size:.85rem;outline:none;
+}
+.tnd-form-group input:focus, .tnd-form-group select:focus { border-color:#7C3AED; }
+.tnd-metodo-grid { display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.75rem; }
+.tnd-metodo-opt {
+  padding:.5rem;border:1.5px solid #e5e7eb;border-radius:8px;
+  cursor:pointer;text-align:center;font-size:.8rem;font-weight:600;
+  transition:all .15s;
+}
+.tnd-metodo-opt.selected { border-color:#7C3AED;background:#EDE9FE;color:#5B21B6; }
+@media(max-width:600px){
+  .tnd-grid{grid-template-columns:repeat(2,1fr);}
+  .tnd-panel{width:100vw;}
+}
+</style>
+
+<div id="tnd-recaptcha-container"></div>
+<div class="tnd-header">
+  <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
+  <div style="display:flex;gap:.5rem;align-items:center">
+    <span id="sync-badge-tienda" style="display:none;align-items:center;gap:.2rem;background:#EDE9FE;border-radius:12px;padding:.15rem .4rem;font-size:.66rem;color:#7C3AED;white-space:nowrap;flex-shrink:0"></span>
+    <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
+    <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
+      🛒 Carrito
+      <span class="tnd-cart-count" id="tnd-cart-count">0</span>
+    </button>
+  </div>
+</div>
+
+<div class="tnd-main">
+  <div class="tnd-search-bar">
+    <span>🔍</span>
+    <input type="text" id="tnd-search" placeholder="Buscar producto..." oninput="tndBuscarDesdeHome()" />
+  </div>
+  <div id="tnd-back-home" style="display:none;margin-bottom:.75rem">
+   <button onclick="_tndIrHome()" style="display:inline-flex;align-items:center;gap:.4rem;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:.55rem 1.2rem;font-size:.88rem;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(124,58,237,.35)">🏠 Inicio</button>
+  </div>
+  <div class="tnd-cats" id="tnd-cats" style="display:none"></div>
+  <div class="tnd-grid" id="tnd-grid"></div>
+</div>
+
+<!-- Panel lateral (carrito / checkout) -->
+<div class="tnd-panel-overlay" id="tnd-overlay" onclick="tndCerrarPanel()"></div>
+<div class="tnd-panel" id="tnd-panel">
+  <div class="tnd-panel-header">
+    <h3 id="tnd-panel-titulo">🛒 Tu carrito</h3>
+    <button class="tnd-panel-close" onclick="tndCerrarPanel()">✕</button>
+  </div>
+  <div class="tnd-panel-body" id="tnd-panel-body"></div>
+  <div class="tnd-panel-footer" id="tnd-panel-footer"></div>
+</div>
+`;
+
+ // Mostrar home o catálogo según _tndVista
+  if (_tndVista === 'home') {
+    _tndRenderHome();
+  } else {
+    tndRenderCats();
+    tndFiltrar();
+  }
+  } catch(e) {
+    const tel = document.getElementById('tienda-publica');
+    if (tel) tel.innerHTML = '<div style="padding:2rem;text-align:center;font-family:sans-serif"><p style="font-size:1.2rem">🛒 ' + (DB.config&&DB.config.nombre||'Tienda Aleze') + '</p><p style="color:#6B7280;margin-top:0.5rem">Cargando catálogo...</p><button onclick="_renderTienda()" style="margin-top:1rem;padding:.6rem 1.5rem;background:#7C3AED;color:white;border:none;border-radius:8px;cursor:pointer">🔄 Reintentar</button></div>';
+    console.warn('_renderTienda error:', e);
+  }
+}
+let _tndCatActiva = '';
+let _tndVista = 'home'; // 'home' | 'catalogo'
+function _tndRenderHome() {
+  const cfg   = DB.config || {};
+  const waNum = (cfg.whatsappTienda || '980037284').replace(/\D/g,'');
+const grid  = document.getElementById('tnd-grid');
+  const cats  = document.getElementById('tnd-cats');
+  const back  = document.getElementById('tnd-back-home');
+  if (!grid) return;
+  grid.style.cssText = 'display:block';
+  if (cats) cats.style.display = 'none';
+  if (back) back.style.display = 'none';
+ // ── Banner ──
+  const _bannerClick = cfg.bannerLink ? 'window.open("'+cfg.bannerLink+'","_blank")' : '';
+  const _bannerCursor = cfg.bannerLink ? 'pointer' : 'default';
+  const bannerHtml = cfg.bannerVisible !== false && cfg.bannerUrl
+ ? '<div onclick="'+_bannerClick+'" style="cursor:'+_bannerCursor+';border-radius:14px;overflow:hidden;margin-bottom:1rem;background:#f5f3ff"><img src="'+cfg.bannerUrl+'" style="width:75%;margin:0 auto;height:auto;object-fit:contain;display:block" alt="Banner"/></div>'
+    : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">${cfg.eslogan||'Todo lo que necesitas, cerca de ti'}</div></div>`;
+  const hoy = new Date().toISOString().slice(0,10);
+  const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
+  const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
+  const promosHtml = prodsPromo.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">🔥 Promociones activas</div><div style="display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;-webkit-overflow-scrolling:touch;scrollbar-width:none">${prodsPromo.slice(0,6).map(p => `<div onclick="tndSetCat(${p.cat})" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:90px;object-fit:cover">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+p.precio).toFixed(2)}</div></div></div>`).join('')}</div></div>` : '';
+  const cats2 = (DB.categorias||[]).filter(c => c.nombre);
+  const catsHtml = cats2.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">📦 Nuestras categorías</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem">${cats2.map(c => { const nProds=(DB.productos||[]).filter(p=>p.cat==c.id&&stockTotal(p)>0).length; return `<div onclick="tndSetCat(${c.id})" style="cursor:pointer;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${c.imagen?`<img src="${c.imagen}" style="width:100%;aspect-ratio:1;object-fit:contain;background:#f5f3ff;display:block">`:`<div style="height:110px;background:linear-gradient(135deg,#5B21B6,#7C3AED);display:flex;align-items:center;justify-content:center;font-size:2.5rem">${c.emoji||'📦'}</div>`}<div style="padding:.6rem .75rem"><div style="font-weight:700;font-size:.88rem;color:#1f2937">${c.nombre}</div><div style="font-size:.75rem;color:#6b7280">${nProds} producto${nProds!==1?'s':''} disponible${nProds!==1?'s':''}</div></div></div>`; }).join('')}</div><button onclick="tndSetCat('')" style="width:100%;margin-top:.75rem;padding:.6rem;background:#f3f4f6;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;color:#374151">Ver todos los productos →</button></div>` : '';
+const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
+  const serviciosHtml = cfg.serviciosBannerUrl
+    ? `<div style="margin-bottom:1.25rem">
+        <div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">⚡ Servicios rápidos</div>
+      <a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera información sobre sus servicios')}" target="_blank" style="display:block;text-decoration:none;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.1)">
+   <img src="${cfg.serviciosBannerUrl}" style="width:100%;height:auto;object-fit:contain;display:block">
+        </a>
+       </div>`
+    : servicios.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">⚡ Servicios rápidos</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.6rem">${servicios.map(s=>`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera: '+s.nombre)}" target="_blank" style="display:flex;align-items:center;gap:.6rem;background:#fff;border-radius:12px;padding:.75rem;box-shadow:0 2px 6px rgba(0,0,0,.07);text-decoration:none;color:#1f2937"><span style="font-size:1.4rem">${s.emoji}</span><span style="font-size:.82rem;font-weight:700">${s.nombre}</span></a>`).join('')}</div></div>` : '';
+  const tiendas = (cfg.tiendasExternas||[]).filter(t => t.visible && t.url);
+  const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.5rem">🛍️ Electrodomésticos y más</div>
+      ${cfg.tiendasTexto?`<div style="font-size:.8rem;color:#6b7280;margin-bottom:.75rem;line-height:1.4">${cfg.tiendasTexto}</div>`:''}
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem">${tiendas.map(t=>`<div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)"><a href="${t.url}" target="_blank" style="display:block;text-decoration:none">${t.imagen?`<img src="${t.imagen}" style="width:100%;height:90px;object-fit:cover;display:block">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:700;color:#374151">${t.nombre}</div>`}</a>${t.waCatalogo?`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera hacer un pedido del catálogo '+t.nombre)}" target="_blank" style="display:block;text-align:center;padding:.5rem;font-size:.78rem;font-weight:700;color:#25D366;text-decoration:none;border-top:1px solid #f3f4f6">📲 Pedir por WhatsApp</a>`:''}</div>`).join('')}</div></div>` : '';
+  grid.innerHTML = bannerHtml + promosHtml + catsHtml + serviciosHtml + tiendasHtml;
+}
+let _tndMetodo = 'Yape';
+let _tndEntrega = 'recojo';
+let _tndStep = 'cart'; // cart | datos | pago | confirmacion
+
+function tndRenderCats() {
+  const el = document.getElementById('tnd-cats');
+  if (!el) return;
+  const catPromo = (DB.categorias||[]).find(c => c.nombre === 'Promociones');
+  const otrosCats = (DB.categorias||[]).filter(c => c.nombre !== 'Promociones');
+  const catsOrdenadas = catPromo ? [catPromo, ...otrosCats] : otrosCats;
+  el.innerHTML = `<span class="tnd-cat-tag active" onclick="tndSetCat('')">Todos</span>` +
+    catsOrdenadas.map(c => `<span class="tnd-cat-tag" onclick="tndSetCat(${c.id})">${c.imagen ? `<img src="${c.imagen}" style="width:16px;height:16px;object-fit:cover;border-radius:3px;vertical-align:middle">` : c.emoji} ${c.nombre}</span>`).join('');
+}
+
+function tndBuscarDesdeHome() {
+  const q = document.getElementById('tnd-search')?.value || '';
+  if (q && _tndVista === 'home') {
+    _tndVista = 'catalogo';
+    _tndCatActiva = '';
+    const back = document.getElementById('tnd-back-home');
+    const cats = document.getElementById('tnd-cats');
+    if (back) back.style.display = 'block';
+    if (cats) cats.style.display = 'flex';
+    tndRenderCats();
+  }
+  tndFiltrar();
+}
+function tndSetCat(id) {
+  _tndCatActiva = id;
+  if (_tndVista === 'home') {
+    _tndVista = 'catalogo';
+    const back = document.getElementById('tnd-back-home');
+    const cats = document.getElementById('tnd-cats');
+    if (back) back.style.display = 'block';
+    if (cats) cats.style.display = 'flex';
+    tndRenderCats();
+    tndFiltrar();
+  } else {
+    document.querySelectorAll('.tnd-cat-tag').forEach(t => t.classList.remove('active'));
+    const sel = id
+      ? document.querySelector(`.tnd-cat-tag[onclick="tndSetCat(${id})"]`)
+      : document.querySelector(`.tnd-cat-tag[onclick="tndSetCat('')"]`);
+    if (sel) sel.classList.add('active');
+    tndFiltrar();
+  }
+}
+function _tndIrHome() {
+  _tndVista = 'home';
+  _tndCatActiva = '';
+  const back = document.getElementById('tnd-back-home');
+  const cats = document.getElementById('tnd-cats');
+  const search = document.getElementById('tnd-search');
+  if (back) back.style.display = 'none';
+  if (cats) cats.style.display = 'none';
+  if (search) search.value = '';
+  _tndRenderHome();
+}
+
+function tndFiltrar() {
+  const _gridEl = document.getElementById('tnd-grid');
+  if (_gridEl) _gridEl.style.cssText = '';
+  const buscar = (document.getElementById('tnd-search')?.value||'').toLowerCase();
+  const hoy = today();
+  let prods = (DB.productos||[]).filter(p => {
+    if (_tndCatActiva && p.cat != _tndCatActiva) return false;
+  if (buscar && !_norm(p.nombre||'').includes(_norm(buscar))) return false;
+    if (p.venc && p.venc < hoy) return false;
+    if (p.esCombo && p.promoActiva === false) return false; // ocultar combos desactivados
+    return true;
+  });
+
+  const grid = document.getElementById('tnd-grid');
+  if (!grid) return;
+  grid.innerHTML = prods.map(p => {
+    const agotado = stockTotal(p) <= 0;
+    const cat = (DB.categorias||[]).find(c => c.id === p.cat);
+   const icon = p.imagen
+      ? `<img src="${p.imagen}" style="width:60px;height:60px;object-fit:contain;border-radius:8px">`
+      : cat?.imagen
+        ? `<img src="${cat.imagen}" style="width:60px;height:60px;object-fit:cover;border-radius:8px">`
+        : (cat?.emoji || '📦');
+    const badge = _getStockBadge(p);
+    const promo = _getPromoTienda(p);
+    const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
+    const precioOrig = (promo && promo.precioPromo && promo.precioPromo < p.precio) ? p.precio : null;
+    const precioCat = p.costo ? Math.ceil(p.costo * (1 + ((DB.categorias||[]).find(c=>c.id===p.cat)?.margen||0)/100) * 10) / 10 : null;
+    const sugerido = precioCat && precioCat !== p.precio ? precioCat : null;
+
+    const accionClic = agotado ? '' : (p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`);
+    return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${accionClic}" style="position:relative">
+      ${p.tieneDetalle ? `<div style="position:absolute;top:6px;left:6px;background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px;z-index:2">🔍 +Detalle</div>` : ''}
+      <div class="tnd-prod-badge">${badge}</div>
+  ${p.esCombo ? `<div class="tnd-prod-promo" style="background:var(--accent)">OFERTA</div>` : promo ? `<div class="tnd-prod-promo">PROMO</div>` : ''}
+      <div class="tnd-prod-icon">${icon}</div>
+      <div class="tnd-prod-name">${p.nombre}</div>
+      ${precioOrig ? `<div class="tnd-prod-price-orig">S/ ${precioOrig.toFixed(2)}</div>` : ''}
+      <div class="tnd-prod-price">S/ ${precio.toFixed(2)}</div>
+
+      ${agotado ? '<div style="font-size:.75rem;color:#ef4444;margin-top:.25rem">Sin stock</div>' : ''}
+    </div>`;
+  }).join('') || '<p style="grid-column:1/-1;text-align:center;color:#9ca3af;padding:2rem">Sin productos que coincidan</p>';
+}
+
+function tndAgregarCarrito(prodId) {
+  const p = DB.productos.find(x => x.id === prodId);
+  if (!p || stockTotal(p) <= 0) return;
+  if (p.venc && p.venc < today()) { alert('Este producto ya no está disponible.'); tndFiltrar(); return; }
+  const promo = _getPromoTienda(p);
+  const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
+  const cat = (DB.categorias||[]).find(c => c.id === p.cat);
+  const existing = _tiendaCart.find(i => i.prodId === prodId);
+  if (existing) {
+    if (existing.cant >= stockTotal(p)) { alert('No hay más stock disponible'); return; }
+    existing.cant++;
+  } else {
+    _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: 1, icon: cat?.emoji||'📦', tipo: p.tipo });
+  }
+  tndSaveCart(); // persistir en localStorage
+  tndUpdateCartBadge();
+  // Mini feedback
+  const cards = document.querySelectorAll('.tnd-prod-card');
+  cards.forEach(card => {
+    if (card.onclick && card.getAttribute('onclick')?.includes(''+prodId)) {
+      card.style.borderColor = '#10B981';
+      setTimeout(() => { card.style.borderColor = ''; }, 500);
+    }
+  });
+}
+
+function tndUpdateCartBadge() {
+  const total = _tiendaCart.reduce((s,i) => s+i.cant, 0);
+  const el = document.getElementById('tnd-cart-count');
+  if (el) el.textContent = total;
+}
+
+function tndAbrirCarrito() {
+  _tndStep = 'cart';
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+}
+
+function tndAbrirMisPuntos() {
+  _tndStep = 'puntos';
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+}
+
+// ── Vista de detalle de producto — carga la colección aparte SOLO acá, nunca en la grilla.
+let _tndDetalleProdId = null, _tndDetalleData = null, _tndDetalleCant = 1;
+function tndVerDetalle(prodId) {
+  _tndDetalleProdId = prodId;
+  _tndDetalleData = null;
+  _tndDetalleCant = 1;
+  _tndStep = 'detalle-producto';
+  window.location.hash = '#/producto/' + prodId;
+  tndRenderPanel();
+  document.getElementById('tnd-overlay').classList.add('open');
+  document.getElementById('tnd-panel').classList.add('open');
+  if (dbModular) { // [SDK modular]
+    getDocM(docM(dbModular, 'productos_detalle', String(prodId))).then(doc => {
+      _tndDetalleData = doc.exists() ? doc.data() : {}; // en modular, exists es un METODO
+      if (_tndStep === 'detalle-producto' && _tndDetalleProdId === prodId) tndRenderPanel();
+    }).catch(() => { _tndDetalleData = {}; });
+  } else {
+    _tndDetalleData = {};
+  }
+}
+function tndDetalleCambiarCant(delta) {
+  _tndDetalleCant = Math.max(1, _tndDetalleCant + delta);
+  tndRenderPanel();
+}
+function tndDetalleAgregarCarrito() {
+  const p = DB.productos.find(x => x.id === _tndDetalleProdId);
+  if (!p) return;
+  const cant = _tndDetalleCant;
+  if (cant > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
+  const promo = _getPromoTienda(p);
+  let precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
+  const mayor = _tndDetalleData?.precioMayor;
+  if (mayor && mayor.cantidadMin > 0 && cant >= mayor.cantidadMin) precio = mayor.precio;
+  const cat = (DB.categorias||[]).find(c => c.id === p.cat);
+  const existing = _tiendaCart.find(i => i.prodId === p.id);
+  if (existing) {
+    existing.cant += cant;
+    existing.precio = precio;
+  } else {
+    _tiendaCart.push({ prodId: p.id, nombre: p.nombre, precio, cant, icon: cat?.emoji||'📦', tipo: p.tipo });
+  }
+  tndSaveCart();
+  tndUpdateCartBadge();
+  tndCerrarPanel();
+}
+
+// Identificación mínima para ver puntos — mismo mecanismo real usado al pedir (teléfono = llave).
+function tndIdentificarParaPuntos() {
+  const nombre = document.getElementById('tnd-puntos-nombre')?.value.trim();
+  const tel = document.getElementById('tnd-puntos-tel')?.value.trim();
+  if (!nombre || nombre.length < 3) { alert('Ingresa tu nombre (mínimo 3 caracteres)'); return; }
+  const telLimpio = (tel||'').replace(/\s/g,'');
+  if (!telLimpio || telLimpio.length < 7) { alert('Ingresa tu número de teléfono (mínimo 7 dígitos)'); return; }
+  tndResolverClienteConVerificacion(nombre, telLimpio, () => {
+    tndSaveUser(nombre, telLimpio);
+    _tndStep = 'puntos';
+    tndRenderPanel();
+  });
+}
+
+function tndCerrarPanel() {
+  document.getElementById('tnd-overlay').classList.remove('open');
+  document.getElementById('tnd-panel').classList.remove('open');
+  if (_tndStep === 'detalle-producto' && window.location.hash.startsWith('#/producto/')) {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+}
+
+function tndRenderPanel() {
+  const titulo = document.getElementById('tnd-panel-titulo');
+  const body = document.getElementById('tnd-panel-body');
+  const footer = document.getElementById('tnd-panel-footer');
+
+  if (_tndStep === 'cart') {
+    titulo.textContent = '🛒 Tu carrito';
+    const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+    if (_tiendaCart.length === 0) {
+      body.innerHTML = '<div style="text-align:center;padding:2rem;color:#9ca3af">🛒 Tu carrito está vacío<br><span style="font-size:.82rem">Agrega productos del catálogo</span></div>';
+      footer.innerHTML = '<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>';
+      return;
+    }
+    body.innerHTML = `
+      ${_tiendaCart.map(item => `
+      <div class="tnd-cart-item">
+        <div class="tnd-cart-item-icon">${item.icon}</div>
+        <div class="tnd-cart-item-info">
+          <div class="tnd-cart-item-name">${item.nombre}</div>
+          <div class="tnd-cart-item-price">S/ ${item.precio.toFixed(2)} c/u</div>
+        </div>
+        <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},-1)">−</button>
+        <span class="tnd-qty-val">${item.cant}</span>
+        <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},1)">+</button>
+      </div>`).join('')}
+      <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:.9rem;color:#6b7280">Subtotal</span>
+        <strong style="font-size:1.2rem;color:#7C3AED">S/ ${subtotal.toFixed(2)}</strong>
+      </div>`;
+    footer.innerHTML = `
+      <button class="tnd-btn tnd-btn-primary" onclick="tndIrDatos()">Continuar → Datos</button>
+      <button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>`;
+  }
+
+  if (_tndStep === 'verificar-sms') {
+    titulo.textContent = '🔒 Verificar tu número';
+    body.innerHTML = `
+      <p style="font-size:.82rem;color:#6b7280;margin-bottom:1rem">Por seguridad, confirmamos tu número antes de continuar.</p>
+      <div class="tnd-form-group">
+        <label>Te enviaremos un código a:</label>
+        <div style="font-weight:700;padding:.5rem 0">${_tndPendienteTel||''}</div>
+      </div>
+      <div id="tnd-sms-status" style="font-size:.82rem;color:#6b7280;margin:.5rem 0"></div>
+      <div id="tnd-sms-paso2" style="display:none" class="tnd-form-group">
+        <label>Código recibido</label>
+        <input type="text" id="tnd-sms-codigo" placeholder="123456" maxlength="6" inputmode="numeric" />
+      </div>`;
+    footer.innerHTML = `
+      <button class="tnd-btn tnd-btn-primary" onclick="tndSolicitarCodigoUI()">Enviar código</button>
+      <button class="tnd-btn tnd-btn-primary" style="display:none" id="tnd-sms-btn-verificar" onclick="tndConfirmarCodigoUI()">Verificar</button>
+      <button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cancelar</button>`;
+    // Revela el botón de verificar recién cuando aparece el campo de código
+    setTimeout(() => {
+      const obs = new MutationObserver(() => {
+        const visible = document.getElementById('tnd-sms-paso2')?.style.display === 'block';
+        const btn = document.getElementById('tnd-sms-btn-verificar');
+        if (btn) btn.style.display = visible ? 'inline-block' : 'none';
+      });
+      const target = document.getElementById('tnd-sms-paso2');
+      if (target) obs.observe(target, { attributes: true, attributeFilter: ['style'] });
+    }, 0);
+  }
+
+  if (_tndStep === 'detalle-producto') {
+    const p = DB.productos.find(x => x.id === _tndDetalleProdId);
+    if (!p) { titulo.textContent = 'Producto'; body.innerHTML = '<p>Producto no encontrado.</p>'; footer.innerHTML = ''; }
+    else {
+      titulo.textContent = p.nombre;
+      const cat = (DB.categorias||[]).find(c => c.id === p.cat);
+      const imgPrincipal = p.imagen || cat?.imagen || '';
+      const cargando = _tndDetalleData === null;
+      const extra = _tndDetalleData?.imagenesExtra || [];
+      const desc = _tndDetalleData?.descripcion || '';
+      const mayor = _tndDetalleData?.precioMayor;
+      const agotado = stockTotal(p) <= 0;
+      body.innerHTML = `
+        <div style="text-align:center;margin-bottom:1rem">
+          ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:160px;height:160px;object-fit:contain;border-radius:12px">` : `<div style="font-size:3rem">${cat?.emoji||'📦'}</div>`}
+        </div>
+        ${extra.length ? `<div style="display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem">${extra.map(u=>`<img src="${u}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb">`).join('')}</div>` : ''}
+        <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${p.precio.toFixed(2)}</div>
+        ${cargando ? '<p style="text-align:center;color:#9ca3af;font-size:.82rem">⏳ Cargando detalle...</p>' : ''}
+        ${desc ? `<p style="font-size:.85rem;color:#4b5563;line-height:1.5;margin-bottom:1rem">${desc}</p>` : ''}
+        ${mayor && mayor.cantidadMin > 0 ? `<div style="background:#EDE9FE;border-radius:8px;padding:.6rem;font-size:.8rem;color:#5B21B6;margin-bottom:1rem">💰 Desde ${mayor.cantidadMin} unidades: <strong>S/ ${mayor.precio.toFixed(2)} c/u</strong></div>` : ''}
+        ${agotado ? '<p style="text-align:center;color:#ef4444;font-weight:700">Sin stock por el momento</p>' : `
+          <div style="display:flex;align-items:center;justify-content:center;gap:1rem;margin-top:1rem">
+            <button class="tnd-btn tnd-btn-outline" style="width:44px" onclick="tndDetalleCambiarCant(-1)">−</button>
+            <span style="font-size:1.2rem;font-weight:700;min-width:30px;text-align:center">${_tndDetalleCant}</span>
+            <button class="tnd-btn tnd-btn-outline" style="width:44px" onclick="tndDetalleCambiarCant(1)">+</button>
+          </div>`}`;
+      footer.innerHTML = agotado
+        ? `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`
+        : `<button class="tnd-btn tnd-btn-primary" onclick="tndDetalleAgregarCarrito()">Agregar al carrito</button>`;
+    }
+  }
+
+  if (_tndStep === 'puntos') {
+    titulo.textContent = '⭐ Mis puntos';
+    const clienteId = tndGetClienteIdReal();
+    if (!clienteId) {
+      body.innerHTML = `
+        <p style="font-size:.82rem;color:#6b7280;margin-bottom:1rem">Ingresa tu nombre y teléfono para ver tus puntos — es el mismo dato que usás al pedir, así siempre encuentra tu cuenta real, sin importar desde qué equipo entres.</p>
+        <div class="tnd-form-group">
+          <label>Nombre *</label>
+          <input type="text" id="tnd-puntos-nombre" placeholder="Tu nombre" value="${_tiendaUser?.nombre||''}" />
+        </div>
+        <div class="tnd-form-group">
+          <label>Teléfono *</label>
+          <input type="tel" id="tnd-puntos-tel" placeholder="999 999 999" value="${_tiendaUser?.tel||''}" />
+        </div>`;
+      footer.innerHTML = `<button class="tnd-btn tnd-btn-primary" onclick="tndIdentificarParaPuntos()">Ver mis puntos</button>`;
+    } else {
+      const cli = DB.clientes.find(c => c.id === clienteId);
+      const est = estadoFidelizacion(clienteId);
+      const disponibles = premiosDisponibles(clienteId);
+      let progresoHtml = '';
+      if (est.estado === 'premio_disponible') {
+        progresoHtml = `<div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎉 ¡Ya tenés premio disponible! Pídelo en cualquiera de nuestras sedes.</div>`;
+      } else if (est.estado === 'cerca') {
+        progresoHtml = `<div style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Te faltan <strong>${est.faltan} puntos</strong> para tu próximo premio.</div>`;
+      }
+      body.innerHTML = `
+        <div style="text-align:center;padding:1rem 0">
+          <div style="font-size:2.2rem;font-weight:800;color:#7C3AED">${cli.puntos||0}</div>
+          <div style="font-size:.8rem;color:#6b7280">puntos acumulados</div>
+        </div>
+        ${progresoHtml}
+        ${disponibles.length ? `
+          <div style="font-size:.85rem;font-weight:700;margin-bottom:.5rem">🎁 Podés canjear ahora:</div>
+          ${disponibles.map(p => `<div style="padding:.5rem;background:#F9FAFB;border-radius:6px;margin-bottom:.4rem;font-size:.82rem">${p.tipo==='producto'?'📦':'💰'} ${p.nombre}</div>`).join('')}
+          <p style="font-size:.75rem;color:#9ca3af;margin-top:.5rem">Pídelo en caja al recoger tu pedido, o en cualquiera de nuestras sedes.</p>
+        ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para acercarte a tu próximo premio.</p>'}`;
+      footer.innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`;
+    }
+  }
+
+  if (_tndStep === 'datos') {
+    titulo.textContent = '👤 Tus datos';
+    body.innerHTML = `
+      <p style="font-size:.82rem;color:#6b7280;margin-bottom:1rem">Necesitamos tus datos para confirmar tu pedido por WhatsApp.</p>
+      <div class="tnd-form-group">
+        <label>Nombre *</label>
+        <input type="text" id="tnd-inp-nombre" placeholder="¿Cómo te llamamos?" value="${_tiendaUser?.nombre||''}" />
+      </div>
+      <div class="tnd-form-group">
+        <label>WhatsApp * <span style="font-size:.72rem;font-weight:400;color:#9ca3af">(para confirmar tu pedido)</span></label>
+        <input type="tel" id="tnd-inp-tel" placeholder="Ej: 987654321" value="${_tiendaUser?.tel||''}" inputmode="numeric" />
+      </div>
+      <div class="tnd-form-group">
+        <label>Método de entrega *</label>
+        <div style="display:flex;gap:.5rem">
+          <div class="tnd-metodo-opt ${_tndEntrega==='recojo'?'selected':''}" onclick="tndSetEntrega('recojo')" style="flex:1">🏪<br>Recojo en tienda</div>
+          <div class="tnd-metodo-opt ${_tndEntrega==='delivery'?'selected':''}" onclick="tndSetEntrega('delivery')" style="flex:1">🚚<br>Delivery</div>
+        </div>
+      </div>
+      ${_tndEntrega==='delivery'?`<div class="tnd-delivery-box">📍 <strong>Nota:</strong> El delivery puede tener un costo adicional según la distancia. Recorridos menores a 300 metros son <strong>gratuitos</strong>. El vendedor te confirmará el costo exacto por WhatsApp.</div>`:''}
+      ${_tndEntrega==='delivery'?`<div class="tnd-form-group"><label>Tu dirección</label><input type="text" id="tnd-inp-dir" placeholder="Calle, número, referencia..." /></div>`:''}
+    `;
+    footer.innerHTML = `
+      <button class="tnd-btn tnd-btn-primary" onclick="tndIrPago()">Continuar → Pago</button>
+      <button class="tnd-btn tnd-btn-outline" onclick="tndVolverCart()">← Volver al carrito</button>`;
+  }
+
+  if (_tndStep === 'pago') {
+    titulo.textContent = '💳 Método de pago';
+    const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+    const metodos = [
+      {v:'Efectivo',e:'💵 Efectivo'},
+      {v:'Yape',e:'💜 Yape'},
+      {v:'Plin',e:'💚 Plin'},
+      {v:'QR',e:'📱 QR'},
+      {v:'Link de pago',e:'🔗 Link de pago'},
+      {v:'Tarjeta POS',e:'💳 Tarjeta POS'},
+      {v:'Tarjeta POS Móvil',e:'📲 POS Móvil'},
+      {v:'Transferencia',e:'🏦 Transferencia'},
+    ];
+    body.innerHTML = `
+      <div class="tnd-metodo-grid">
+        ${metodos.map(m=>`<div class="tnd-metodo-opt ${_tndMetodo===m.v?'selected':''}" onclick="tndSetMetodo('${m.v}')">${m.e}</div>`).join('')}
+      </div>
+      <div style="border-top:2px solid #e5e7eb;padding-top:.75rem;margin-top:.5rem">
+        ${_tiendaCart.map(i=>`<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:.25rem 0"><span>${i.nombre} x${i.cant}</span><span>S/ ${(i.precio*i.cant).toFixed(2)}</span></div>`).join('')}
+        <div style="display:flex;justify-content:space-between;margin-top:.5rem;font-size:1rem;font-weight:700;color:#7C3AED">
+          <span>TOTAL</span><span>S/ ${subtotal.toFixed(2)}</span>
+        </div>
+      </div>`;
+    // "Pagar en linea" solo aparece si la pasarela esta activa en Configuracion — dormida
+    // por defecto, el checkout de hoy (WhatsApp + metodo informativo) sigue igual.
+    const _pasarelaActiva = DB.config.pasarelaPago && DB.config.pasarelaPago.activa;
+    footer.innerHTML = `
+      ${_pasarelaActiva ? `<button class="tnd-btn tnd-btn-primary" onclick="tndPagarEnLinea()">💳 Pagar ahora en línea</button>` : ''}
+      <button class="tnd-btn tnd-btn-accent" onclick="tndEnviarPedido()">📲 Hacer pedido por WhatsApp</button>
+      <button class="tnd-btn tnd-btn-outline" onclick="tndVolverDatos()">← Volver</button>`;
+  }
+}
+
+// ── Pago en línea (Izipay) — solo se llega acá si el flag esta activo Y las Cloud
+// Functions ya fueron desplegadas manualmente (ver /functions en el repositorio).
+// Sin ese despliegue, esta llamada falla con un error claro, no en silencio.
+async function tndPagarEnLinea() {
+  if (!_tiendaUser?.nombre || !_tiendaUser?.tel) { alert('Completa tus datos antes de pagar.'); tndVolverDatos(); return; }
+  const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+  if (subtotal <= 0) { alert('Tu carrito está vacío.'); return; }
+  if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
+
+  try {
+    // El pedido tiene que existir en Firestore ANTES de iniciar el pago — crearSesionPago
+    // verifica el monto contra el pedido real, no confía en lo que mande el navegador.
+    const clienteId = await tndResolverCliente(_tiendaUser.nombre, (_tiendaUser.tel||'').replace(/\s/g,''));
+    const pedido = {
+      id: getId(), clienteNombre: _tiendaUser.nombre, telefono: (_tiendaUser.tel||'').replace(/\s/g,''),
+      clienteId, items: _tiendaCart, total: Math.round(subtotal*100)/100,
+      entrega: _tndEntrega, direccion: _tndEntrega==='delivery' ? (document.getElementById('tnd-inp-dir')?.value||'') : '',
+      metodo: 'Pago en línea', estado: 'pendiente', pagoEstado: 'sin_iniciar',
+      fecha: new Date().toISOString(), origen: 'web'
+    };
+    await setDocM(docM(dbModular, 'pedidos_online', String(pedido.id)), pedido); // [SDK modular]
+
+    const crearSesion = fbFunctions.httpsCallable('crearSesionPago');
+    const resultado = await crearSesion({ pedidoId: pedido.id, monto: pedido.total, moneda: 'PEN' });
+
+    // TODO: acá se renderiza el formulario embebido de Izipay usando
+    // resultado.data.formToken — pendiente de completar contra su SDK real
+    // (KR.setFormConfig / KR.attachForm o el nombre que use su documentación
+    // actual). Por ahora, deja constancia de que la sesión se creó bien.
+    if (resultado.data && resultado.data.formToken) {
+      alert('Sesión de pago creada. Falta completar la integración visual del formulario de Izipay (pendiente de su documentación técnica).');
+    } else {
+      alert('No se pudo iniciar el pago en línea. Intenta con WhatsApp mientras tanto.');
+    }
+  } catch (e) {
+    console.warn('tndPagarEnLinea:', e);
+    alert('El pago en línea no está disponible en este momento. Puedes completar tu pedido por WhatsApp.');
+  }
+}
+
+function tndSetEntrega(tipo) {
+  _tndEntrega = tipo;
+  document.querySelectorAll('.tnd-metodo-opt').forEach(el => {
+    const esEste = (tipo==='recojo' && el.textContent.includes('Recojo')) ||
+                   (tipo==='delivery' && el.textContent.includes('Delivery'));
+    el.classList.toggle('selected', esEste);
+  });
+  // Re-renderizar para mostrar/ocultar nota delivery
+  tndRenderPanel();
+}
+
+function tndSetMetodo(m) {
+  _tndMetodo = m;
+  document.querySelectorAll('.tnd-metodo-grid .tnd-metodo-opt').forEach(el => {
+    el.classList.toggle('selected', el.textContent.includes(m));
+  });
+}
+
+function tndCartCant(prodId, delta) {
+  const idx = _tiendaCart.findIndex(i => i.prodId === prodId);
+  if (idx < 0) return;
+  _tiendaCart[idx].cant += delta;
+  if (_tiendaCart[idx].cant <= 0) _tiendaCart.splice(idx, 1);
+  tndSaveCart(); // persistir cambio de cantidad
+  tndUpdateCartBadge();
+  tndRenderPanel();
+}
+
+function tndIrDatos() {
+  if (_tiendaCart.length === 0) { alert('Tu carrito está vacío'); return; }
+  _tndStep = 'datos';
+  tndRenderPanel();
+}
+
+function tndVolverCart() {
+  _tndStep = 'cart';
+  tndRenderPanel();
+}
+
+function tndIrPago() {
+  const nombre = document.getElementById('tnd-inp-nombre')?.value.trim();
+  if (!nombre || nombre.length < 3) { alert('Por favor ingresa tu nombre (mínimo 3 caracteres)'); return; }
+  const tel = document.getElementById('tnd-inp-tel')?.value.trim()||'';
+  if (!tel || tel.length < 7) { alert('Por favor ingresa tu número de WhatsApp (mínimo 7 dígitos)\nEsto nos permite confirmarte el pedido.'); return; }
+  _tiendaUser = {
+    nombre,
+    tel,
+    dir: document.getElementById('tnd-inp-dir')?.value.trim()||''
+  };
+  tndSaveUser(nombre, tel); // recordar para próxima visita
+  _tndStep = 'pago';
+  tndRenderPanel();
+}
+
+function tndVolverDatos() {
+  _tndStep = 'datos';
+  tndRenderPanel();
+}
+
+// ── Flag anti-doble-envío — se resetea tras éxito o error ───────────────────
+let _tndEnviando = false;
+
+async function tndEnviarPedido() {
+  // ── Guardia anti-doble-clic ──────────────────────────────────────────────
+  if (_tndEnviando) return;
+
+  // ── Validaciones previas al envío ────────────────────────────────────────
+  // Los máximos (100 y 15) coinciden exactamente con pedidoValido() en las reglas de Firestore
+  // — sin esto, un nombre o teléfono demasiado largo rechazaba el pedido sin ningún mensaje
+  // claro para el cliente, solo un error crudo de permisos.
+  if (!_tiendaUser?.nombre || _tiendaUser.nombre.length < 3) {
+    alert('Falta tu nombre (mínimo 3 caracteres)'); return;
+  }
+  if (_tiendaUser.nombre.length > 100) {
+    alert('Tu nombre es demasiado largo (máximo 100 caracteres)'); return;
+  }
+  const telLimpio = (_tiendaUser?.tel||'').replace(/\s/g,'');
+  if (!telLimpio || telLimpio.length < 7) {
+    alert('Falta tu número de WhatsApp (mínimo 7 dígitos)'); return;
+  }
+  if (telLimpio.length > 15) {
+    alert('Tu número de WhatsApp es demasiado largo (máximo 15 dígitos)'); return;
+  }
+  if (_tiendaCart.length === 0) {
+    alert('Tu carrito está vacío'); return;
+  }
+ const subtotal = Math.round(_tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0) * 100) / 100;
+  if (!subtotal || subtotal <= 0) {
+    alert('El total del pedido no es válido'); return;
+  }
+
+  // ── Verificación SMS (dormida mientras el flag esté apagado) — si hace falta y
+  // todavía no se hizo en este equipo, se muestra y se vuelve a llamar esta misma
+  // función al terminar. El resto de tndEnviarPedido() no cambia en nada.
+  if (DB.config.requiereVerificacionSMS && !tndTelefonoYaVerificado()) {
+    tndResolverClienteConVerificacion(_tiendaUser.nombre, telLimpio, () => tndEnviarPedido());
+    return;
+  }
+
+  // ── Bloquear botón inmediatamente ────────────────────────────────────────
+  _tndEnviando = true;
+  const btnEnviar = document.querySelector('.tnd-btn-accent');
+  if (btnEnviar) { btnEnviar.disabled = true; btnEnviar.textContent = '⏳ Enviando...'; }
+
+  const waNum = DB.config.whatsappTienda || '980037284';
+  const fecha = today();
+  const hora  = nowTime();
+
+  // ── Construir pedido con TODOS los campos requeridos por pedidoValido() ──
+  // Incluye: clienteNombre, telefono, items, total, fecha, origen
+  if (!DB.pedidosOnline) DB.pedidosOnline = [];
+  const clienteId = await tndResolverCliente(_tiendaUser.nombre, telLimpio);
+  const pedido = {
+    id:            getId(),
+    fecha,                          // string "YYYY-MM-DD" — requerido por reglas
+    hora,
+    clienteId,
+    clienteNombre: _tiendaUser.nombre,           // string >2 chars — validado arriba
+    clienteTel:    _tiendaUser.tel,
+    telefono:      telLimpio,                    // ← NUEVO — requerido por pedidoValido()
+    clienteDir:    _tiendaUser.dir || '',
+    items:         _tiendaCart.map(i=>({...i})), // lista >0 — validado arriba
+    total:         subtotal,                     // number >0 — validado arriba
+    metodo:        _tndMetodo,
+    entrega:       _tndEntrega,
+    estado:        'pendiente',
+    origen:        'web'                         // ← NUEVO — requerido por pedidoValido()
+  };
+
+  // ── Guardar en colección pedidos_online/{id} ─────────────────────────────
+  // El cliente NO escribe en aleze/db — solo en pedidos_online. A diferencia de venta/fiado,
+  // acá hay UN solo documento (no varias piezas que puedan desincronizarse entre si) — pero
+  // antes se mostraba "pedido enviado" SIEMPRE, sin esperar a que el guardado terminara de
+  // verdad. Si fallaba, el pedido quedaba en un array local que nunca llega a ningun lado, y
+  // el cliente jamas se enteraba. Ahora se espera la confirmacion real antes de avisar exito.
+  if (dbModular) { // [SDK modular]
+    try {
+      await setDocM(docM(dbModular, 'pedidos_online', String(pedido.id)), pedido);
+    } catch (e) {
+      console.warn('pedidos_online write error:', e.code);
+      _tndEnviando = false;
+      if (btnEnviar) { btnEnviar.disabled = false; btnEnviar.textContent = '📲 Enviar pedido'; }
+      alert('⚠️ No se pudo enviar tu pedido — puede ser un problema de conexión.\n\nPor favor intenta de nuevo, o escríbenos directo por WhatsApp para no perder tu pedido.');
+      return;
+    }
+  }
+  _tndEnviando = false;
+
+  // ── Guardar historial local del cliente (solo localStorage) ─────────────
+  if (_tiendaUser.tel) {
+    const key = 'tnd_hist_' + _tiendaUser.tel;
+    try {
+      const hist = JSON.parse(localStorage.getItem(key)||'[]');
+      hist.push({ fecha, hora, items: pedido.items, total: subtotal, metodo: _tndMetodo });
+      localStorage.setItem(key, JSON.stringify(hist.slice(-20)));
+    } catch(e) {}
+  }
+  // NO llamar fbGuardar() — el cliente ya no escribe en aleze/db
+
+  // ── Armar mensaje WhatsApp ───────────────────────────────────────────────
+  let msg = `🛒 *Nuevo pedido — ${DB.config.nombre||'Tienda Aleze'}*\n\n`;
+  msg += `👤 *Cliente:* ${_tiendaUser.nombre}\n`;
+  if (_tiendaUser.tel) msg += `📱 *WhatsApp:* ${_tiendaUser.tel}\n`;
+  msg += `\n*Productos:*\n`;
+  _tiendaCart.forEach(i => {
+    msg += `• ${i.nombre} x${i.cant} — S/ ${(i.precio*i.cant).toFixed(2)}\n`;
+  });
+  msg += `\n*Total: S/ ${subtotal.toFixed(2)}*\n`;
+  msg += `💳 *Pago:* ${_tndMetodo}\n`;
+  msg += `📦 *Entrega:* ${_tndEntrega==='delivery'?'🚚 Delivery':'🏪 Recojo en tienda'}\n`;
+  if (_tndEntrega==='delivery' && _tiendaUser.dir) msg += `📍 *Dirección:* ${_tiendaUser.dir}\n`;
+  msg += `\n_Pedido generado desde la tienda web_`;
+
+  const url = `https://wa.me/51${waNum}?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
+
+  // ── Limpiar carrito — en memoria y en localStorage ───────────────────────
+  _tiendaCart = [];
+  try { localStorage.removeItem('aleze_tnd_cart'); } catch(e) {}
+  tndUpdateCartBadge();
+  tndFiltrar();
+  document.getElementById('tnd-panel-titulo').textContent = '✅ ¡Pedido enviado!';
+  document.getElementById('tnd-panel-body').innerHTML = `
+    <div style="text-align:center;padding:2rem">
+      <div style="font-size:4rem;margin-bottom:1rem">✅</div>
+      <h3 style="font-size:1.2rem;font-weight:800;color:#1f2937;margin-bottom:.5rem">¡Tu pedido fue enviado!</h3>
+      <p style="font-size:.9rem;color:#6b7280;margin-bottom:1rem">Se abrió WhatsApp con tu pedido listo para enviar a la tienda.<br>El vendedor te confirmará la disponibilidad y el costo de delivery si aplica.</p>
+     <div style="background:#EDE9FE;border-radius:10px;padding:.75rem;font-size:.82rem;color:#5B21B6">
+        📱 WhatsApp tienda: <strong>${waNum}</strong>
+      </div>
+      <div style="background:#FEF3C7;border-radius:10px;padding:.75rem;font-size:.82rem;color:#92400E;margin-top:.5rem">
+        🎁 Cada compra te acerca a un premio. ¡Te esperamos pronto!
+      </div>
+    </div>`;
+  document.getElementById('tnd-panel-footer').innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>`;
+}
+
