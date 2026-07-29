@@ -11631,15 +11631,20 @@ function fbGuardarProductos() {
     if (_fbWritingProd) { _fbSaveTimerProd = setTimeout(_tryGuardarProd, 500); return; }
     _fbEscribiendo = true;
     _fbWritingProd = true;
-    // CRITICO: antes se embebía DB.config COMPLETO acá — pero db_productos es de lectura
-    // pública (lo lee la tienda online sin necesitar sesión), y config incluye usuariosStaff
-    // (emails y roles del personal), que no tiene ningún motivo para ser público. Ahora solo
-    // se copian los campos que la tienda pública realmente necesita mostrar.
+    // CRITICO: usuariosStaff SI tiene que estar acá, con email incluido — el propio proceso
+    // de login lo necesita ANTES de autenticar (el selector de usuario se llena desde acá, y
+    // doLogin() usa el email para el signInWithEmailAndPassword real). Una ronda anterior lo
+    // sacó pensando que era un dato sensible innecesario en un documento público, sin darse
+    // cuenta de que el login entero depende de que esté ahí — eso dejó el selector vacío y el
+    // login roto por completo. El email de un cajero, solo, no es una credencial (todavía
+    // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
+    // exposición que cualquier login por correo público en cualquier sistema.
     const _configPublico = {
       nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
       whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
       requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
-      pasarelaPago: DB.config?.pasarelaPago
+      pasarelaPago: DB.config?.pasarelaPago,
+      usuariosStaff: DB.config?.usuariosStaff || []
     };
     const payload = {
       productos:  JSON.parse(JSON.stringify(DB.productos)),
