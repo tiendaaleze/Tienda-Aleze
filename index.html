@@ -3468,18 +3468,18 @@ let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del c
 const _CLIENTE_CAMPOS_INCREMENTALES = ['deuda', 'compras', 'total', 'puntos'];
 const _clienteProxiesCreados = new WeakSet();
 function fbAjustarCliente(id, campo, delta) {
-  if (!fbFS || id == null || !delta) return;
+  if (!dbModular || id == null || !delta) return; // [SDK modular]
   _sincIniciar('cliente', id);
-  fbFS.collection('clientes').doc(String(id)).set(
-    { [campo]: firebase.firestore.FieldValue.increment(delta) },
+  setDocM(docM(dbModular, 'clientes', String(id)),
+    { [campo]: incrementM(delta) },
     { merge: true }
   ).then(() => _sincTerminar('cliente', id))
    .catch(e => _sincError('cliente', id, e, 'los datos del cliente (puntos/deuda/compras)'));
 }
 function fbSincronizarClienteCampo(id, campo, valor) {
-  if (!fbFS || id == null) return;
+  if (!dbModular || id == null) return; // [SDK modular]
   _sincIniciar('cliente', id);
-  fbFS.collection('clientes').doc(String(id)).set({ [campo]: valor }, { merge: true })
+  setDocM(docM(dbModular, 'clientes', String(id)), { [campo]: valor }, { merge: true })
     .then(() => _sincTerminar('cliente', id))
     .catch(e => _sincError('cliente', id, e, 'los datos del cliente'));
 }
@@ -4056,7 +4056,7 @@ async function doLogin() {
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
-        const stockSnap = await fbFS.collection('stock').get();
+        const stockSnap = await getDocsM(collectionM(dbModular, 'stock')); // [SDK modular]
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
@@ -4351,7 +4351,7 @@ async function navigate(page) {
           if (pd.config)     DB.config = { ...DB.config, ...pd.config };
         }
         // Fase Offline: stock más fresco, mismo criterio que en el login.
-        return fbFS.collection('stock').get().then(stockSnap => {
+        return getDocsM(collectionM(dbModular, 'stock')).then(stockSnap => { // [SDK modular]
           stockSnap.forEach(doc => {
             const prod = DB.productos.find(p => String(p.id) === doc.id);
             const d = doc.data();
@@ -5179,8 +5179,8 @@ async function procesarVenta() {
   // cada pieza viajaba por separado (independiente), lo que permitía que el stock se
   // descontara sin que la venta llegara a guardarse, o viceversa.
   const sede = sedeAdminEfectiva();
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  const batch = fbFS.batch();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const batch = writeBatchM(dbModular);
   // Agregar deltas por producto ANTES de armar el lote — si el mismo producto aparece dos
   // veces (una suelto, otra como componente de un combo), esto evita escribir el mismo
   // documento de stock dos veces dentro del mismo lote, cosa que Firestore no garantiza que
@@ -5203,28 +5203,28 @@ async function procesarVenta() {
   });
   const _deltasStock = [];
   _deltasPorProducto.forEach(({prod, delta}) => {
-    batch.set(fbFS.collection('stock').doc(String(prod.id)),
-      { [`stockPorSede.${sede}`]: firebase.firestore.FieldValue.increment(delta) }, { merge: true });
+    batch.set(docM(dbModular, 'stock', String(prod.id)),
+      { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
   });
 
   const _ventaFinal = { ...venta, sedeId: sede, origen: 'pos', estado: 'completado', estadoStock: 'descontado' };
-  batch.set(fbFS.collection('ventas').doc(String(venta.id)), _ventaFinal);
+  batch.set(docM(dbModular, 'ventas', String(venta.id)), _ventaFinal);
 
   const _movId = getId();
   const _movData = { id: _movId, tipo:'ingreso', desc:`Venta #${venta.id} (${metodo})`, monto:total, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
-  const _cajaUpdate = { ingresos: firebase.firestore.FieldValue.increment(total) };
-  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = firebase.firestore.FieldValue.increment(total);
-  batch.set(fbFS.collection('caja').doc(sede), _cajaUpdate, { merge: true });
+  const _cajaUpdate = { ingresos: incrementM(total) };
+  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(total);
+  batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
 
   const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
   if (clienteId) {
-    batch.set(fbFS.collection('clientes').doc(String(clienteId)), {
-      compras: firebase.firestore.FieldValue.increment(1),
-      total: firebase.firestore.FieldValue.increment(total),
-      puntos: firebase.firestore.FieldValue.increment(_puntosGanados)
+    batch.set(docM(dbModular, 'clientes', String(clienteId)), {
+      compras: incrementM(1),
+      total: incrementM(total),
+      puntos: incrementM(_puntosGanados)
     }, { merge: true });
   }
 
@@ -5601,11 +5601,11 @@ function stockTotal(prod) {
 // No bloqueante — funciona sin señal porque el incremento se encola local (enablePersistence) y el
 // servidor lo aplica cuando reconecta, sumando correctamente aunque 2 sedes ajusten a la vez sin red.
 function fbIncrementarStock(prodId, sede, delta) {
-  if (!fbFS || prodId == null || !delta) return;
+  if (!dbModular || prodId == null || !delta) return; // [SDK modular]
   const campo = `stockPorSede.${sede}`;
   _sincIniciar('stock', prodId);
-  fbFS.collection('stock').doc(String(prodId)).set(
-    { [campo]: firebase.firestore.FieldValue.increment(delta) },
+  setDocM(docM(dbModular, 'stock', String(prodId)),
+    { [campo]: incrementM(delta) },
     { merge: true }
   ).then(() => _sincTerminar('stock', prodId))
    .catch(e => _sincError('stock', prodId, e, 'el stock del producto'));
@@ -5864,7 +5864,7 @@ function eliminarProducto(id) {
   const tieneFiado = DB.fiados.some(f => f.items.some(i => i.prodId === id));
   if (tieneFiado) { alert('Este producto tiene fiados pendientes. Salda los fiados antes de eliminarlo.'); return; }
   DB.productos = DB.productos.filter(p => p.id !== id); fbGuardarProductos();
-  if (fbFS) fbFS.collection('stock').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar stock/'+id, e));
+  if (dbModular) deleteDocM(docM(dbModular, 'stock', String(id))).catch(e => console.warn('No se pudo borrar stock/'+id, e)); // [SDK modular]
   renderInvTable();
 }
 
@@ -7234,7 +7234,7 @@ function eliminarCliente(id) {
   if (c && c.deuda > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(c.deuda) + '. Salda los fiados antes de eliminarlo.'); return; }
   if (!confirm('¿Eliminar cliente?')) return;
   DB.clientes = DB.clientes.filter(c => c.id !== id);
-  if (fbFS) fbFS.collection('clientes').doc(String(id)).delete().catch(e => console.warn('No se pudo borrar clientes/'+id, e));
+  if (dbModular) deleteDocM(docM(dbModular, 'clientes', String(id))).catch(e => console.warn('No se pudo borrar clientes/'+id, e)); // [SDK modular]
   fbGuardar();
   renderClientes();
   updatePosClientes();
@@ -8450,18 +8450,18 @@ async function confirmarTraslado() {
   // Paquete atomico: el descuento en origen y el aumento en destino viajan juntos. Sin esto,
   // si solo uno de los dos llegara a guardarse, el stock quedaria "perdido en el camino" —
   // descontado de una sede sin haber llegado nunca a la otra, exactamente el riesgo real.
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
-  const batch = fbFS.batch();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const batch = writeBatchM(dbModular);
   // Ambos ajustes van en UNA sola escritura al mismo documento (stock/{id}) — llamar set()
   // dos veces sobre el mismo documento dentro de un lote no garantiza que ambos cambios
   // se combinen, es mas seguro mandarlos juntos en un solo objeto.
-  batch.set(fbFS.collection('stock').doc(String(prod.id)), {
-    [`stockPorSede.${origen}`]: firebase.firestore.FieldValue.increment(-cantidad),
-    [`stockPorSede.${destino}`]: firebase.firestore.FieldValue.increment(cantidad)
+  batch.set(docM(dbModular, 'stock', String(prod.id)), {
+    [`stockPorSede.${origen}`]: incrementM(-cantidad),
+    [`stockPorSede.${destino}`]: incrementM(cantidad)
   }, { merge: true });
   const _movId = getId();
   const _movData = { id:_movId, tipo:'traslado', desc:`Traslado: ${prod.nombre} x${cantidad} ${prod.unidad} — ${origen} → ${destino}`, monto:0, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: origen };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
   _sincIniciar('traslado_lote', prod.id);
   try {
@@ -11844,7 +11844,7 @@ window.onload = async function() {
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
-        const stockSnap = await fbFS.collection('stock').get();
+        const stockSnap = await getDocsM(collectionM(dbModular, 'stock')); // [SDK modular]
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
@@ -11877,14 +11877,14 @@ window.onload = async function() {
 // ===================== HISTORIAL DE VENTAS =====================
 // ── Fase 2: consulta a ventas/{id} por rango de fecha (colección nueva, sin listener — Sección 9) ──
 async function _fetchVentasRango(desde, hasta) {
-  if (!fbFS) return [];
-  const snap = await fbFS.collection('ventas').where('fecha', '>=', desde).where('fecha', '<=', hasta).get();
+  if (!dbModular) return []; // [SDK modular]
+  const snap = await getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', desde), whereM('fecha', '<=', hasta)));
   return snap.docs.map(d => d.data());
 }
 // ── Fase 4: consulta a movimientos/{id} — solo se usa si el filtro de Caja pide más de 30 días ──
 async function _fetchMovimientosRango(desde, hasta) {
-  if (!fbFS) return [];
-  const snap = await fbFS.collection('movimientos').where('fecha', '>=', desde).where('fecha', '<=', hasta).get();
+  if (!dbModular) return []; // [SDK modular]
+  const snap = await getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', desde), whereM('fecha', '<=', hasta)));
   return snap.docs.map(d => d.data());
 }
 
@@ -12073,7 +12073,7 @@ async function corregirMetodoPago(id) {
   if (!idx || idx < 1 || idx > _metodosPago.length) return;
   const metodoNuevo = _metodosPago[idx-1];
   if (metodoNuevo === metodoViejo) { alert('Es el mismo método, nada que corregir.'); return; }
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   const sede = sedeAdminEfectiva();
   const _corrigeCajaHoy = v.fecha === today() && DB.caja.abierta && DB.caja.fecha === today();
@@ -12085,15 +12085,15 @@ async function corregirMetodoPago(id) {
   }
 
   // Paquete atomico: venta corregida, caja (si aplica) y movimiento viajan juntos.
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('ventas').doc(String(v.id)), { ...v, metodo: metodoNuevo });
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'ventas', String(v.id)), { ...v, metodo: metodoNuevo });
   if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
-    batch.set(fbFS.collection('caja').doc(sede),
-      { ingresosEfectivo: firebase.firestore.FieldValue.increment(_deltaEfectivo) }, { merge: true });
+    batch.set(docM(dbModular, 'caja', sede),
+      { ingresosEfectivo: incrementM(_deltaEfectivo) }, { merge: true });
   }
   const _movId = getId();
   const _movData = { id:_movId, tipo:'info', desc:`Corrección método venta #${v.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
   _sincIniciar('correccion_metodo_lote', v.id);
   try {
@@ -12274,9 +12274,9 @@ async function guardarActualizarVenta() {
     // movimiento viajan juntos en un lote — o se aplica todo, o no se aplica nada. Un
     // reembolso es dinero real saliendo de caja, merece la misma garantia que una venta.
     const _sedeDev = vDB.sedeId || sedeAdminEfectiva();
-    if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
     await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-    const batch = fbFS.batch();
+    const batch = writeBatchM(dbModular);
     const _deltasStock = [];
 
     (vDB.items||[]).forEach(item => {
@@ -12289,8 +12289,8 @@ async function guardarActualizarVenta() {
         }, 0);
         const cantARestituir = Math.max(0, cantOrig - yaDevuelto);
         if (cantARestituir > 0) {
-          batch.set(fbFS.collection('stock').doc(String(prod.id)),
-            { [`stockPorSede.${_sedeDev}`]: firebase.firestore.FieldValue.increment(cantARestituir) }, { merge: true });
+          batch.set(docM(dbModular, 'stock', String(prod.id)),
+            { [`stockPorSede.${_sedeDev}`]: incrementM(cantARestituir) }, { merge: true });
           _deltasStock.push({ prod, delta: cantARestituir });
         }
       }
@@ -12302,11 +12302,11 @@ async function guardarActualizarVenta() {
       desc: `Reembolso anulación venta — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
       monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDev
     };
-    batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+    batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
-    const _cajaUpdate = { egresos: firebase.firestore.FieldValue.increment(montoReembolso) };
-    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = firebase.firestore.FieldValue.increment(montoReembolso);
-    batch.set(fbFS.collection('caja').doc(_sedeDev), _cajaUpdate, { merge: true });
+    const _cajaUpdate = { egresos: incrementM(montoReembolso) };
+    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(montoReembolso);
+    batch.set(docM(dbModular, 'caja', _sedeDev), _cajaUpdate, { merge: true });
 
     const _devolucionEntry = {
       fecha: today(), hora: nowTime(), tipo: 'anulacion',
@@ -12317,7 +12317,7 @@ async function guardarActualizarVenta() {
       }))
     };
     const _vDBActualizada = { ...vDB, devoluciones: [...(vDB.devoluciones||[]), _devolucionEntry], estado: 'anulado', total: 0, fechaAnulacion: today() + ' ' + nowTime() };
-    batch.set(fbFS.collection('ventas').doc(String(vDB.id)), _vDBActualizada);
+    batch.set(docM(dbModular, 'ventas', String(vDB.id)), _vDBActualizada);
 
     _sincIniciar('anulacion_lote', vDB.id);
     try {
@@ -12391,16 +12391,16 @@ async function guardarActualizarVenta() {
 
   // Mismo paquete atomico: stock, venta actualizada, caja y movimiento juntos o nada.
   const _sedeDevP = vDB.sedeId || sedeAdminEfectiva();
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-  const batchP = fbFS.batch();
+  const batchP = writeBatchM(dbModular);
   const _deltasStockP = [];
 
   itemsDevueltos.forEach(dev => {
     const prod = DB.productos.find(p => p.id === dev.prodId);
     if (prod) {
-      batchP.set(fbFS.collection('stock').doc(String(prod.id)),
-        { [`stockPorSede.${_sedeDevP}`]: firebase.firestore.FieldValue.increment(dev.cantDevuelta) }, { merge: true });
+      batchP.set(docM(dbModular, 'stock', String(prod.id)),
+        { [`stockPorSede.${_sedeDevP}`]: incrementM(dev.cantDevuelta) }, { merge: true });
       _deltasStockP.push({ prod, delta: dev.cantDevuelta });
     }
   });
@@ -12422,7 +12422,7 @@ async function guardarActualizarVenta() {
     devoluciones: [...(vDB.devoluciones||[]), _devolucionEntryP],
     total: nuevoTotal, estado: nuevoTotal === 0 ? 'anulado' : 'parcial'
   };
-  batchP.set(fbFS.collection('ventas').doc(String(vDB.id)), _vDBActualizadaP);
+  batchP.set(docM(dbModular, 'ventas', String(vDB.id)), _vDBActualizadaP);
 
   const _movIdP = getId();
   const _movDataP = {
@@ -12430,11 +12430,11 @@ async function guardarActualizarVenta() {
     desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
     monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDevP
   };
-  batchP.set(fbFS.collection('movimientos').doc(String(_movIdP)), _movDataP);
+  batchP.set(docM(dbModular, 'movimientos', String(_movIdP)), _movDataP);
 
-  const _cajaUpdateP = { egresos: firebase.firestore.FieldValue.increment(montoReembolso) };
-  if (metodo === 'Efectivo') _cajaUpdateP.egresosEfectivo = firebase.firestore.FieldValue.increment(montoReembolso);
-  batchP.set(fbFS.collection('caja').doc(_sedeDevP), _cajaUpdateP, { merge: true });
+  const _cajaUpdateP = { egresos: incrementM(montoReembolso) };
+  if (metodo === 'Efectivo') _cajaUpdateP.egresosEfectivo = incrementM(montoReembolso);
+  batchP.set(docM(dbModular, 'caja', _sedeDevP), _cajaUpdateP, { merge: true });
 
   _sincIniciar('devolucion_lote', vDB.id);
   try {
@@ -13244,12 +13244,14 @@ let _tiendaUser = null; // {nombre, tel, dir}
 // isAdmin() sin excepcion; un visitante de la tienda nunca esta autenticado, esa escritura
 // fallaba en silencio). La regla de clientes ahora permite esto especificamente, validado.
 function tndSincronizarClientePublico(cli, esNuevo) {
-  if (!fbFS) return;
+  if (!dbModular) return; // [SDK modular]
   const data = esNuevo
     ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: cli.cumple||'', compras: 0, total: 0, deuda: 0, puntos: 0 }
     : { nombre: cli.nombre, alias: cli.alias };
   _sincIniciar('cliente_publico', cli.id);
-  fbFS.collection('clientes').doc(String(cli.id))[esNuevo ? 'set' : 'set'](data, esNuevo ? {} : { merge: true })
+  // Antes esto seleccionaba entre 'set' y 'set' (los 2 branches eran identicos) — simplificado
+  // de paso, era codigo muerto disfrazado de logica condicional.
+  setDocM(docM(dbModular, 'clientes', String(cli.id)), data, esNuevo ? {} : { merge: true })
     .then(() => _sincTerminar('cliente_publico', cli.id))
     .catch(e => _sincError('cliente_publico', cli.id, e, 'tus datos', true));
 }
@@ -13261,9 +13263,9 @@ async function tndResolverCliente(nombre, tel) {
   const telLimpio = (tel || '').replace(/\s/g, '');
   if (!telLimpio || telLimpio.length < 7) return null;
   let cli = DB.clientes.find(c => (c.tel || '').replace(/\s/g, '') === telLimpio);
-  if (!cli && fbFS) {
+  if (!cli && dbModular) { // [SDK modular]
     try {
-      const snap = await fbFS.collection('clientes').where('tel', '==', telLimpio).limit(1).get();
+      const snap = await getDocsM(queryM(collectionM(dbModular, 'clientes'), whereM('tel', '==', telLimpio), limitM(1)));
       if (!snap.empty) {
         const doc = snap.docs[0];
         cli = _envolverCliente({ id: parseInt(doc.id), ...doc.data() });
@@ -13483,9 +13485,9 @@ function initTienda() {
   }
 
   // Siempre cargar desde Firebase — sin condición de caché para garantizar datos frescos
-  if (fbFS) {
-    fbProdDocRef().get().then(snap => {
-      if (snap.exists) {
+  if (dbModular) { // [SDK modular]
+    getDocM(docM(dbModular, 'aleze', 'db_productos')).then(snap => {
+      if (snap.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snap.data();
         if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
@@ -13493,7 +13495,7 @@ function initTienda() {
         _fbProdCacheTs = Date.now();
       }
       // Fase Offline: stock más fresco, mismo criterio que en el login.
-      return fbFS.collection('stock').get().then(stockSnap => {
+      return getDocsM(collectionM(dbModular, 'stock')).then(stockSnap => {
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
