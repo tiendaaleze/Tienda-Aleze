@@ -1,0 +1,577 @@
+// ===================== FIREBASE — CLOUD FIRESTORE =====================
+// Estrategia anti-quota:
+//   • 1 lectura al iniciar (getDoc) — NO listener permanente sobre toda la DB
+//   • onSnapshot solo en doc 'db' — 1 documento = 1 lectura por cambio externo
+//   • Flag _fbEscribiendo evita el loop escritura→listener→escritura
+//   • Debounce 1200ms agrupa operaciones rápidas en UNA sola escritura
+//   • Toda la DB en 1 documento Firestore → mínimo de operaciones posible
+
+const APP_VERSION = '1.0.1';
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
+  authDomain: "tienda-aleze.firebaseapp.com",
+  projectId: "tienda-aleze",
+  storageBucket: "tienda-aleze.firebasestorage.app",
+  messagingSenderId: "231416120915",
+  appId: "1:231416120915:web:749a1a6648d0006faf68a6"
+};
+
+let fbApp = null;
+let fbFS = null;          // Firestore instance
+let _fbEscribiendo = false; // Flag anti-loop: true mientras este dispositivo escribe
+let _fbSaveTimer = null;
+let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ventana debounce
+let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
+let fbAuth = null; // Firebase Authentication
+let fbFunctions = null; // Cloud Functions — pasarela de pago, dormida hasta activarse
+
+// ── SDK modular — migración progresiva, paso 1 ──────────────────────────────
+// Estas instancias apuntan a la MISMA app/proyecto que fbApp/fbFS de arriba (Compat) —
+// no son una segunda conexión, es la misma, vista con la sintaxis nueva. Empiezan en null
+// y se completan dentro de iniciarFirebase(), después de que Compat ya inicializó todo.
+// Mientras ninguna función use dbModular/authModular/etc., el sistema entero sigue
+// funcionando exactamente igual que antes — esto no reemplaza nada todavía, solo
+// deja el camino tendido para migrar función por función.
+let dbModular = null;
+let authModular = null;
+let storageModular = null;
+let messagingModular = null;
+// Alias cortos para las funciones modulares de Firestore — se asignan dentro de
+// iniciarFirebase() una vez que window.__fbModular esta confirmado disponible. Evita repetir
+// "window.__fbModular.firestore.X" en cada uno de los puntos de contacto que se van migrando.
+let docM, setDocM, getDocM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
+    queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
+    serverTimestampM, deleteFieldM, onSnapshotM;
+
+// ══════════════════════════════════════════════════════════════════════════
+// Visibilidad real de sincronización — camino completo, no un parche.
+//
+// El problema que resuelve: con persistencia offline activada, Firestore acepta
+// cada escritura en una cola local y la reintenta solo cuando vuelve la señal —
+// eso significa que, si NO hay conexión, la Promise de .set()/.update() queda
+// simplemente PENDIENTE (ni resuelta ni rechazada), no falla. Por eso un
+// .catch() nunca debería tratarse como "seguro, ya se resuelve solo" ni como
+// "listo, ignoralo" — hay que distinguir 2 situaciones muy distintas:
+//   1. Sigue pendiente (sin señal, o el servidor tarda) → normal, se resuelve
+//      solo, no amerita interrumpir a nadie. Se refleja en un badge chico.
+//   2. Falló de verdad (permisos, datos invalidos, cuota) → NUNCA se va a
+//      resolver reintentando — el cajero tiene que enterarse ya, con una
+//      alerta real, no una línea en la consola que nadie lee.
+// ══════════════════════════════════════════════════════════════════════════
+let _pendingSyncCount = 0;
+let _pendingSyncDetalle = []; // [{tipo, id}] — para depuración si hace falta
+
+const _ERRORES_PERMANENTES = new Set([
+  'permission-denied', 'invalid-argument', 'not-found', 'resource-exhausted',
+  'failed-precondition', 'out-of-range', 'unauthenticated', 'already-exists'
+]);
+function _esErrorPermanente(e) {
+  return !!(e && _ERRORES_PERMANENTES.has(e.code));
+}
+
+// ── Diagnóstico real: cuenta cuántas veces se dispara cada tipo por ventana de 5s. Si algo
+// se repite sospechosamente (>10 veces en 5s, mucho más que lo que una operación normal
+// generaría), lo grita en consola con el tipo/id exactos — así la próxima vez que el punto
+// parpadee, con la consola abierta (F12) se ve EXACTAMENTE qué lo está disparando, en vez
+// de seguir adivinando desde el código estático.
+let _sincDiagVentana = [];
+function _sincDiagRegistrar(tipo, id) {
+  const ahora = Date.now();
+  _sincDiagVentana.push({ tipo, id, ts: ahora });
+  _sincDiagVentana = _sincDiagVentana.filter(x => ahora - x.ts < 5000);
+  const delMismoTipo = _sincDiagVentana.filter(x => x.tipo === tipo);
+  if (delMismoTipo.length === 11) { // recien cruza el umbral, avisa una sola vez por racha
+    console.warn(`⚠️ [Sync-Diag] "${tipo}" se disparó ${delMismoTipo.length} veces en 5 segundos — esto es sospechoso, no es una venta normal. IDs recientes:`, delMismoTipo.map(x => x.id));
+  }
+}
+
+function _sincIniciar(tipo, id) {
+  _sincDiagRegistrar(tipo, id);
+  _pendingSyncCount++;
+  _pendingSyncDetalle.push({ tipo, id, ts: Date.now() });
+  _actualizarBadgeSync();
+}
+function _sincTerminar(tipo, id) {
+  _pendingSyncCount = Math.max(0, _pendingSyncCount - 1);
+  const idx = _pendingSyncDetalle.findIndex(x => x.tipo === tipo && x.id === id);
+  if (idx >= 0) _pendingSyncDetalle.splice(idx, 1);
+  _actualizarBadgeSync();
+}
+// descripcionUsuario: texto legible para el cajero ("la venta", "el fiado") — solo se usa
+// si el error es permanente, para que la alerta diga qué NO se guardó, no un código técnico solo.
+function _sincError(tipo, id, e, descripcionUsuario, contextoPublico) {
+  _sincTerminar(tipo, id);
+  console.warn(`[Sync] ${tipo}/${id}:`, e);
+  if (_esErrorPermanente(e)) {
+    const msg = contextoPublico
+      ? `⚠️ No se pudo guardar ${descripcionUsuario || tipo}. Intenta de nuevo en unos minutos.`
+      : `⚠️ No se pudo guardar ${descripcionUsuario || tipo}.
+
+Este error no se resuelve solo reintentando — avisa al administrador.
+Código: ${e.code || e.message || 'desconocido'}`;
+    alert(msg);
+  }
+  // Si NO es permanente (típico: sin señal), Firestore ya lo tiene en su cola offline y lo
+  // reintenta solo — el badge ya venía reflejando "pendiente" desde _sincIniciar, no hace
+  // falta nada más acá.
+}
+
+let _syncBadgeHideTimer = null;
+// Red de seguridad: con conexión activa, ningún pendiente debería tardar más de 15s en
+// confirmarse o fallar. Si algo queda atascado ahí (mismo patrón que el bug de _fbEscribiendo
+// que ya encontramos con las promociones), esto lo destraba solo y deja rastro en consola en
+// vez de dejar el indicador prendido para siempre sin explicación.
+setInterval(() => {
+  if (!_pendingSyncDetalle.length) return;
+  const ahora = Date.now();
+  const atascados = _pendingSyncDetalle.filter(x => (ahora - x.ts) > 15000);
+  if (atascados.length) {
+    console.warn('[Sync] Pendientes atascados más de 15s, limpiando y dejando rastro:', atascados);
+    atascados.forEach(x => {
+      const idx = _pendingSyncDetalle.indexOf(x);
+      if (idx >= 0) _pendingSyncDetalle.splice(idx, 1);
+    });
+    _pendingSyncCount = Math.max(0, _pendingSyncCount - atascados.length);
+    _actualizarBadgeSync();
+  }
+}, 5000);
+
+let _sincTraceUltimo = 0;
+function _actualizarBadgeSync() {
+  // Diagnostico definitivo: un rastro completo (que funcion llamo a que funcion) cada vez
+  // que esto se dispara, pero como maximo cada 3 segundos para no saturar la consola.
+  // Esto va a mostrar EXACTAMENTE quien esta disparando esto, sin necesidad de seguir
+  // adivinando desde el codigo estatico.
+  if (_pendingSyncCount > 0 && Date.now() - _sincTraceUltimo > 3000) {
+    _sincTraceUltimo = Date.now();
+    console.trace('🔍 [Sync-Trace] _actualizarBadgeSync disparado, pendientes:', _pendingSyncCount, _pendingSyncDetalle.map(x=>x.tipo+'/'+x.id));
+  }
+  // Con la causa real corregida (App Check/reCAPTCHA), esto ya no debería quedar trabado —
+  // vuelve a mostrar el número, para que un vendedor entienda qué es de un vistazo.
+  ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (_pendingSyncCount > 0) {
+      clearTimeout(_syncBadgeHideTimer);
+      el.style.display = 'inline-flex';
+      el.textContent = '↻ ' + _pendingSyncCount;
+      el.title = _pendingSyncCount + ' cambio(s) guardados en este equipo, sincronizando con la nube...';
+    } else {
+      clearTimeout(_syncBadgeHideTimer);
+      _syncBadgeHideTimer = setTimeout(() => {
+        if (_pendingSyncCount <= 0) el.style.display = 'none';
+      }, 700);
+    }
+  });
+}
+let fbStorage = null;     // Firebase Storage — imágenes de productos  
+let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
+let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
+let _fbCajaUnsub = null; // Listener dedicado a la colección caja — unica fuente de verdad
+
+// ── Inicializar Firestore ──
+// RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
+// Si aún no tienes clave, usa 'debug' temporalmente solo en localhost
+const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
+
+// VAPID_KEY: clave publica para notificaciones push (Firebase Console > Configuracion del
+// proyecto > Cloud Messaging > Certificados push web > "Generar par de claves"). Es publica
+// a proposito, va en el codigo igual que RECAPTCHA_SITE_KEY. Mientras diga 'PENDIENTE', las
+// notificaciones push quedan dormidas — no rompe nada, solo no se activan hasta pegarla acá.
+const VAPID_KEY = 'BBWLZJaIhkWmkeYT9B2GG9D0lK1uljNgCA7Jkelm8I06o6269EO-uywu-FoH4iicBksg5i1vSgeWhrL9l87bNng';
+
+async function iniciarFirebase() {
+  try {
+    fbApp = firebase.initializeApp(FIREBASE_CONFIG);
+
+    // ── App Check (reCAPTCHA v3) — SDK Compat syntax ────────────────────────
+    // firebase-app-check-compat.js expone firebase.appCheck() directamente
+    // El provider se pasa como objeto {siteKey} — NO como clase constructora
+    try {
+     const appCheckInstance = firebase.appCheck(fbApp);
+appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
+      console.log('[AppCheck] activado correctamente');
+      // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
+      // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
+      // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
+      // arrancar. Esa espera manual, en la práctica, agregaba varios segundos GARANTIZADOS a
+      // cada login sin necesidad real, y coincidía con las fallas de reconciliación
+      // reportadas ("no se pudo reconciliar caja/datos/gastos frescos") — pedir un token de
+      // más, a mano, justo antes de la ráfaga real de lecturas, competía por el mismo recurso
+      // en vez de ayudar. Si el primerísimo pedido sale sin token adjunto todavía, el manejo
+      // ya construido (Promise.allSettled en el login) lo absorbe sin romper nada.
+    } catch(acErr) {
+      console.warn('[AppCheck] no activado — la app sigue funcionando:', acErr.message);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+   fbFS  = firebase.firestore();
+      // fbFS ya no hace ninguna operación real de Firestore — la migración completa al SDK
+      // modular movió todo (las 157 referencias originales) a dbModular. Por eso ya no tiene
+      // enablePersistence() acá — tenerlo generaba una segunda coordinación multi-pestaña vía
+      // IndexedDB compitiendo con la de dbModular, causando permission-denied y demoras de
+      // varios minutos (ya corregido, quitando esa llamada).
+      fbAuth = firebase.auth();
+      fbStorage = firebase.storage();
+      // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
+      // Y las Cloud Functions ya fueron desplegadas manualmente. Si no se desplegaron,
+      // la llamada falla con un error claro (manejado en tndPagarEnLinea), no en silencio.
+      try { fbFunctions = firebase.functions(); } catch(e) { fbFunctions = null; }
+
+      // ── SDK modular — inicializar su PROPIA conexión al mismo proyecto ─────────
+      // CORRECCION: getApp() fallaba con "No Firebase App '[DEFAULT]' has been created" —
+      // Compat y el modulo ES son 2 paquetes cargados por separado desde el CDN (uno como
+      // script clasico, otro como modulo), cada uno con su PROPIO registro interno de apps
+      // en memoria — no comparten estado aunque sean la "misma version". La solucion real es
+      // que el lado modular inicialice SU PROPIA conexion con el mismo FIREBASE_CONFIG —
+      // apunta al mismo proyecto/base de datos real, son 2 conexiones tecnicas distintas a
+      // la misma fuente de verdad, no 2 proyectos distintos. Si esto falla, el sistema entero
+      // sigue funcionando igual por Compat — esto es un agregado, nunca un reemplazo.
+      try {
+        if (window.__fbModular) {
+          const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
+          // CRITICO: persistentMultipleTabManager() (coordinación entre pestañas vía
+          // IndexedDB) tiene problemas conocidos y documentados en navegadores móviles —
+          // especialmente Safari iOS y los WebView de apps instaladas — donde la negociación
+          // de "qué pestaña tiene el control" puede colgarse por minutos enteros, exactamente
+          // el patrón reportado: escritorio rápido, móvil/PWA demorando mas de un minuto. En
+          // un teléfono casi nunca hay 2 pestañas reales de la misma sesión compitiendo, así
+          // que el beneficio es minimo comparado con el riesgo. Se usa persistencia de una
+          // sola pestaña — sigue funcionando sin señal igual, solo que si alguien abre 2
+          // pestañas del sistema a la vez en la misma compu, la segunda cae al respaldo sin
+          // persistencia de mas abajo (no rompe nada, solo pierde cache offline en esa pestaña
+          // extra puntual).
+          try {
+            dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
+              localCache: window.__fbModular.firestore.persistentLocalCache({})
+            });
+          } catch (persistErr) {
+            // Si la persistencia no se puede activar (ej. navegador sin IndexedDB, modo
+            // incognito en algunos navegadores, u otra pestaña ya tiene la persistencia
+            // tomada), se sigue igual con la conexión simple — sin offline en esta pestaña
+            // puntual, pero sin romper el resto del sistema.
+            console.warn('[SDK modular] No se pudo activar persistencia offline, sigue sin ella:', persistErr.message);
+            dbModular = window.__fbModular.firestore.getFirestore(appModular);
+          }
+          authModular = window.__fbModular.auth.getAuth(appModular);
+          storageModular = window.__fbModular.storage.getStorage(appModular);
+          ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
+             updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
+             where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
+             runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
+             deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
+          console.log('[SDK modular] Conexión propia inicializada con persistencia offline — listo para empezar a migrar funciones.');
+        } else {
+          console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
+        }
+      } catch(modErr) {
+        console.warn('[SDK modular] No se pudo inicializar (el sistema sigue por Compat sin problema):', modErr.message);
+      }
+
+      return true;
+  } catch(e) {
+    console.error('Firebase init error:', e);
+    return false;
+  }
+}
+
+// ── Referencia al documento DB_EXT (sueldos, gastos, capital, niveles, etc.) ──
+function fbGuardarExt() {
+  if (!dbModular) return; // [SDK modular]
+  clearTimeout(window._fbExtTimer);
+  window._fbExtTimer = setTimeout(() => {
+    _fbEscribiendo = true;
+    _sincIniciar('db_ext', 'db_ext');
+    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(JSON.stringify(DB_EXT)))
+      .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
+      .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'gastos/capital/configuración extendida'); });
+  }, 1200);
+}
+
+// ── Configuración: documento propio, separado de aleze/db ──────────────────────────────────
+// Antes vivía como un campo más dentro de aleze/db, guardado y cargado junto con
+// ventas/clientes/etc — misma duplicidad que ya se corrigió para esos 6 campos. config es un
+// objeto único (no una lista de registros), así que le alcanza con su propio documento, no
+// necesita una colección con un documento por registro como ventas o clientes.
+function fbGuardarConfig() {
+  if (!dbModular) return; // [SDK modular]
+  clearTimeout(window._fbConfigTimer);
+  window._fbConfigTimer = setTimeout(() => {
+    _sincIniciar('config', 'config');
+    setDocM(docM(dbModular, 'aleze', 'config'), JSON.parse(JSON.stringify(DB.config || {})))
+      .then(() => _sincTerminar('config', 'config'))
+      .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
+  }, 1200);
+}
+
+// ── Guardar operaciones (excluye productos y categorias) ──
+// Debounce 1200ms — agrupa cambios rápidos en 1 sola escritura
+let _fbSaveTimerProd = null;
+let _fbWritingDB = false;   // Previene escrituras paralelas a aleze/db
+let _fbWritingProd = false; // Previene escrituras paralelas a aleze/db_productos
+// CRITICO: aleze/db quedo completamente vacio de contenido real — cada campo que tenia
+// (ventas, clientes, fiados, mermas, movimientos, historialVentas, config, promociones,
+// proveedores) ya fue migrado a su propia coleccion/documento, y lo unico que quedaba
+// (payload.cajas) era un espejo que nadie leia desde que caja tiene su propio listener
+// dedicado. Ya no hay ninguna razon para seguir escribiendo este documento — se elimina la
+// escritura por completo. Esta funcion sigue existiendo (la llaman decenas de funciones en
+// todo el archivo) para no tener que tocar cada una de ellas — ahora solo hace la poda de
+// memoria local (que sigue siendo util, independiente de si se persiste o no) y dispara el
+// guardado de configuración, que sí sigue siendo necesario.
+function fbGuardar() {
+  // Poda de memoria local — el historial completo de cada uno ya vive en su propia colección
+  // (ventas/{id}, movimientos/{id}, fiados/{id}); esto solo evita que los arrays en memoria
+  // crezcan sin límite durante una sesión larga, sin persistir el recorte en ningún lado.
+  if (DB.historialVentas && DB.historialVentas.length) {
+    const _limitePoda = new Date(); _limitePoda.setDate(_limitePoda.getDate() - 30);
+    const _limitePodaStr = _limitePoda.toISOString().split('T')[0];
+    DB.historialVentas = DB.historialVentas.filter(v => v.fecha >= _limitePodaStr);
+  }
+  if (DB.movimientos && DB.movimientos.length) {
+    const _limitePodaMov = new Date(); _limitePodaMov.setDate(_limitePodaMov.getDate() - 30);
+    const _limitePodaMovStr = _limitePodaMov.toISOString().split('T')[0];
+    DB.movimientos = DB.movimientos.filter(m => m.fecha >= _limitePodaMovStr);
+  }
+  if (DB.fiados && DB.fiados.length) {
+    const _limitePodaFiados = new Date(); _limitePodaFiados.setDate(_limitePodaFiados.getDate() - 90);
+    const _limitePodaFiadosStr = _limitePodaFiados.toISOString().split('T')[0];
+    DB.fiados = DB.fiados.filter(f => (f.total - f.pagado) > 0.01 || f.fecha >= _limitePodaFiadosStr);
+  }
+  fbGuardarConfig();
+}
+
+// ── Guardar solo productos y categorias en documento separado ──
+// Se llama únicamente cuando el admin edita inventario/categorias
+function fbGuardarProductos() {
+  if (!dbModular) return; // [SDK modular]
+  if (!fbAuth || !fbAuth.currentUser) return;
+  _fbLastWriteProdTs = Date.now();
+  clearTimeout(_fbSaveTimerProd);
+ _fbSaveTimerProd = setTimeout(function _tryGuardarProd() {
+    if (_fbWritingProd) { _fbSaveTimerProd = setTimeout(_tryGuardarProd, 500); return; }
+    _fbEscribiendo = true;
+    _fbWritingProd = true;
+    // CRITICO: usuariosStaff SI tiene que estar acá, con email incluido — el propio proceso
+    // de login lo necesita ANTES de autenticar (el selector de usuario se llena desde acá, y
+    // doLogin() usa el email para el signInWithEmailAndPassword real). Una ronda anterior lo
+    // sacó pensando que era un dato sensible innecesario en un documento público, sin darse
+    // cuenta de que el login entero depende de que esté ahí — eso dejó el selector vacío y el
+    // login roto por completo. El email de un cajero, solo, no es una credencial (todavía
+    // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
+    // exposición que cualquier login por correo público en cualquier sistema.
+    const _configPublico = {
+      nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
+      whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
+      requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
+      pasarelaPago: DB.config?.pasarelaPago,
+      usuariosStaff: DB.config?.usuariosStaff || []
+    };
+    const payload = {
+      productos:  JSON.parse(JSON.stringify(DB.productos)),
+      categorias: JSON.parse(JSON.stringify(DB.categorias)),
+      config:     JSON.parse(JSON.stringify(_configPublico))
+    };
+    _sincIniciar('db_productos', 'db_productos');
+    setDocM(docM(dbModular, 'aleze', 'db_productos'), payload) // [SDK modular]
+      .then(() => {
+        _fbProdCacheTs = Date.now(); // actualizar timestamp caché
+        _fbWritingProd = false;
+        setTimeout(() => { _fbEscribiendo = false; }, 300);
+        _sincTerminar('db_productos', 'db_productos');
+      })
+      .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; _sincError('db_productos', 'db_productos', e, 'el catálogo de productos y el stock'); });
+  }, 1200);
+}
+
+
+// ── Escuchar cambios de OTROS dispositivos ──
+// doc 'db' → operaciones  |  doc 'db_productos' → catálogo
+let _fbProdCacheTs = 0; // timestamp última carga de db_productos
+function fbEscuchar() {
+  if (!fbFS) return;
+  // CRITICO: el listener de aleze/db se eliminó por completo — desde que fbGuardar() ya no
+  // escribe nada ahí (todo migrado a sus propias colecciones/documentos), nada en operación
+  // normal vuelve a tocar ese documento, así que este listener nunca se disparaba de verdad.
+  // El listener de db_productos (catálogo) sigue siendo necesario y activo, abajo.
+
+  // Listener db_productos (catálogo — solo si otro dispositivo admin cambia inventario)
+  onSnapshotM(docM(dbModular, 'aleze', 'db_productos'), snapshot => { // [SDK modular]
+    if (_fbEscribiendo) return;
+    if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
+    if (Date.now() - _fbLastWriteProdTs < 2000) return;
+    if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
+    const data = snapshot.data();
+    if (!data) return;
+    if (data.productos)  DB.productos  = data.productos;
+    if (data.categorias) DB.categorias = data.categorias;
+    if (data.config)     DB.config     = { ...DB.config, ...data.config };
+    _fbProdCacheTs = Date.now();
+    try { renderDashboard(); } catch(e){}
+    try { updateAlertCount(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try {
+  if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
+      if (pageId === 'inventario') { filterInventario(); }
+      if (pageId === 'categorias') { renderCategorias(); }
+    } catch(e){}
+  }, err => { console.warn('Firestore db_productos listener error:', err.code); });
+
+  // Listener para DB_EXT (sueldos, gastos, capital, niveles, navidad)
+  onSnapshotM(docM(dbModular, 'aleze', 'db_ext'), snapshot => { // [SDK modular]
+    if (_fbEscribiendo) return;
+    if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
+    if (Date.now() - _fbLastWriteTs < 2000) return;
+    if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
+    const ext = snapshot.data();
+    if (!ext) return;
+    Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
+    try { renderDashboard(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try {
+      if (pageId === 'gastos')        { renderGastos(); }
+      if (pageId === 'capital')       { renderCapital(); }
+      if (pageId === 'frecuentes')    { renderFrecuentes(); }
+      if (pageId === 'configuracion') { renderConfiguracion(); }
+      if (pageId === 'reportes')      { generarReporte(); }
+    } catch(e){}
+  }, err => { console.warn('Firestore db_ext listener error:', err.code); });
+}
+
+// ── Listener dedicado a la colección caja — única fuente de verdad para DB._cajas ──────────
+// Escucha las 2 sedes a la vez. Cualquier cambio en cualquier dispositivo (o el propio,
+// una vez confirmado por el servidor) se refleja acá, en tiempo real, en cualquier otro
+// dispositivo con la app abierta — sin necesitar recargar ni navegar. Reemplaza por completo
+// la dependencia que antes existía en el documento combinado aleze/db.
+function fbEscucharCaja() {
+  if (!dbModular) return; // [SDK modular]
+  if (_fbCajaUnsub) { _fbCajaUnsub(); _fbCajaUnsub = null; }
+  _fbCajaUnsub = onSnapshotM(collectionM(dbModular, 'caja'), snapshot => {
+    let huboCambioReal = false;
+    snapshot.forEach(doc => {
+      // Ignorar el eco optimista local (todavía no confirmado por el servidor) — esperar
+      // la confirmación real evita parpadeos y evita reaccionar dos veces al mismo cambio.
+      if (doc.metadata.hasPendingWrites) return;
+      DB._cajas[doc.id] = doc.data();
+      huboCambioReal = true;
+    });
+    if (!huboCambioReal) return;
+    try { renderDashboard(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    if (pageId === 'caja') { try { renderCaja(); } catch(e){} }
+  }, err => { console.warn('Firestore listener error (caja):', err.code); });
+}
+
+// ── Patch DB: interceptar asignaciones de array para auto-guardar ──
+// Solo las colecciones que el usuario modifica activamente
+// Columnas que van al doc 'db' (operaciones)
+// caja NO va aquí — tiene su propio getter/setter por sede, definido junto a la declaración de DB.
+// CRITICO: ventas/clientes/fiados/mermas/movimientos/promociones YA NO necesitan este
+// interceptor — tienen su propia coleccion con escritura explicita en cada funcion, no
+// dependen de que una reasignacion de array dispare fbGuardar() por su cuenta. Solo queda
+// proveedores, todavia sin migrar. inventariosMensuales era un campo muerto (la data real
+// siempre vivio en DB_EXT.inventariosMensuales, con su propio documento) — eliminado.
+const _fbPatchColsOp   = ['proveedores'];
+// Columnas que van al doc 'db_productos' (catálogo)
+const _fbPatchColsProd = ['productos','categorias'];
+
+function fbPatchDB() {
+  // Ensure new fields exist for users upgrading from older versions
+  if (!DB.config) DB.config = {};
+  if (DB.config.montoAperturaAuto === undefined) DB.config.montoAperturaAuto = 0;
+  // Migración/respaldo: de FIREBASE_USERS (fijo en código) a DB.config.usuariosStaff (editable
+  // desde Configuración) — se dispara tambien si el array llega vacio desde el servidor por
+  // cualquier motivo, no solo la primera vez, asi el login nunca queda sin nadie para elegir.
+  if (!DB.config.usuariosStaff || DB.config.usuariosStaff.length === 0) {
+    const _rolesLegado = { 'Aleze': 'admin', 'Aleze I': 'cajero', 'Aleze II': 'cajero', 'Aleze III': 'cajero' };
+    const _sedesLegado = { 'Aleze III': 'Tienda Aleze II' }; // el resto cae en 'principal' por defecto
+    DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
+      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: _sedesLegado[nombre] || 'principal'
+    }));
+  } else {
+    // CRITICO: migracion real de los NOMBRES YA GUARDADOS en Firestore — el respaldo de arriba
+    // (FIREBASE_USERS) ya tiene los nombres enmascarados nuevos, pero eso NO cambia lo que ya
+    // esta persistido en la coleccion real. Si el dato real trae el nombre viejo (email
+    // conocido, nombre distinto al esperado), se corrige acá Y se guarda de vuelta — sin esto,
+    // cada vez que la lectura real tenia exito (a diferencia de cuando fallaba y caia al
+    // respaldo) el selector mostraba el nombre real viejo en vez del enmascarado, exactamente
+    // la inconsistencia reportada.
+    const _nombreNuevoPorEmail = {};
+    Object.keys(FIREBASE_USERS).forEach(nombreNuevo => { _nombreNuevoPorEmail[FIREBASE_USERS[nombreNuevo]] = nombreNuevo; });
+    let _huboMigracion = false;
+    DB.config.usuariosStaff.forEach(u => {
+      const nombreNuevo = _nombreNuevoPorEmail[u.email];
+      if (nombreNuevo && u.nombre !== nombreNuevo) {
+        u.nombre = nombreNuevo;
+        _huboMigracion = true;
+      }
+    });
+    if (_huboMigracion) {
+      console.warn('[Migración] Nombres de usuariosStaff actualizados al esquema enmascarado — guardando de vuelta.');
+      try { fbGuardarConfig(); } catch(e) {}
+      try { fbGuardarProductos(); } catch(e) {}
+    }
+  }
+  // CRITICO: causa raiz real del "saldo heredado S/0.00" persistente incluso con lectura
+  // garantizada por transaccion — esta linea, sin proteccion, escribia directo al servidor
+  // (via el Proxy) si algun documento de caja de pruebas anteriores no tenia el campo fecha,
+  // pisando la fecha real con un string vacio ANTES de que cualquier otra logica corriera.
+  if (DB.caja.fecha === undefined || DB.caja.fecha === null) DB.caja.fecha = '';
+  
+  if (!DB.historialVentas) DB.historialVentas = [];
+  // Migrate DB.ventas into historialVentas if historialVentas is empty but ventas has data
+  if (DB.historialVentas.length === 0 && DB.ventas && DB.ventas.length > 0) {
+    DB.historialVentas = DB.ventas.map(v => ({
+      ...v,
+      origen: v.origen || 'pos',
+      estado: v.estado || 'completado',
+      estadoStock: 'descontado'
+    }));
+  }
+  _fbPatchColsOp.forEach(col => {
+    let _val = DB[col];
+    Object.defineProperty(DB, col, {
+      get() { return _val; },
+      set(v)  {
+        _val = v;
+        // Nunca guardar arrays vacíos — protege contra sobreescritura accidental
+        if (Array.isArray(v) && v.length === 0) return;
+        // CAUSA REAL del badge trabado: fbGuardar() poda historialVentas/movimientos
+        // reasignándolos (DB.historialVentas = DB.historialVentas.filter(...)) — .filter()
+        // siempre crea un array nuevo, así que esa reasignación disparaba este mismo set()
+        // de nuevo, que volvía a llamar fbGuardar(), que volvía a podar, sin parar nunca.
+        // Si ya hay un guardado en curso, no hace falta encadenar otro — el que está
+        // corriendo ya va a incluir este cambio.
+        if (_fbEscribiendo) return;
+        fbGuardar();
+      },
+      configurable: true
+    });
+  });
+  _fbPatchColsProd.forEach(col => {
+    let _val = DB[col];
+    Object.defineProperty(DB, col, {
+      get() { return _val; },
+      set(v)  {
+        _val = v;
+        if (Array.isArray(v) && v.length === 0) return;
+        // Misma protección preventiva que en _fbPatchColsOp — si fbGuardarProductos() alguna
+        // vez reasigna productos/categorias (poda, etc.), esto evita el mismo ciclo infinito.
+        if (_fbEscribiendo) return;
+        fbGuardarProductos();
+      },
+      configurable: true
+    });
+  });
+}
+
+function aplicarNombreNegocio() {
+  const nombre = (DB.config && DB.config.nombre) || 'Tienda Aleze';
+  document.title = nombre;
+  const el1 = document.getElementById('brand-nombre-1'); if (el1) el1.textContent = nombre;
+  const el2 = document.getElementById('brand-nombre-2'); if (el2) el2.textContent = nombre;
+  const el3 = document.getElementById('header-nombre');  if (el3) el3.textContent = nombre;
+}
+
