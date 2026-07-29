@@ -187,20 +187,15 @@ if (_esIOS()) {
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 
 <!-- ══════════════════════════════════════════════════════════════════════
-     MIGRACIÓN SDK MODULAR — PASO 1 de la migración planeada.
-     Este bloque NO reemplaza nada del Compat de arriba — conviven. El
-     Compat v10.12.0 ya está construido internamente sobre el SDK modular,
-     así que ambos apuntan a la MISMA conexión real (mismo proyecto, misma
-     sesión), sin duplicar ni inicializar dos veces. Este script solo
-     EXPONE las funciones modulares en window.__fbModular para que, función
-     por función, el código pueda ir migrando de la sintaxis vieja
-     (fbFS.collection('x').doc('y').set(z)) a la nueva
-     (setDoc(doc(dbModular,'x','y'), z)) sin romper nada de lo que ya
-     funciona con Compat mientras se migra.
-     PRUEBA MANUAL para este paso específico: abrir la consola del
-     navegador (F12) y confirmar que NO aparece ningún error 404 ni
-     "Failed to load module script" — si aparece, avisame el error exacto
-     antes de seguir.
+     MIGRACIÓN SDK MODULAR — completa. Firestore migrado al 100% (las 157
+     referencias originales a fbFS.collection()/batch()/runTransaction() ya
+     usan la sintaxis modular: setDoc(doc(dbModular,'x','y'), z) en vez de
+     fbFS.collection('x').doc('y').set(z)). El Compat de arriba se mantiene
+     cargado únicamente por Auth/Storage/Functions/Messaging, que quedaron
+     fuera de esta migración específica — ambos SDK apuntan a la MISMA
+     conexión real (mismo proyecto, misma sesión), sin duplicar ni
+     inicializar dos veces. Este script expone las funciones modulares en
+     window.__fbModular, usadas en todo punto de contacto con Firestore.
      ══════════════════════════════════════════════════════════════════════ -->
 <script type="module">
   import { initializeApp as initializeAppModular } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -1440,7 +1435,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.07.28-caja-sinproxy</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.07.29-sdk-modular</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
