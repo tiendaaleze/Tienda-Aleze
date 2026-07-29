@@ -11498,13 +11498,17 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
     // ────────────────────────────────────────────────────────────────────────
 
    fbFS  = firebase.firestore();
-      // Fase Offline: cola local de escrituras + cache — sin esto, las escrituras fallan de inmediato
-      // sin señal en vez de encolarse y aplicarse solas al reconectar. No bloqueante si el navegador no lo soporta.
-      try {
-        fbFS.enablePersistence({ synchronizeTabs: true }).catch(e => {
-          console.warn('[Offline] Persistencia local no activada:', e.code || e.message);
-        });
-      } catch(e) { console.warn('[Offline] enablePersistence no disponible:', e); }
+      // CRITICO: fbFS ya no hace NINGUNA operacion real de Firestore — la migracion completa
+      // al SDK modular movio absolutamente todo (las 157 referencias originales) a dbModular,
+      // que tiene su PROPIA persistencia offline multi-pestaña (mas abajo, con
+      // initializeFirestore + persistentLocalCache). Tener 2 conexiones separadas, cada una
+      // con su propio mecanismo de coordinacion multi-pestaña vía IndexedDB, compitiendo por
+      // el mismo almacenamiento del navegador, es la causa mas probable de los errores
+      // "permission-denied" y las demoras de varios minutos en el login y en la tienda online
+      // que aparecieron justo despues de activarle persistencia a dbModular — confirmado con
+      // rastros extensos de indexeddb_persistence.ts en la consola, consistentes en distintos
+      // navegadores. Se elimina esta llamada por completo: no protege nada real, y probablemente
+      // esta generando la contencion.
       fbAuth = firebase.auth();
       fbStorage = firebase.storage();
       // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
