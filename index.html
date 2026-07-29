@@ -4039,27 +4039,51 @@ async function doLogin() {
 
   if (fbFS) {
     try {
-      // CRITICO: aleze/db ya no se lee acá — quedó completamente vacío de contenido real tras
-      // migrar ventas/clientes/fiados/mermas/movimientos/historialVentas/config/promociones/
-      // proveedores, cada uno a su propia colección/documento. La reconciliación de más abajo
-      // (que trae de las colecciones reales) es ahora la única fuente para todo eso.
-      const [snapProd, snapExt, snapConfig] = await Promise.all([ // [SDK modular]
-        getDocM(docM(dbModular, 'aleze', 'db_productos')),
-        getDocM(docM(dbModular, 'aleze', 'db_ext')),
-        getDocM(docM(dbModular, 'aleze', 'config'))
+      // CRITICO: las 14 lecturas de esta seccion son completamente independientes entre si en
+      // terminos de RED — ninguna necesita el RESULTADO de otra para saber que pedir. Antes
+      // corrian en 5 tandas secuenciales (una esperaba a que la anterior terminara antes de
+      // arrancar) — en wifi esto no se notaba (milisegundos), pero en una red movil con mas
+      // latencia por viaje, 5 saltos secuenciales se acumulan hasta hacerse notar (reportado:
+      // ~20 segundos). Ahora se piden TODAS a la vez con Promise.allSettled — nunca se cae
+      // entera si UNA falla (a diferencia de Promise.all), asi que si por ejemplo gastos da
+      // permission-denied un instante, las otras 13 igual se aplican, mismo comportamiento de
+      // resiliencia que los try/catch separados de antes, ahora en un solo viaje de red. Los
+      // resultados se APLICAN despues en el mismo orden logico de siempre (config -> caja ->
+      // productos -> stock -> reconciliacion -> ext -> gastos) — aplicar en memoria no tiene
+      // costo de red, solo el PEDIDO lo tenia.
+      const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
+      const _resultados = await Promise.allSettled([
+        getDocM(docM(dbModular, 'aleze', 'db_productos')),                                          // 0
+        getDocM(docM(dbModular, 'aleze', 'db_ext')),                                                 // 1
+        getDocM(docM(dbModular, 'aleze', 'config')),                                                 // 2
+        getDocsM(collectionM(dbModular, 'caja')),                                                    // 3
+        getDocsM(collectionM(dbModular, 'stock')),                                                   // 4
+        getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', _limiteReconcilia))),// 5
+        getDocsM(collectionM(dbModular, 'fiados')),        // fiados: todos, nunca deberia faltar    // 6
+        getDocsM(collectionM(dbModular, 'clientes')),      // clientes: todos, nunca deberia faltar  // 7
+        getDocsM(queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _limiteReconcilia))),// 8
+        getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', _limiteReconcilia))), // 9
+        getDocsM(collectionM(dbModular, 'promociones')),                                             // 10
+        getDocsM(collectionM(dbModular, 'proveedores')),                                             // 11
+        getDocsM(collectionM(dbModular, 'boletas')),                                                 // 12
+        getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia)))  // 13
       ]);
+      const _ok = i => _resultados[i].status === 'fulfilled' ? _resultados[i].value : null;
+      const snapProd = _ok(0), snapExt = _ok(1), snapConfig = _ok(2), cajaSnap = _ok(3), stockSnap = _ok(4),
+            ventasSnap = _ok(5), fiadosSnap = _ok(6), clientesSnap = _ok(7), mermasSnap = _ok(8),
+            movimientosSnap = _ok(9), promocionesSnap = _ok(10), proveedoresSnap = _ok(11),
+            boletasSnap = _ok(12), gastosSnap = _ok(13);
 
       // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
-      if (snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
+      if (snapConfig && snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
         DB.config = { ...DB.config, ...snapConfig.data() };
       }
       // Trae la caja real desde su colección dedicada — única fuente de verdad.
-      try {
-        const cajaSnap = await getDocsM(collectionM(dbModular, 'caja'));
+      if (cajaSnap) {
         cajaSnap.forEach(doc => { DB._cajas[doc.id] = doc.data(); });
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar caja fresca:', e); }
+      } else { console.warn('[Offline] No se pudo reconciliar caja fresca'); }
 
-      if (snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
+      if (snapProd && snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snapProd.data();
         if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
@@ -4068,8 +4092,7 @@ async function doLogin() {
       }
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
-      try {
-        const stockSnap = await getDocsM(collectionM(dbModular, 'stock')); // [SDK modular]
+      if (stockSnap) {
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
@@ -4078,7 +4101,7 @@ async function doLogin() {
             prod.stock = stockTotal(prod);
           }
         });
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
+      } else { console.warn('[Offline] No se pudo reconciliar stock fresco'); }
 
       // CRITICO — corrige la causa raiz de perdida real de datos: TODO lo que camposOp carga
       // desde el documento combinado (ventas, clientes, fiados, mermas, movimientos) puede
@@ -4087,20 +4110,7 @@ async function doLogin() {
       // Esto es lo que causo el incidente real de clientes desaparecidos (ventas quedando
       // "Anónimo" porque el cliente referenciado ya no estaba en la lista). Nunca borra nada,
       // solo agrega lo que el documento combinado no tenga.
-      try {
-        const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
-        // [SDK modular] toda la reconciliacion migrada junta, para no mezclar compat y modular
-        // en el mismo Promise.all.
-        const [ventasSnap, fiadosSnap, clientesSnap, mermasSnap, movimientosSnap, promocionesSnap, proveedoresSnap, boletasSnap] = await Promise.all([
-          getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', _limiteReconcilia))),
-          getDocsM(collectionM(dbModular, 'fiados')), // fiados: todos, no solo recientes — uno pendiente de hace meses no debe perderse nunca
-          getDocsM(collectionM(dbModular, 'clientes')), // clientes: todos — un cliente no "vence", nunca deberia faltar
-          getDocsM(queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _limiteReconcilia))),
-          getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', _limiteReconcilia))),
-          getDocsM(collectionM(dbModular, 'promociones')), // promociones: todas — ya no vive en aleze/db, esta es la unica fuente
-          getDocsM(collectionM(dbModular, 'proveedores')), // proveedores: todos — un proveedor no "vence"
-          getDocsM(collectionM(dbModular, 'boletas')) // para reconstruir prov.boletas en memoria (ver mas abajo)
-        ]);
+      if (ventasSnap && fiadosSnap && clientesSnap && mermasSnap && movimientosSnap && promocionesSnap && proveedoresSnap && boletasSnap) {
         if (!DB.historialVentas) DB.historialVentas = [];
         if (!DB.fiados) DB.fiados = [];
         if (!DB.clientes) DB.clientes = [];
@@ -4142,25 +4152,23 @@ async function doLogin() {
         if (_totalReconciliado) {
           console.warn(`[Reconciliación] Recuperados: ${_rVentas} venta(s), ${_rFiados} fiado(s), ${_rClientes} cliente(s), ${_rMermas} merma(s), ${_rMovs} movimiento(s), ${_rPromos} promocion(es), ${_rProvs} proveedor(es) que faltaban en el documento combinado.`);
         }
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar datos frescos:', e); }
+      } else { console.warn('[Offline] No se pudo reconciliar datos frescos (una o mas colecciones)'); }
 
       aplicarNombreNegocio();
 
-      if (snapExt.exists()) { // en modular, exists es un METODO, no una propiedad
+      if (snapExt && snapExt.exists()) { // en modular, exists es un METODO, no una propiedad
         const ext = snapExt.data();
         Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
       }
       // Mismo criterio que ventas/fiados/clientes/mermas/movimientos — gastos vive en un
       // documento separado (db_ext) pero tiene exactamente el mismo riesgo de quedar viejo.
-      try {
-        const _limiteReconciliaGastos = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
-        const gastosSnap = await getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconciliaGastos))); // [SDK modular]
+      if (gastosSnap) {
         if (!DB_EXT.gastos) DB_EXT.gastos = [];
         const _idsGastos = new Set(DB_EXT.gastos.map(g => String(g.id)));
         let _rGastos = 0;
         gastosSnap.forEach(doc => { if (!_idsGastos.has(doc.id)) { DB_EXT.gastos.push(doc.data()); _rGastos++; } });
         if (_rGastos) console.warn(`[Reconciliación] Recuperados ${_rGastos} gasto(s) que faltaban en el documento combinado.`);
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar gastos frescos:', e); }
+      } else { console.warn('[Offline] No se pudo reconciliar gastos frescos'); }
     } catch(e) {
       console.warn('Error cargando datos en login, continuando con caché local:', e.message);
     }
