@@ -4891,16 +4891,16 @@ async function ensureCajaAbierta() {
 
   _ensureCajaAbiertaPromise = (async () => {
     const _sedeECA = sedeAdminEfectiva();
-    const cajaRef = fbFS ? fbFS.collection('caja').doc(_sedeECA) : null;
+    const cajaRef = dbModular ? docM(dbModular, 'caja', _sedeECA) : null; // [SDK modular]
     let _cajaResultado = null;
     let _offline = false;
     let _movApertura = null;
 
-    if (fbFS) {
+    if (dbModular) {
       try {
-        const _r = await fbFS.runTransaction(async (tx) => {
+        const _r = await runTransactionM(dbModular, async (tx) => {
           const snap = await tx.get(cajaRef); // lectura garantizada real, nunca de cache
-          const cajaServidor = snap.exists ? snap.data() : null;
+          const cajaServidor = snap.exists() ? snap.data() : null; // en modular, exists es un METODO
 
           if (cajaServidor && cajaServidor.abierta && cajaServidor.fecha === fechaHoy) {
             return { caja: cajaServidor, mov: null }; // ya esta correctamente abierta, nada que escribir
@@ -4916,7 +4916,7 @@ async function ensureCajaAbierta() {
             inicialEfectivoNuevo = saldoEfectivoAnt;
             const _movCierreId = getId();
             const _movCierre = { id:_movCierreId, tipo:'cierre-auto', desc:'Cierre automático — '+cajaServidor.fecha+' Saldo: '+sol(saldoAnt), monto:saldoAnt, hora:'23:59', fecha:cajaServidor.fecha, sedeId:_sedeECA };
-            tx.set(fbFS.collection('movimientos').doc(String(_movCierreId)), _movCierre);
+            tx.set(docM(dbModular, 'movimientos', String(_movCierreId)), _movCierre);
           } else if (cajaServidor && typeof cajaServidor.saldoFinal === 'number') {
             inicialNuevo = cajaServidor.saldoFinal; // reapertura tras cierre manual: hereda el saldo real
             inicialEfectivoNuevo = (typeof cajaServidor.saldoFinalEfectivo === 'number') ? cajaServidor.saldoFinalEfectivo : cajaServidor.saldoFinal;
@@ -4926,7 +4926,7 @@ async function ensureCajaAbierta() {
           tx.set(cajaRef, cajaNueva);
           const _movAperturaId = getId();
           const _mov = { id:_movAperturaId, tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+')', monto:0, hora:nowTime(), fecha:fechaHoy, sedeId:_sedeECA };
-          tx.set(fbFS.collection('movimientos').doc(String(_movAperturaId)), _mov);
+          tx.set(docM(dbModular, 'movimientos', String(_movAperturaId)), _mov);
           return { caja: cajaNueva, mov: _mov };
         });
         _cajaResultado = _r.caja;
@@ -4959,7 +4959,7 @@ async function ensureCajaAbierta() {
       _movApertura = { id:getId(), tipo:'ingreso', desc:'Apertura automática — '+fechaHoy+' (saldo heredado: '+sol(inicialNuevo)+') [pendiente de confirmar con el servidor]', monto:0, hora:nowTime(), fecha:fechaHoy, sedeId:_sedeECA };
       // Se encola para cuando vuelva la señal — Firestore la aplica sola al reconectar; si el
       // servidor real es distinto, el listener dedicado a caja lo corrige apenas llegue.
-      if (fbFS && cajaRef) cajaRef.set(_cajaResultado, { merge: true }).catch(()=>{});
+      if (dbModular && cajaRef) setDocM(cajaRef, _cajaResultado, { merge: true }).catch(()=>{}); // [SDK modular]
     }
 
     // El estado local recién se aplica DESPUES de que la escritura real terminó (o fallo) —
@@ -8063,7 +8063,7 @@ async function abrirCaja() {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede abrir caja. Podés ver el estado actual, pero no modificarlo.'); return; }
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
   const sede = sedeAdminEfectiva();
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   // CRITICO: runTransaction() en vez de lote — garantiza que la lectura es siempre real del
   // servidor (nunca de cache), igual criterio que ensureCajaAbierta(). Si dos personas abren
@@ -8072,13 +8072,13 @@ async function abrirCaja() {
   let _resultado;
   _sincIniciar('apertura_caja_manual', sede);
   try {
-    _resultado = await fbFS.runTransaction(async (tx) => {
-      const cajaRef = fbFS.collection('caja').doc(sede);
+    _resultado = await runTransactionM(dbModular, async (tx) => {
+      const cajaRef = docM(dbModular, 'caja', sede);
       await tx.get(cajaRef); // lectura formal — garantiza consistencia real con el servidor
       const cajaNueva = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
       tx.set(cajaRef, cajaNueva);
       const _movData = { id:_movId, tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today(), sedeId: sede };
-      tx.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+      tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
       return { cajaNueva, _movData };
     });
     _sincTerminar('apertura_caja_manual', sede);
@@ -8115,7 +8115,7 @@ async function abrirRetiroEfectivo() {
   // calcular "disponible" — si esto se calculaba antes, con la cache local todavia fria,
   // podia bloquear un retiro real diciendo "no hay efectivo" aunque el servidor si lo
   // tuviera. Ahora el monto disponible siempre se calcula con el estado ya confirmado.
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta();
   const disponible = _saldoEfectivoTeorico();
   if (disponible <= 0) { alert('No hay efectivo disponible para retirar.'); return; }
@@ -8126,12 +8126,12 @@ async function abrirRetiroEfectivo() {
 
   // Paquete atomico: el retiro (campo de caja) y su movimiento de auditoria viajan juntos.
   const sede = sedeAdminEfectiva();
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('caja').doc(sede),
-    { retiros: firebase.firestore.FieldValue.increment(monto) }, { merge: true });
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede),
+    { retiros: incrementM(monto) }, { merge: true });
   const _movId = getId();
   const _movData = { id:_movId, tipo:'retiro', desc:`Retiro de efectivo — ${destino}`, monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
   _sincIniciar('retiro_caja_lote', _movId);
   try {
@@ -8173,7 +8173,7 @@ async function confirmarCierreCaja() {
   const contado = parseFloat(document.getElementById('cc-contado').value);
   if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
   const nota = document.getElementById('cc-nota').value.trim();
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   // CRITICO: runTransaction() en vez de lote — el saldo a cerrar se calcula DENTRO de la
   // transaccion, leyendo el estado real del servidor en ese instante (nunca de cache local
@@ -8184,10 +8184,10 @@ async function confirmarCierreCaja() {
   let _resultado;
   _sincIniciar('cierre_caja_manual', sede);
   try {
-    _resultado = await fbFS.runTransaction(async (tx) => {
-      const cajaRef = fbFS.collection('caja').doc(sede);
+    _resultado = await runTransactionM(dbModular, async (tx) => {
+      const cajaRef = docM(dbModular, 'caja', sede);
       const snap = await tx.get(cajaRef);
-      if (!snap.exists) throw new Error('No se encontró la caja de esta sede en el servidor.');
+      if (!snap.exists()) throw new Error('No se encontró la caja de esta sede en el servidor.'); // en modular, exists es un METODO
       const cajaServidor = snap.data();
       const saldo = (cajaServidor.inicial||0) + (cajaServidor.ingresos||0) - (cajaServidor.egresos||0);
       const saldoEfectivo = (cajaServidor.inicialEfectivo ?? cajaServidor.inicial ?? 0) + (cajaServidor.ingresosEfectivo||0) - (cajaServidor.egresosEfectivo||0) - (cajaServidor.retiros||0);
@@ -8197,7 +8197,7 @@ async function confirmarCierreCaja() {
 
       const _movCierreId = getId();
       const _movCierre = { id:_movCierreId, tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today(), sedeId: sede };
-      tx.set(fbFS.collection('movimientos').doc(String(_movCierreId)), _movCierre);
+      tx.set(docM(dbModular, 'movimientos', String(_movCierreId)), _movCierre);
 
       let _movArqueo = null;
       if (diff !== 0) {
@@ -8207,7 +8207,7 @@ async function confirmarCierreCaja() {
           desc: `Arqueo — esperado ${sol(saldoEfectivo)}, contado ${sol(contado)} (${diff>0?'sobrante':'faltante'} ${sol(Math.abs(diff))})${nota?' — '+nota:''}`,
           monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede
         };
-        tx.set(fbFS.collection('movimientos').doc(String(_movArqueoId)), _movArqueo);
+        tx.set(docM(dbModular, 'movimientos', String(_movArqueoId)), _movArqueo);
       }
       return { saldo, saldoEfectivo, _movCierre, _movArqueo };
     });
@@ -8317,18 +8317,18 @@ async function registrarMovimiento() {
   const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
   const desc = document.getElementById('mov-desc').value;
   if (monto <= 0) { alert('Ingresa un monto válido'); return; }
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   const sede = sedeAdminEfectiva();
   const campo = tipo === 'ingreso' ? 'ingresos' : 'egresos';
   const campoEfectivo = tipo === 'ingreso' ? 'ingresosEfectivo' : 'egresosEfectivo';
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('caja').doc(sede), {
-    [campo]: firebase.firestore.FieldValue.increment(monto),
-    [campoEfectivo]: firebase.firestore.FieldValue.increment(monto)
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede), {
+    [campo]: incrementM(monto),
+    [campoEfectivo]: incrementM(monto)
   }, { merge: true });
   const _movId = getId();
   const _movData = { id:_movId, tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today(), sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
   _sincIniciar('mov_manual_lote', _movId);
   try {
@@ -10297,19 +10297,19 @@ async function confirmarAddCapital() {
   const monto = parseFloat(document.getElementById('ac-monto').value) || 0;
   const desc  = document.getElementById('ac-desc').value || 'Capital adicional';
   if (monto <= 0) { alert('Monto inválido'); return; }
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const sede = sedeAdminEfectiva();
   // Capital vive en db_ext (sin colección propia) — se empaqueta lo que sí tiene colección
   // dedicada (caja + movimiento) en un lote; fbGuardarExt() sigue guardando el capital como ya lo hacía.
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('caja').doc(sede), {
-    ingresos: firebase.firestore.FieldValue.increment(monto),
-    ingresosEfectivo: firebase.firestore.FieldValue.increment(monto)
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede), {
+    ingresos: incrementM(monto),
+    ingresosEfectivo: incrementM(monto)
   }, { merge: true });
   const _movId = getId();
   const _movData = { id:_movId, tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
   _sincIniciar('add_capital_lote', _movId);
   try {
@@ -10397,17 +10397,17 @@ async function confirmarPagoCuota() {
   if (DB_EXT.capital.prestamo > 0 && monto > prestamoPend) {
     alert('El monto supera el préstamo pendiente de '+sol(prestamoPend)); return;
   }
-  if (!fbFS) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const sede = sedeAdminEfectiva();
-  const batch = fbFS.batch();
-  batch.set(fbFS.collection('caja').doc(sede), {
-    egresos: firebase.firestore.FieldValue.increment(monto),
-    egresosEfectivo: firebase.firestore.FieldValue.increment(monto)
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede), {
+    egresos: incrementM(monto),
+    egresosEfectivo: incrementM(monto)
   }, { merge: true });
   const _movId = getId();
   const _movData = { id:_movId, tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
-  batch.set(fbFS.collection('movimientos').doc(String(_movId)), _movData);
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
   _sincIniciar('pago_cuota_lote', _movId);
   try {
