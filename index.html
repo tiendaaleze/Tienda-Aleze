@@ -181,8 +181,9 @@ if (_esIOS()) {
 <!-- defer: no bloquean el parseo del HTML mientras descargan — se ejecutan en ESTE orden
      (defer respeta el orden del documento, a diferencia de async) justo antes de
      DOMContentLoaded. Seguro acá porque el único punto de entrada real, iniciarFirebase(),
-     vive dentro de window.onload — que dispara recién después de DOMContentLoaded, así que
-     firebase.* siempre existe para cuando se necesita. Verificado que ningún otro bloque de
+     vive dentro de un listener de DOMContentLoaded — que por especificación del estándar
+     dispara recién DESPUÉS de que todos los scripts con defer ya terminaron de ejecutar, así
+     que firebase.* siempre existe para cuando se necesita. Verificado que ningún otro bloque de
      script del archivo usa firebase.* fuera de una función (nada corre a nivel superior). -->
 <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
@@ -11487,14 +11488,16 @@ async function iniciarFirebase() {
 appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       console.log('[AppCheck] activado correctamente');
       // Esperar el primer token ANTES de que arranque la ráfaga de lecturas del login (PASO 3)
-      // — generar el primer token de reCAPTCHA v3 no es instantáneo, y sin esto esa ráfaga
-      // inicial completa salía sin token adjunto (coincide con el % bajo de solicitudes
-      // verificadas). Con límite de 3s: si reCAPTCHA está lento o caído, el login sigue igual,
-      // no se queda esperando para siempre.
+      // — generar el primer token de reCAPTCHA v3 no es instantáneo (baja su propio script y
+      // hace su propia verificación contra Google), y sin esto esa ráfaga inicial completa
+      // salía sin token adjunto. 3s resultó insuficiente en redes móviles — el propio patrón
+      // reportado (a veces carga el nombre real, a veces el de respaldo) confirmaba que la
+      // carrera se perdía justo ahí. Con 8s de margen: si reCAPTCHA está realmente caído o
+      // bloqueado, el login sigue igual, no se queda esperando para siempre.
       try {
         await Promise.race([
           appCheckInstance.getToken(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
         ]);
         console.log('[AppCheck] primer token listo antes de leer datos');
       } catch(tokErr) {
@@ -11790,6 +11793,29 @@ function fbPatchDB() {
     DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
       nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: _sedesLegado[nombre] || 'principal'
     }));
+  } else {
+    // CRITICO: migracion real de los NOMBRES YA GUARDADOS en Firestore — el respaldo de arriba
+    // (FIREBASE_USERS) ya tiene los nombres enmascarados nuevos, pero eso NO cambia lo que ya
+    // esta persistido en la coleccion real. Si el dato real trae el nombre viejo (email
+    // conocido, nombre distinto al esperado), se corrige acá Y se guarda de vuelta — sin esto,
+    // cada vez que la lectura real tenia exito (a diferencia de cuando fallaba y caia al
+    // respaldo) el selector mostraba el nombre real viejo en vez del enmascarado, exactamente
+    // la inconsistencia reportada.
+    const _nombreNuevoPorEmail = {};
+    Object.keys(FIREBASE_USERS).forEach(nombreNuevo => { _nombreNuevoPorEmail[FIREBASE_USERS[nombreNuevo]] = nombreNuevo; });
+    let _huboMigracion = false;
+    DB.config.usuariosStaff.forEach(u => {
+      const nombreNuevo = _nombreNuevoPorEmail[u.email];
+      if (nombreNuevo && u.nombre !== nombreNuevo) {
+        u.nombre = nombreNuevo;
+        _huboMigracion = true;
+      }
+    });
+    if (_huboMigracion) {
+      console.warn('[Migración] Nombres de usuariosStaff actualizados al esquema enmascarado — guardando de vuelta.');
+      try { fbGuardarConfig(); } catch(e) {}
+      try { fbGuardarProductos(); } catch(e) {}
+    }
   }
   // CRITICO: causa raiz real del "saldo heredado S/0.00" persistente incluso con lectura
   // garantizada por transaccion — esta linea, sin proteccion, escribia directo al servidor
@@ -11853,7 +11879,15 @@ function aplicarNombreNegocio() {
 }
 
 // ===================== INIT =====================
-window.onload = async function() {
+// CRITICO: antes esto era "window.onload", que espera a que TODA la pagina termine de cargar
+// -- incluidas imagenes y otros recursos, no solo el HTML/JS. En una red movil, eso agrega
+// segundos antes de que App Check/reCAPTCHA siquiera empiece a generar su primer token — y
+// generar ese token (bajar el script de reCAPTCHA + hacer su propia verificacion contra
+// Google) tampoco es instantaneo. DOMContentLoaded dispara apenas el HTML/JS termino de
+// parsearse, sin esperar imagenes -- le da a App Check varios segundos extra de ventaja para
+// terminar mientras el resto de la pagina sigue cargando en paralelo, en vez de arrancar recien
+// despues de que todo lo demas ya termino.
+document.addEventListener('DOMContentLoaded', async function() {
   const hoy = today();
   const fbOk = await iniciarFirebase();
 
@@ -11911,7 +11945,7 @@ window.onload = async function() {
   } else {
     _initLocal(hoy);
   }
-};
+});
 
 
 // ===================== HISTORIAL DE VENTAS =====================
