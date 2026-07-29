@@ -1442,7 +1442,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
     <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.07.29-sdk-modular</div>
-    <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
+    <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
         <path d="M21 2l-9.6 9.6"></path>
@@ -3450,13 +3450,19 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
 
 <script>
 // ===================== DATOS =====================
-const PASSWORDS = { 'Jose Carlos': '1234', 'Shessira': '1234', 'José Luis': '1234' };
+// Nombres visibles enmascarados — nadie que vea la pantalla de login o el nombre de
+// "cajero" en un ticket sabe quien es realmente cada persona. "Aleze" = admin, "Aleze N" =
+// vendedor N en el orden en que se fueron sumando (Aleze I = primer vendedor, etc.).
+const PASSWORDS = { 'Aleze': '1234', 'Aleze I': '1234', 'Aleze II': '1234', 'Aleze III': '1234' };
 
-// Mapeo nombre Aleze → correo Firebase Auth (para reglas de seguridad Firestore)
+// Mapeo nombre visible → correo Firebase Auth (para reglas de seguridad Firestore). Este es el
+// respaldo de emergencia que usa fbPatchDB() SOLO si DB.config.usuariosStaff llega vacio desde
+// el servidor — la fuente real, editable, sigue siendo Configuración → Usuarios.
 const FIREBASE_USERS = {
-  'Jose Carlos': 'tiendaaleze@gmail.com',
-  'Shessira':    'sharote1212@gmail.com', // pendiente: crear este usuario en Firebase Auth del proyecto de pruebas
-  'José Luis':   'joselezama.rom@gmail.com' // pendiente: crear este usuario en Firebase Auth del proyecto de pruebas
+  'Aleze':     'tiendaaleze@gmail.com',    // admin (antes "Jose Carlos")
+  'Aleze I':   'sharote1212@gmail.com',    // vendedor 1, Sede I (antes "Shessira")
+  'Aleze II':  'joselezama.rom@gmail.com', // vendedor 2, Sede I (antes "José Luis")
+  'Aleze III': 'sccp.jlezama@gmail.com'    // vendedor 3, Sede II (antes "Betty")
 };
 // Las contraseñas guardadas en Firestore se cargan en fbEscuchar/onload y sobreescriben estas
 let currentUser = null;
@@ -11761,11 +11767,14 @@ function fbPatchDB() {
   // Ensure new fields exist for users upgrading from older versions
   if (!DB.config) DB.config = {};
   if (DB.config.montoAperturaAuto === undefined) DB.config.montoAperturaAuto = 0;
-  // Migración única: de FIREBASE_USERS (fijo en código) a DB.config.usuariosStaff (editable desde Configuración)
+  // Migración/respaldo: de FIREBASE_USERS (fijo en código) a DB.config.usuariosStaff (editable
+  // desde Configuración) — se dispara tambien si el array llega vacio desde el servidor por
+  // cualquier motivo, no solo la primera vez, asi el login nunca queda sin nadie para elegir.
   if (!DB.config.usuariosStaff || DB.config.usuariosStaff.length === 0) {
-    const _rolesLegado = { 'Jose Carlos': 'admin', 'Shessira': 'cajero', 'José Luis': 'cajero' };
+    const _rolesLegado = { 'Aleze': 'admin', 'Aleze I': 'cajero', 'Aleze II': 'cajero', 'Aleze III': 'cajero' };
+    const _sedesLegado = { 'Aleze III': 'Tienda Aleze II' }; // el resto cae en 'principal' por defecto
     DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
-      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: 'principal'
+      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: _sedesLegado[nombre] || 'principal'
     }));
   }
   // CRITICO: causa raiz real del "saldo heredado S/0.00" persistente incluso con lectura
