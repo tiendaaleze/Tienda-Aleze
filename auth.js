@@ -72,38 +72,15 @@ function volverWelcome() {
   document.getElementById('login-error').style.display = 'none';
   document.getElementById('login-pass').value = '';
 }
-// Evita que la deteccion automatica de sesion (onAuthStateChanged, mas abajo) actue mientras
-// un login manual ya esta en curso — sin esto, un login tipeado a mano dispararia _completarSesion()
-// DOS veces (una desde doLogin, otra desde el listener que tambien reacciona al mismo cambio de
-// estado de autenticacion), duplicando listeners y trabajo.
-let _loginManualEnCurso = false;
-
-// CRITICO: se llama una sola vez, al arrancar la app (ver firebase-sync.js, justo despues de que
-// authModular queda listo). onAuthStateChanged se dispara con el usuario YA autenticado de una
-// sesion anterior — cacheada por Firebase Auth localmente — sin esperar ningun viaje de red, a
-// diferencia de signInWithEmailAndPassword() que SIEMPRE necesita conexion. Esto es lo que permite
-// que alguien que ya inicio sesion antes en este dispositivo pueda seguir vendiendo sin señal,
-// incluso si abre la app de cero (cierra el navegador, lo vuelve a abrir, todo sin red).
-function _intentarRestaurarSesion() {
-  if (!authModular || typeof onAuthStateChangedM !== 'function') return;
-  onAuthStateChangedM(authModular, async (user) => {
-    if (_loginManualEnCurso) return; // doLogin() ya se esta encargando de este mismo cambio
-    if (!user) return; // sin sesion previa en este dispositivo — pantalla de login normal
-    if (currentUser) return; // ya hay una sesion activa completa (evita re-disparar en un refresh de token)
-
-    // Mismo respaldo que el boton de "Ingreso del equipo" en la bienvenida — asegura que
-    // usuariosStaff tenga al menos el respaldo de emergencia si la lectura real de Firestore
-    // (que puede necesitar red) todavia no llego para cuando este listener se dispara.
-    try { if (typeof fbPatchDB === 'function') fbPatchDB(); } catch(e) {}
-    const _staffRestaurado = (DB.config.usuariosStaff || []).find(u => u.email === user.email);
-    if (!_staffRestaurado) {
-      console.warn('[Sesión restaurada] Usuario autenticado (' + user.email + ') pero no encontrado en usuariosStaff — se muestra el login normal.');
-      return;
-    }
-    console.log('[Sesión restaurada] Entrando directo con ' + _staffRestaurado.nombre + ', sin pedir contraseña de nuevo.');
-    await _completarSesion(_staffRestaurado.nombre, _staffRestaurado.rol);
-  });
-}
+// NOTA: se evaluó un mecanismo de restauración de sesión offline (onAuthStateChanged) que
+// permitía entrar sin volver a pedir contraseña si el dispositivo ya tenía una sesión guardada.
+// Se descartó a propósito por riesgo de seguridad real: en un sistema con varios cajeros y
+// dispositivos que pueden quedar accesibles a terceros, entrar sin ninguna barrera (con o sin
+// señal, indefinidamente hasta un cierre de sesión explícito) pesa más que la comodidad de no
+// re-tipear la contraseña. La app sigue funcionando sin señal una vez con la sesión ya activa en
+// memoria (ver Promise.allSettled en _completarSesion) — la única limitación real que queda es
+// que si la app se cierra por completo estando sin señal desde el arranque, hay que esperar
+// señal para volver a entrar. Esa limitación se acepta a cambio de la seguridad.
 
 async function doLogin() {
   // ── PASO 0: Reset total de estado anterior (sesión previa, cambio de usuario) ──
@@ -148,12 +125,9 @@ async function doLogin() {
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Verificando...'; }
 
   try {
-    _loginManualEnCurso = true;
     await fbAuth.signInWithEmailAndPassword(email, pass);
-    _loginManualEnCurso = false;
     _limpiarBloqueo();
   } catch(fbErr) {
-    _loginManualEnCurso = false;
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Ingresar'; }
     document.getElementById('login-pass').value = '';
 
@@ -181,11 +155,9 @@ async function doLogin() {
   await _completarSesion(name, role);
 }
 
-// ── Todo lo que pasa DESPUES de una autenticacion valida — ya sea recien tipeada
-// (signInWithEmailAndPassword, arriba) o una sesion ya existente que Firebase Auth restaura
-// solo, incluso sin señal (ver _intentarRestaurarSesion en core.js). Es exactamente el mismo
-// camino en ambos casos: cargar datos, mostrar la app, arrancar los listeners — la unica
-// diferencia es COMO se llego hasta acá.
+// ── Todo lo que pasa DESPUES de una autenticacion valida (signInWithEmailAndPassword, arriba)
+// — separado de doLogin() para mantener el codigo mas ordenado: aca vive la carga de datos, el
+// render de la app y el arranque de los listeners.
 async function _completarSesion(name, role) {
   const btnEl = document.querySelector('.btn-login');
   const errEl = document.getElementById('login-error');
