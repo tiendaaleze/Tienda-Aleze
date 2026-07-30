@@ -41,7 +41,7 @@ let messagingModular = null;
 // "window.__fbModular.firestore.X" en cada uno de los puntos de contacto que se van migrando.
 let docM, setDocM, getDocM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
     queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
-    serverTimestampM, deleteFieldM, onSnapshotM;
+    serverTimestampM, deleteFieldM, onSnapshotM, onAuthStateChangedM;
 
 // ══════════════════════════════════════════════════════════════════════════
 // Visibilidad real de sincronización — camino completo, no un parche.
@@ -260,7 +260,18 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
              where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
              runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
              deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
+          ({ onAuthStateChanged: onAuthStateChangedM } = window.__fbModular.auth);
           console.log('[SDK modular] Conexión propia inicializada con persistencia offline — listo para empezar a migrar funciones.');
+          // CRITICO: sin esto, CADA apertura de la app exigia signInWithEmailAndPassword() de
+          // cero — una llamada que SIEMPRE necesita red, sin excepcion, por mas que Firestore
+          // tenga persistencia offline activa (son 2 cosas separadas: la sesion de Auth y el
+          // cache de datos). Firebase Auth SI guarda la sesion localmente y la restaura solo,
+          // incluso sin señal, con tal de que la app se entere de preguntarle — onAuthStateChanged
+          // es exactamente eso: se dispara con el usuario ya autenticado (de una sesion anterior,
+          // cacheada) apenas la app arranca, sin esperar ningun viaje de red. Confirmado con la
+          // auditoria manual: el login sin señal fallaba por completo y sin ningun aviso claro —
+          // esta era la pieza que faltaba, no un ajuste de timing.
+          _intentarRestaurarSesion();
         } else {
           console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
         }
