@@ -487,8 +487,25 @@ async function renderHistorialVentas() {
   const inBuscar = document.getElementById('hv-buscar');
   const estado = inEstado?.value || '';
   const origen = inOrigen?.value || '';
-  const sede   = inSede?.value   || '';
   const buscar = (inBuscar?.value || '').toLowerCase();
+
+  // CRITICO — fuga real de datos entre sedes, confirmada: antes, un vendedor podia ver ventas
+  // de la OTRA sede simplemente dejando este filtro en "Todas las sedes" (el valor por defecto
+  // del <select>) — no habia nada que se lo impidiera. Vendedor (no-admin) NUNCA puede elegir
+  // "todas" — se le oculta el selector y se fuerza su propia sede sin importar que diga el DOM,
+  // como defensa en profundidad ante quien intente forzar el valor desde las herramientas de
+  // desarrollador. Admin si puede ver "todas las sedes" a proposito (reportes consolidados),
+  // pero el selector arranca en SU sede activa, no en "todas", cada vez que entra a la pagina.
+  const _esAdmin = currentRole === 'admin';
+  if (inSede) inSede.style.display = _esAdmin ? '' : 'none';
+  const _labelSede = inSede ? inSede.previousElementSibling : null; // por si hay un <label> asociado
+  let sede;
+  if (_esAdmin) {
+    sede = inSede?.value || '';
+  } else {
+    sede = sedeAdminEfectiva();
+    if (inSede) inSede.value = sede; // mantiene el DOM consistente aunque este oculto
+  }
 
   const rango = _resolverRangoConAviso(inDesde?.value || '', inHasta?.value || '', 7);
   if (!rango) return; // advertencia de rango amplio cancelada por el usuario
