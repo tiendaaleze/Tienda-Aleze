@@ -444,15 +444,16 @@ function _posClienteBuscar() {
   const q = (document.getElementById('pos-cliente-buscar')?.value || '').trim();
   const sug = document.getElementById('pos-cliente-sugerencias');
   if (!sug) return;
+  const _sedePosBusc = sedeAdminEfectiva();
   const matches = (q ? DB.clientes.filter(c => _norm(c.nombre).includes(_norm(q)) || _norm(c.alias||'').includes(_norm(q)) || (c.tel||'').includes(q)) : DB.clientes).slice(0, 8);
   if (!matches.length) {
     sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
   } else {
-    sug.innerHTML = matches.map(c =>
+    sug.innerHTML = matches.map(c => { const _deudaC = deudaClienteEnSede(c, _sedePosBusc); return
       `<div onclick="_posClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
-        ${c.alias || c.nombre}${c.deuda>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(c.deuda)})</span>` : ''}
-       </div>`
-    ).join('');
+        ${c.alias || c.nombre}${_deudaC>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(_deudaC)})</span>` : ''}
+       </div>`;
+    }).join('');
   }
   sug.style.display = 'block';
 }
@@ -726,7 +727,7 @@ async function cobrarFiado() {
 
   const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
   batch.set(docM(dbModular, 'clientes', String(clienteId)), {
-    deuda: incrementM(total),
+    deudaPorSede: { [sede]: incrementM(total) },
     compras: incrementM(1),
     total: incrementM(total),
     puntos: incrementM(_puntosGanados)
@@ -752,7 +753,7 @@ async function cobrarFiado() {
   if (cli) {
     _clienteProxySkipSync = true;
     try {
-      cli.deuda = Math.round(((cli.deuda||0) + total) * 100) / 100;
+      _aplicarDeudaLocal(cli, sede, total);
       cli.compras = (cli.compras||0) + 1;
       cli.total = (cli.total||0) + total;
       cli.puntos = (cli.puntos||0) + _puntosGanados;
@@ -876,7 +877,7 @@ function abrirCliRapido() {
 function guardarCliRapido() {
   const nombre = document.getElementById('cr-nombre').value.trim();
   if (!nombre) { alert('Ingresa un nombre'); return; }
-  const c = _envolverCliente({ id: getId(), nombre, alias: nombre, tel: document.getElementById('cr-tel').value, dir: '', cumple: '', compras: 0, total: 0, deuda: 0 });
+  const c = _envolverCliente({ id: getId(), nombre, alias: nombre, tel: document.getElementById('cr-tel').value, dir: '', cumple: '', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } });
   DB.clientes.push(c);
   fbGuardar();
   updatePosClientes();
