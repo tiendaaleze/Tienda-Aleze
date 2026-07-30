@@ -528,7 +528,14 @@ async function navigate(page) {
   if (page === 'capital') renderCapital();
   if (page === 'reportes') initReportes();
   if (page === 'configuracion') renderConfiguracion();
-  if (page === 'historial-ventas') renderHistorialVentas();
+  if (page === 'historial-ventas') {
+    // Al entrar de nuevo a la pagina (no en cada cambio de filtro interno), el selector de
+    // sede arranca en la sede activa del admin, no en "Todas las sedes" — evita mezclar datos
+    // de ambas sedes por defecto sin que nadie lo haya pedido explicitamente.
+    const _selSede = document.getElementById('hv-sede');
+    if (_selSede && currentRole === 'admin') _selSede.value = sedeAdminEfectiva();
+    renderHistorialVentas();
+  }
   if (page === 'pedidos-online') renderPedidosOnline();
   // Close mobile sidebar on navigation
   closeMobSidebar();
