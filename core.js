@@ -25,10 +25,12 @@ let currentRole = null;
 let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del cajero logueado
 
 // ── Clientes offline-seguro: mismo Proxy que caja/stock, pero por CLIENTE, no por sede ──
-// (la deuda de un cliente es con el negocio completo — ya se confirmó, no hace falta separar).
-// Solo 5 puntos de entrada real (3 altas + 2 cargas de Firestore) necesitan envolver; las 18
-// mutaciones existentes (cli.deuda = X, etc.) quedan cubiertas solas, sin tocarlas.
-const _CLIENTE_CAMPOS_INCREMENTALES = ['deuda', 'compras', 'total', 'puntos'];
+// puntos/compras/total siguen siendo del cliente completo (fidelización no depende de en qué
+// sede compró). deuda se maneja aparte (ver deudaPorSede más abajo) — con varios cajeros que
+// no se conocen entre sedes, cobrar o perdonar una deuda que se originó en la otra sede no
+// tiene sentido de negocio real, así que se separó a propósito, revirtiendo una decisión
+// anterior que la mantenía unificada.
+const _CLIENTE_CAMPOS_INCREMENTALES = ['compras', 'total', 'puntos'];
 const _clienteProxiesCreados = new WeakSet();
 function fbAjustarCliente(id, campo, delta) {
   if (!dbModular || id == null || !delta) return; // [SDK modular]
@@ -37,7 +39,63 @@ function fbAjustarCliente(id, campo, delta) {
     { [campo]: incrementM(delta) },
     { merge: true }
   ).then(() => _sincTerminar('cliente', id))
-   .catch(e => _sincError('cliente', id, e, 'los datos del cliente (puntos/deuda/compras)'));
+   .catch(e => _sincError('cliente', id, e, 'los datos del cliente (puntos/compras)'));
+}
+// ── Deuda por sede: campo separado del Proxy genérico de arriba porque es un objeto anidado
+// (deudaPorSede.principal / deudaPorSede["Tienda Aleze II"]), no un número plano — Firestore
+// soporta increment() sobre un campo anidado vía notación de punto, así que sigue siendo
+// atómico igual que antes, solo que apunta a la sede correcta en vez de un total mezclado.
+function fbAjustarClienteDeudaSede(id, sede, delta) {
+  if (!dbModular || id == null || !delta) return;
+  _sincIniciar('cliente_deuda', id);
+  setDocM(docM(dbModular, 'clientes', String(id)),
+    { deudaPorSede: { [sede]: incrementM(delta) } },
+    { merge: true }
+  ).then(() => _sincTerminar('cliente_deuda', id))
+   .catch(e => _sincError('cliente_deuda', id, e, 'la deuda del cliente'));
+}
+// Reemplaza el patrón "cli.deuda = X" que antes pasaba por el Proxy genérico — ahora se llama
+// explícitamente, con la sede correspondiente, en cada punto donde antes se asignaba deuda
+// directo. Actualiza la memoria local Y dispara la escritura atómica a Firestore.
+function ajustarDeudaCliente(cli, sede, delta) {
+  if (!cli || !delta) return;
+  if (!cli.deudaPorSede) cli.deudaPorSede = { principal: 0, 'Tienda Aleze II': 0 };
+  const actual = cli.deudaPorSede[sede] || 0;
+  cli.deudaPorSede[sede] = Math.max(0, Math.round((actual + delta) * 100) / 100);
+  fbAjustarClienteDeudaSede(cli.id, sede, delta);
+}
+// Version "solo memoria" de ajustarDeudaCliente — para cuando un LOTE atomico ya escribio el
+// cambio a Firestore (venta, fiado, pago...) y esta funcion solo necesita reflejar lo mismo en
+// la copia local, sin disparar una escritura independiente encima (eso duplicaria el ajuste,
+// mismo tipo de bug que ya se corrigio para caja con _cajaProxySkipSync).
+function _aplicarDeudaLocal(cli, sede, delta) {
+  if (!cli || !delta) return;
+  if (!cli.deudaPorSede) cli.deudaPorSede = { principal: 0, 'Tienda Aleze II': 0 };
+  const actual = cli.deudaPorSede[sede] || 0;
+  cli.deudaPorSede[sede] = Math.max(0, Math.round((actual + delta) * 100) / 100);
+}
+// Deuda de un cliente EN UNA SEDE ESPECÍFICA — nunca la suma de ambas, eso mezclaría
+// exactamente lo que se separó a propósito. Es la función que hay que usar en el 99% de los casos.
+function deudaClienteEnSede(cli, sede) {
+  if (!cli || !cli.deudaPorSede) return 0;
+  return cli.deudaPorSede[sede] || 0;
+}
+// Única excepción válida a "nunca sumar sedes": saber si un cliente tiene deuda en CUALQUIER
+// sede antes de eliminarlo del todo — ahí sí hace falta ver el conjunto completo.
+function deudaClienteTotal(cli) {
+  if (!cli || !cli.deudaPorSede) return 0;
+  return Object.values(cli.deudaPorSede).reduce((s,v) => s + (v||0), 0);
+}
+// Migración defensiva: clientes con el campo viejo "deuda" (plano, antes de esta separación)
+// se convierten a deudaPorSede la primera vez que se tocan — todo lo viejo cae en "principal"
+// por ser la sede donde se originó la mayoría del historial hasta ahora. Sin esto, un cliente
+// con deuda vieja se vería con deudaPorSede vacío (0 en ambas sedes), perdiendo el rastro real
+// de lo que debía.
+function _migrarDeudaClienteSiHaceFalta(cli) {
+  if (!cli.deudaPorSede) {
+    cli.deudaPorSede = { principal: cli.deuda || 0, 'Tienda Aleze II': 0 };
+    delete cli.deuda;
+  }
 }
 function fbSincronizarClienteCampo(id, campo, valor) {
   if (!dbModular || id == null) return; // [SDK modular]
@@ -74,7 +132,7 @@ function _envolverCliente(c) {
   return proxy;
 }
 function _envolverTodosClientes() {
-  if (Array.isArray(DB.clientes)) DB.clientes = DB.clientes.map(c => _envolverCliente(c));
+  if (Array.isArray(DB.clientes)) DB.clientes = DB.clientes.map(c => { _migrarDeudaClienteSiHaceFalta(c); return _envolverCliente(c); });
 }
 
 // ── Sede administrativa (más allá de offline): sede 2 no tiene admin propio, así que el admin
