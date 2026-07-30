@@ -359,7 +359,10 @@ const RESET_CONFIG = {
       DB.movimientos = [];
       DB.historialVentas = [];
       _reiniciarCajaTodasLasSedes();
-      DB.clientes.forEach(c => { c.compras = 0; c.total = 0; c.deuda = 0; });
+      DB.clientes.forEach(c => {
+        c.compras = 0; c.total = 0;
+        ['principal', 'Tienda Aleze II'].forEach(s => ajustarDeudaCliente(c, s, -(c.deudaPorSede?.[s] || 0)));
+      });
       DB_EXT.gastos = [];
    DB_EXT.capital = { total: 0, cuota: 0, meta: 0, recuperado: 0, prestamo: 0, prestamoPagado: 0, hist: [] };
       const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); setDocM(docM(dbModular, 'aleze', 'db'), _payload); fbGuardarExt(); // [SDK modular]
@@ -373,7 +376,9 @@ const RESET_CONFIG = {
     detalle: '• Todos los registros de fiados<br>• Deudas pendientes de todos los clientes<br>• Totales de deuda por cliente',
     accion: () => {
       DB.fiados = [];
-      DB.clientes.forEach(c => { c.deuda = 0; });
+      DB.clientes.forEach(c => {
+        ['principal', 'Tienda Aleze II'].forEach(s => ajustarDeudaCliente(c, s, -(c.deudaPorSede?.[s] || 0)));
+      });
       fbGuardar();
       _vaciarColeccion('fiados');
       try { renderFiados(); } catch(e) {}
