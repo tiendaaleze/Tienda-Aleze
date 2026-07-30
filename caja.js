@@ -239,7 +239,8 @@ const saldo = DB.caja.inicial + ingresos - egresos;
     // Fuera de la ventana local podada (30 días) — consultar movimientos/{id} directo
     document.getElementById('caja-mov-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--gray-400)">⏳ Cargando...</td></tr>';
     _fetchMovimientosRango(fDesde, fHasta || today()).then(lista => {
-      let movsVis = [...lista].reverse();
+      const _sedeCajaExt = sedeAdminEfectiva();
+      let movsVis = [...lista].filter(m => (m.sedeId||'principal') === _sedeCajaExt).reverse();
       if (fTipo) movsVis = movsVis.filter(m => m.tipo === fTipo);
       _renderMovsTabla(movsVis);
     }).catch(e => {
@@ -247,7 +248,14 @@ const saldo = DB.caja.inicial + ingresos - egresos;
       document.getElementById('caja-mov-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--danger)">⚠️ Error cargando. Intenta de nuevo.</td></tr>';
     });
   } else {
-    let movsVis = [...DB.movimientos].reverse();
+    // CRITICO — fuga real de datos entre sedes, confirmada: esta tabla mostraba movimientos de
+    // AMBAS sedes mezclados siempre, sin ningun filtro — a diferencia de los totales de arriba
+    // (ingresos/egresos/saldo), que si estan bien aislados por sede porque usan el getter
+    // DB.caja, que resuelve segun sedeAdminEfectiva(). Caja es inherentemente por sede — a
+    // diferencia de Historial de Ventas, acá no hace falta una opcion de "ver todas", ni para
+    // admin: cada sede tiene su propia caja, mezclarlas nunca tiene sentido de negocio real.
+    const _sedeCaja = sedeAdminEfectiva();
+    let movsVis = [...DB.movimientos].filter(m => (m.sedeId||'principal') === _sedeCaja).reverse();
     if (fDesde)  movsVis = movsVis.filter(m => m.fecha >= fDesde);
     if (fHasta)  movsVis = movsVis.filter(m => m.fecha <= fHasta);
     if (fTipo)   movsVis = movsVis.filter(m => m.tipo === fTipo);
@@ -263,7 +271,9 @@ function _renderMovsTabla(movsVis) {
   // a esa variable — tiraba ReferenceError sin capturar, cortando la funcion a mitad de
   // camino cada vez que se pintaba Caja (por eso el grafico salia vacio, y cualquier cosa
   // que dependiera de que esta funcion terminara bien tambien se veia afectada).
+  const _sedeVentasHoy = sedeAdminEfectiva();
   const ventasHoy = DB.historialVentas.filter(v => v.fecha === today() &&
+    (v.sedeId||'principal') === _sedeVentasHoy &&
     ((v.origen === 'pos' && v.estado === 'completado') ||
      (v.origen === 'online' && v.estado === 'completado')));
   document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => {
