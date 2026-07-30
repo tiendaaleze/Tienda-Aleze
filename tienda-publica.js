@@ -15,7 +15,7 @@ let _tiendaUser = null; // {nombre, tel, dir}
 function tndSincronizarClientePublico(cli, esNuevo) {
   if (!dbModular) return; // [SDK modular]
   const data = esNuevo
-    ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: cli.cumple||'', compras: 0, total: 0, deuda: 0, puntos: 0 }
+    ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: cli.cumple||'', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 }, puntos: 0 }
     : { nombre: cli.nombre, alias: cli.alias };
   _sincIniciar('cliente_publico', cli.id);
   // Antes esto seleccionaba entre 'set' y 'set' (los 2 branches eran identicos) — simplificado
@@ -49,7 +49,7 @@ async function tndResolverCliente(nombre, tel) {
       tndSincronizarClientePublico(cli, false);
     }
   } else {
-    cli = _envolverCliente({ id: getId(), nombre: nombre || 'Cliente', alias: nombre || 'Cliente', tel: telLimpio, dir: '', cumple: '', compras: 0, total: 0, deuda: 0, puntos: 0 });
+    cli = _envolverCliente({ id: getId(), nombre: nombre || 'Cliente', alias: nombre || 'Cliente', tel: telLimpio, dir: '', cumple: '', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 }, puntos: 0 });
     DB.clientes.push(cli);
     tndSincronizarClientePublico(cli, true);
   }
