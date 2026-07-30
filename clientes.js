@@ -18,20 +18,21 @@ function renderClientes() {
 _norm(c.alias||'').includes(_norm(buscar)) ||
 _norm(c.tel||'').includes(_norm(buscar))
   ) : DB.clientes;
-  document.getElementById('cli-tbody').innerHTML = lista.map(c => `<tr>
+  const _sedeCli = sedeAdminEfectiva();
+  document.getElementById('cli-tbody').innerHTML = lista.map(c => { const _deudaSede = deudaClienteEnSede(c, _sedeCli); return `<tr>
     <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
     <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
     <td>${c.tel||'-'}</td>
     <td>${c.cumple ? formatDate(c.cumple) : '-'}</td>
    <td>${getNivel(c.total||0) ? `<span class="badge badge-gold">⭐ ${getNivel(c.total||0).desc}</span>` : '<span class="badge badge-gray">Regular</span>'}</td>
     <td><strong>${sol(c.total||0)}</strong></td>
-    <td style="color:${c.deuda>0?'var(--danger)':'var(--accent)'}"><strong>${c.deuda > 0 ? sol(c.deuda) : '✅ Al día'}</strong></td>
+    <td style="color:${_deudaSede>0?'var(--danger)':'var(--accent)'}"><strong>${_deudaSede > 0 ? sol(_deudaSede) : '✅ Al día'}</strong></td>
     <td style="white-space:nowrap">
       <button class="btn btn-outline btn-xs" onclick="verHistorialCliente(${c.id})">📋</button>
       <button class="btn btn-outline btn-xs" onclick="editarCliente(${c.id})">✏️ Editar</button>
       <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarCliente(${c.id})">🗑️</button>
     </td>
-  </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin clientes</td></tr>';
+  </tr>`; }).join('') || '<tr><td colspan="8" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin clientes</td></tr>';
 }
 
 function abrirModalCliente() {
@@ -61,7 +62,7 @@ function guardarCliente() {
     const c = DB.clientes.find(x => x.id === editingCliId);
     Object.assign(c, data);
   } else {
-    DB.clientes.push(_envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deuda: 0 }));
+    DB.clientes.push(_envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } }));
   }
   fbGuardar();
   cerrarModal('modal-cliente');
@@ -73,7 +74,10 @@ function guardarCliente() {
 function eliminarCliente(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar clientes.'); return; }
   const c = DB.clientes.find(x => x.id === id);
-  if (c && c.deuda > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(c.deuda) + '. Salda los fiados antes de eliminarlo.'); return; }
+  // Unica excepcion valida a "nunca sumar sedes" — eliminar el cliente lo borra por completo,
+  // asi que hay que confirmar que no tenga deuda pendiente en NINGUNA de las 2.
+  const _deudaTotal = deudaClienteTotal(c);
+  if (c && _deudaTotal > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(_deudaTotal) + ' (entre ambas sedes). Salda los fiados antes de eliminarlo.'); return; }
   if (!confirm('¿Eliminar cliente?')) return;
   DB.clientes = DB.clientes.filter(c => c.id !== id);
   if (dbModular) deleteDocM(docM(dbModular, 'clientes', String(id))).catch(e => console.warn('No se pudo borrar clientes/'+id, e)); // [SDK modular]
@@ -449,7 +453,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   });
 
   batch.set(docM(dbModular, 'clientes', String(cid)), {
-    deuda: incrementM(-montoTotal)
+    deudaPorSede: { [_sedeEPG]: incrementM(-montoTotal) }
   }, { merge: true });
 
   const _movId = getId();
@@ -479,7 +483,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   const cli = DB.clientes.find(c => c.id === cid);
   if (cli) {
     _clienteProxySkipSync = true;
-    try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - montoTotal) * 100) / 100); }
+    try { _aplicarDeudaLocal(cli, _sedeEPG, -montoTotal); }
     finally { _clienteProxySkipSync = false; }
   }
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
@@ -501,6 +505,14 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
 function confirmarEliminarFiado(id) {
   const f = DB.fiados.find(x => x.id === id);
   if (!f) return;
+  // CRITICO — cierra un hueco real: la lista de Fiados ya filtra por sede, pero eliminar/cobrar
+  // no volvia a verificarlo, dejando la puerta abierta a tocar un fiado de la otra sede si se
+  // llegaba a el por otro camino (ej. historial de un cliente). Defensa en profundidad — nunca
+  // se permite tocar un fiado que no sea de la sede activa, sin importar como se llego hasta el.
+  if (currentRole !== 'admin' && (f.sedeId||'principal') !== sedeAdminEfectiva()) {
+    alert('⛔ Este fiado pertenece a la otra sede — no se puede modificar desde acá.');
+    return;
+  }
   const pend = f.total - f.pagado;
   const opciones = pend > 0
     ? `¿Cómo deseas eliminar este fiado de ${sol(f.total)}?
@@ -526,7 +538,7 @@ Escribe 1 para confirmar:`;
     const cli = DB.clientes.find(c => c.id === f.clienteId);
     
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 1 ===
-    if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - pend) * 100) / 100);
+    if (cli) ajustarDeudaCliente(cli, f.sedeId||'principal', -pend);
     
     fbGuardar(); fbGuardarProductos();
     renderFiados(); renderInventario && renderInventario();
@@ -559,7 +571,7 @@ Escribe 1 para confirmar:`;
     const cli = DB.clientes.find(c => c.id === f.clienteId);
     
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 2 ===
-    if (cli) cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - pend) * 100) / 100);
+    if (cli) ajustarDeudaCliente(cli, f.sedeId||'principal', -pend);
     
     fbGuardar(); fbGuardarProductos();
     renderFiados(); try { renderMermas(); } catch(e) {}
@@ -614,6 +626,13 @@ function abrirPagoFiado(id) {
 
 async function confirmarPagoFiado() {
   const f = DB.fiados.find(x => x.id === editingFiadoId);
+  if (!f) return;
+  // Mismo criterio que confirmarEliminarFiado — defensa en profundidad, nunca se cobra un
+  // fiado que no sea de la sede activa, sin importar como se llego hasta el.
+  if (currentRole !== 'admin' && (f.sedeId||'principal') !== sedeAdminEfectiva()) {
+    alert('⛔ Este fiado pertenece a la otra sede — no se puede cobrar desde acá.');
+    return;
+  }
   const monto = parseFloat(document.getElementById('fiado-pago-monto').value) || 0;
   const metodo = document.getElementById('fiado-pago-metodo')?.value || 'Efectivo';
 const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
@@ -634,7 +653,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede });
 
   batch.set(docM(dbModular, 'clientes', String(f.clienteId)), {
-    deuda: incrementM(-monto)
+    deudaPorSede: { [f.sedeId || sede]: incrementM(-monto) }
   }, { merge: true });
 
   const _movId = getId();
@@ -664,7 +683,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   if (cli) {
     _clienteProxySkipSync = true;
-    try { cli.deuda = Math.max(0, Math.round(((cli.deuda || 0) - monto) * 100) / 100); }
+    try { _aplicarDeudaLocal(cli, f.sedeId || sede, -monto); }
     finally { _clienteProxySkipSync = false; }
   }
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
