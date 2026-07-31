@@ -496,7 +496,7 @@ const grid  = document.getElementById('tnd-grid');
   const _bannerCursor = cfg.bannerLink ? 'pointer' : 'default';
   const bannerHtml = cfg.bannerVisible !== false && cfg.bannerUrl
  ? '<div onclick="'+_bannerClick+'" style="cursor:'+_bannerCursor+';border-radius:14px;overflow:hidden;margin-bottom:1rem;background:#f5f3ff"><img src="'+cfg.bannerUrl+'" style="width:75%;margin:0 auto;height:auto;object-fit:contain;display:block" alt="Banner"/></div>'
-    : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">${cfg.eslogan||'Todo lo que necesitas, cerca de ti'}</div></div>`;
+    : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">🛒 ${cfg.eslogan||'Todo lo que necesitas, cerca de ti'} 📍</div></div>`;
   const hoy = new Date().toISOString().slice(0,10);
   const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
   const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
