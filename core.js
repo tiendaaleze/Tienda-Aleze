@@ -162,45 +162,27 @@ function calcularPuntosGanados(items) {
   return Math.floor(total);
 }
 
-// ── Fidelización: estado de progreso para un cliente — 3 estados, no siempre se muestra ──
-// 'lejos' = silencio (no abruma). 'cerca' = dentro de la ventana de aviso, se muestra progreso
-// sin revelar el valor en soles. 'premio_disponible' = ya cruzó el umbral, aviso fuerte + acción.
+// ── Fidelización: saldo de un cliente y a cuánto dinero equivale — sin estados de "cerca" o
+// "premio disponible" (esos existian porque el sistema anterior tenia premios con umbrales
+// discretos; con puntos = dinero directo, no hace falta escalonar nada, cualquier saldo ya es
+// canjeable a la tasa fija).
 function estadoFidelizacion(clienteId) {
   const cli = DB.clientes.find(c => c.id === clienteId);
-  if (!cli) return { estado: 'sin_cliente' };
+  if (!cli) return { saldo: 0, valorCanjeable: 0 };
   const saldo = cli.puntos || 0;
-  const premios = [...(DB_EXT.premiosFidelizacion || [])].sort((a, b) => a.puntos - b.puntos);
-  const disponibles = premios.filter(p => p.puntos <= saldo);
-  if (disponibles.length) {
-    return { saldo, estado: 'premio_disponible', premio: disponibles[disponibles.length - 1] };
-  }
-  const siguiente = premios.find(p => p.puntos > saldo);
-  if (!siguiente) return { saldo, estado: 'lejos' }; // sin premios configurados aun, o ninguno alcanzable
-  const ventana = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.ventanaAviso) || 300;
-  const faltan = siguiente.puntos - saldo;
-  if (faltan <= ventana) return { saldo, estado: 'cerca', faltan, premio: siguiente };
-  return { saldo, estado: 'lejos' };
+  const tasaCanje = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaCanje) || 300;
+  return { saldo, valorCanjeable: Math.floor((saldo / tasaCanje) * 100) / 100 };
 }
 
-// ── Fidelización: colección propia para canjes, mismo patrón que boletas/fiados/mermas ──
-
-// Todos los premios que el saldo actual alcanza a cubrir — no solo el más caro (para elegir).
-function premiosDisponibles(clienteId) {
+// ── Procesa un canje de puntos por dinero — reemplaza el sistema anterior de premios
+// configurables (producto/descuento con catalogo propio). Ahora es directo: X puntos = X/300
+// soles de descuento, sin catalogo que mantener ni merma de producto que registrar (ya no hay
+// premios de tipo producto). El monto resultante se refleja en el descuento de la venta actual.
+async function procesarCanje(clienteId, puntosACanjear) {
   const cli = DB.clientes.find(c => c.id === clienteId);
-  if (!cli) return [];
-  const saldo = cli.puntos || 0;
-  return [...(DB_EXT.premiosFidelizacion || [])].filter(p => p.puntos <= saldo).sort((a,b) => a.puntos - b.puntos);
-}
-
-// ── Procesa un canje: descuenta puntos, registra el canje, y refleja el costo real donde
-// corresponde — producto → merma (stock baja, costo ya afecta rentabilidad automático, mismo
-// mecanismo que cualquier otra merma); descuento → reduce el total de la venta actual, así
-// queda dentro del ingreso real de la venta, sin cuenta aparte que alguien tenga que cuadrar.
-async function procesarCanje(clienteId, premioId) {
-  const cli = DB.clientes.find(c => c.id === clienteId);
-  const premio = (DB_EXT.premiosFidelizacion || []).find(p => p.id === premioId);
-  if (!cli || !premio) { alert('No se pudo procesar el canje.'); return null; }
-  if ((cli.puntos || 0) < premio.puntos) { alert('El cliente ya no tiene suficientes puntos para este premio.'); return null; }
+  puntosACanjear = Math.floor(puntosACanjear || 0);
+  if (!cli || puntosACanjear <= 0) { alert('No se pudo procesar el canje.'); return null; }
+  if ((cli.puntos || 0) < puntosACanjear) { alert('El cliente ya no tiene suficientes puntos.'); return null; }
 
   // Mitigación de doble-canje entre 2 dispositivos: verifica el saldo REAL en el servidor
   // justo antes de confirmar — reduce la ventana de riesgo al tiempo de esta consulta, no a
@@ -211,7 +193,7 @@ async function procesarCanje(clienteId, premioId) {
       const doc = await getDocM(docM(dbModular, 'clientes', String(clienteId)));
       if (doc.exists()) { // en modular, exists es un METODO, no una propiedad
         const saldoReal = doc.data().puntos || 0;
-        if (saldoReal < premio.puntos) {
+        if (saldoReal < puntosACanjear) {
           alert(`⚠️ El saldo de este cliente cambió (probablemente ya se procesó un canje desde otro dispositivo). Saldo actual: ${saldoReal} puntos — no se completó este canje.`);
           return null;
         }
@@ -221,42 +203,21 @@ async function procesarCanje(clienteId, premioId) {
     }
   }
 
+  const tasaCanje = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaCanje) || 300;
+  const montoDescuento = Math.floor((puntosACanjear / tasaCanje) * 100) / 100;
   const sede = sedeAdminEfectiva();
   const canje = {
     id: getId(), clienteId, fecha: today(), hora: nowTime(),
-    premioId: premio.id, premioNombre: premio.nombre, puntosUsados: premio.puntos,
-    tipo: premio.tipo, staff: currentUser, sedeId: sede
+    puntosUsados: puntosACanjear, montoDescuento, staff: currentUser, sedeId: sede
   };
 
-  // Paquete atomico: puntos descontados, canje registrado, y si aplica la merma del producto
-  // premio, viajan juntos — sin esto podian perderse puntos de un cliente sin que quedara
-  // registro del canje (o al reves), exactamente el riesgo de fidelizacion duplicada descrito.
+  // Paquete atomico: puntos descontados y canje registrado viajan juntos — sin esto podian
+  // perderse puntos de un cliente sin que quedara registro del canje (o al reves).
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return null; } // [SDK modular]
   const batch = writeBatchM(dbModular);
-  let _merma = null, _prodPremio = null;
-
-  if (premio.tipo === 'producto' && premio.prodId) {
-    const prod = DB.productos.find(p => p.id === premio.prodId);
-    if (prod) {
-      batch.set(docM(dbModular, 'stock', String(prod.id)),
-        { [`stockPorSede.${sede}`]: incrementM(-1) }, { merge: true });
-      _merma = {
-        id: getId(), prodId: prod.id, cant: 1, motivo: 'Canje de fidelización',
-        obs: `Canje: ${premio.nombre} — ${getClienteNombre(clienteId)}`,
-        fecha: today(), usuario: currentUser, sedeId: sede
-      };
-      batch.set(docM(dbModular, 'mermas', String(_merma.id)), _merma);
-      canje.prodId = prod.id;
-      canje.costoAsociado = prod.costo || 0;
-      _prodPremio = prod;
-    }
-  } else if (premio.tipo === 'descuento') {
-    canje.montoDescuento = premio.monto || 0;
-  }
-
   batch.set(docM(dbModular, 'canjes', String(canje.id)), canje);
   batch.set(docM(dbModular, 'clientes', String(clienteId)), {
-    puntos: incrementM(-premio.puntos)
+    puntos: incrementM(-puntosACanjear)
   }, { merge: true });
 
   _sincIniciar('canje_lote', canje.id);
@@ -268,23 +229,52 @@ async function procesarCanje(clienteId, premioId) {
     return null;
   }
 
-  if (_prodPremio && _merma) {
-    if (!_prodPremio.stockPorSede) _prodPremio.stockPorSede = { principal: _prodPremio.stock||0 };
-    _prodPremio.stockPorSede[sede] = Math.max(0, Math.round(((_prodPremio.stockPorSede[sede]||0)-1)*1000)/1000);
-    _prodPremio.stock = stockTotal(_prodPremio);
-    DB.mermas.push(_merma);
-  }
-  if (premio.tipo === 'descuento') {
-    const descInput = document.getElementById('pos-descuento'); // campo unico, compartido entre desktop y movil
-    if (descInput) descInput.value = (parseFloat(descInput.value) || 0) + canje.montoDescuento;
-  }
+  const descInput = document.getElementById('pos-descuento'); // campo unico, compartido entre desktop y movil
+  if (descInput) descInput.value = (parseFloat(descInput.value) || 0) + montoDescuento;
   // El lote ya escribió esto en Firestore — el interruptor evita que el Proxy del cliente
   // dispare su propia escritura encima (mismo riesgo que ya se corrigió en caja).
   _clienteProxySkipSync = true;
-  try { cli.puntos = (cli.puntos || 0) - premio.puntos; } finally { _clienteProxySkipSync = false; }
+  try { cli.puntos = (cli.puntos || 0) - puntosACanjear; } finally { _clienteProxySkipSync = false; }
   fbGuardar();
-  fbGuardarProductos();
   return canje;
+}
+
+// ── Asignación manual de puntos — solo admin. Pensada para migrar el historial de un cliente
+// que venía de antes de este sistema, o para un ajuste puntual — no es un bono automático de
+// bienvenida, es una acreditación deliberada, caso por caso. Queda registrada como movimiento
+// para poder rastrear quién la aplicó y por qué, sin necesidad de una colección nueva.
+async function asignarPuntosManual(clienteId) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede asignar puntos manualmente.'); return; }
+  const cli = DB.clientes.find(c => c.id === clienteId);
+  if (!cli) return;
+  const cantidad = parseInt(prompt(`Asignar puntos a ${cli.nombre} (saldo actual: ${cli.puntos||0}).\n\nCantidad a acreditar (puede ser negativa para corregir):`));
+  if (!cantidad || isNaN(cantidad)) return;
+  const motivo = prompt('Motivo (ej. "Migración sistema anterior"):') || 'Ajuste manual';
+  if (!confirm(`¿Confirmar ${cantidad > 0 ? 'acreditar' : 'descontar'} ${Math.abs(cantidad)} puntos a ${cli.nombre}?\n\nMotivo: ${motivo}`)) return;
+
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const sede = sedeAdminEfectiva();
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'clientes', String(clienteId)), { puntos: incrementM(cantidad) }, { merge: true });
+  const _movId = getId();
+  const _movData = { id: _movId, tipo: 'ajuste_puntos', desc: `Ajuste manual de puntos: ${cantidad > 0 ? '+' : ''}${cantidad} — ${cli.nombre} — ${motivo}`, monto: 0, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+  _sincIniciar('ajuste_puntos_lote', clienteId);
+  try {
+    await batch.commit();
+    _sincTerminar('ajuste_puntos_lote', clienteId);
+  } catch (e) {
+    _sincError('ajuste_puntos_lote', clienteId, e, 'el ajuste de puntos — no se aplicó nada');
+    return;
+  }
+  _clienteProxySkipSync = true;
+  try { cli.puntos = (cli.puntos || 0) + cantidad; } finally { _clienteProxySkipSync = false; }
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
+  alert(`✅ Puntos actualizados. Nuevo saldo: ${cli.puntos} puntos.`);
+  try { renderFrecuentes(); } catch(e){}
+  try { renderClientes(); } catch(e){}
 }
 
 // Cambiar de sede es un cambio de CONTEXTO COMPLETO — no solo dónde se crean registros
@@ -343,17 +333,13 @@ function cambiarSedeAdmin(sede) {
 const DB_EXT = {
   sueldos: {'Jose Carlos':0,'Shessira':0,'José Luis':0},
   navidad: {n:3, valor:50},
-  // ── Fidelización (puntos canjeables) — vive junto a niveles por ahora, sin tocarlo.
-  // tasaBase: puntos por sol gastado. ventanaAviso: cuántos puntos antes del premio se avisa
-  // ("cerca"), para no abrumar con el aviso en cada venta. premios: lista configurable.
-  fidelizacion: { tasaBase: 1, ventanaAviso: 300 },
-  premiosFidelizacion: [],
-  niveles: [
-    {umbral:100, max:1, desc:'Nivel 1 — hasta S/1'},
-    {umbral:250, max:3, desc:'Nivel 2 — hasta S/3'},
-    {umbral:500, max:5, desc:'Nivel 3 — hasta S/5'},
-    {umbral:1000, max:20, desc:'Nivel 4 — hasta S/20'}
-  ],
+  // ── Fidelización (puntos canjeables por dinero, sin catálogo de premios) ──
+  // tasaBase: puntos por sol gastado (se multiplica ademas por el multiplicador de cada
+  // categoria, configurable en Frecuentes). tasaCanje: cuantos puntos equivalen a S/1 al
+  // canjear — fijo en 300 (300 puntos = S/1), sin importar de que categoria vinieron los
+  // puntos ganados. Elimina a proposito el sistema anterior de "niveles" (por gasto anual) y
+  // el catalogo de "premios" configurables — es directo: puntos acumulados = dinero canjeable.
+  fidelizacion: { tasaBase: 1, tasaCanje: 300 },
  capital: {total:0, cuota:0, meta:0, recuperado:0, prestamo:0, prestamoPagado:0, hist:[]},
   gastos: [],
   gastosRec: [
@@ -645,7 +631,6 @@ function getProveedorNombre(id) { const p = DB.proveedores.find(p => p.id == id)
 function getClienteNombre(id) { const c = DB.clientes.find(c => c.id == id); return c ? (c.alias||c.nombre) : 'Anónimo'; }
 function getMesActual() { return today().substring(0,7); }
 function precioSugerido(costo, margen) { return Math.ceil(costo*(1+margen/100)*10)/10; }
-function getNivel(totalAnual) { return [...DB_EXT.niveles].sort((a,b)=>b.umbral-a.umbral).find(n=>totalAnual>=n.umbral)||null; }
 
 function getAlertas() {
   const ignoradas = DB.config.alertasIgnoradas || {};
