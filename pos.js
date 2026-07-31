@@ -663,7 +663,7 @@ async function cobrarFiado() {
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }),
       total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc,
-      sedeId: sedeAdminEfectiva()
+      sedeId: sedeAdminEfectiva(), estado: 'pendiente'
     };
   }
   _fiadoPendiente = { firma, fiado };
