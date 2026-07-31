@@ -443,12 +443,13 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
       const costoAsociado = _asignarPagoAItems(f, montoPagadoEsteFiado);
       const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' };
       const _fPagado = Math.round((f.pagado + montoPagadoEsteFiado) * 100) / 100;
-      batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: [...(f.pagos||[]), _fPagoEntry] });
+      const _fEstado = _fPagado >= f.total ? 'pagado' : 'pendiente';
+      batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: [...(f.pagos||[]), _fPagoEntry], estado: _fEstado });
       saldo = Math.round((saldo - montoPagadoEsteFiado) * 100) / 100;
       const _entry = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado, sedeId: _sedeEPG };
       batch.set(docM(dbModular, 'ventas', String(_entry.id)), _entry);
       _hvPagosGlobal.push(_entry);
-      _cambiosLocales.push({ f, montoPagadoEsteFiado, _fPagoEntry, _fPagado });
+      _cambiosLocales.push({ f, montoPagadoEsteFiado, _fPagoEntry, _fPagado, _fEstado });
     }
   });
 
@@ -475,10 +476,11 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   }
 
   // El lote ya fue aceptado — recien ahora se aplican los cambios en memoria local.
-  _cambiosLocales.forEach(({f, _fPagoEntry, _fPagado}) => {
+  _cambiosLocales.forEach(({f, _fPagoEntry, _fPagado, _fEstado}) => {
     if (!f.pagos) f.pagos = [];
     f.pagos.push(_fPagoEntry);
     f.pagado = _fPagado;
+    f.estado = _fEstado;
   });
   const cli = DB.clientes.find(c => c.id === cid);
   if (cli) {
@@ -650,7 +652,8 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
 
   const _fPagos = [...(f.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
   const _fPagado = Math.round((f.pagado + monto) * 100) / 100;
-  batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede });
+  const _fEstado = _fPagado >= f.total ? 'pagado' : 'pendiente';
+  batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede, estado: _fEstado });
 
   batch.set(docM(dbModular, 'clientes', String(f.clienteId)), {
     deudaPorSede: { [f.sedeId || sede]: incrementM(-monto) }
@@ -680,6 +683,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
   if (!f.pagos) f.pagos = [];
   f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
   f.pagado = _fPagado;
+  f.estado = _fEstado;
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   if (cli) {
     _clienteProxySkipSync = true;
