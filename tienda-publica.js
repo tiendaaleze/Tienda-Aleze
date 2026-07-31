@@ -30,7 +30,7 @@ function tndSincronizarClientePublico(cli, esNuevo) {
 // ese teléfono puntual. Devuelve una Promise<clienteId>.
 async function tndResolverCliente(nombre, tel) {
   const telLimpio = (tel || '').replace(/\s/g, '');
-  if (!telLimpio || telLimpio.length < 7) return null;
+  if (!telLimpio || telLimpio.length !== 9) return null; // Peru: celulares son 9 digitos exactos
   let cli = DB.clientes.find(c => (c.tel || '').replace(/\s/g, '') === telLimpio);
   if (!cli && dbModular) { // [SDK modular]
     try {
@@ -732,7 +732,7 @@ function tndIdentificarParaPuntos() {
   const tel = document.getElementById('tnd-puntos-tel')?.value.trim();
   if (!nombre || nombre.length < 3) { alert('Ingresa tu nombre (mínimo 3 caracteres)'); return; }
   const telLimpio = (tel||'').replace(/\s/g,'');
-  if (!telLimpio || telLimpio.length < 7) { alert('Ingresa tu número de teléfono (mínimo 7 dígitos)'); return; }
+  if (!telLimpio || telLimpio.length !== 9) { alert('Ingresa tu número de celular (9 dígitos)'); return; }
   tndResolverClienteConVerificacion(nombre, telLimpio, () => {
     tndSaveUser(nombre, telLimpio);
     _tndStep = 'puntos';
@@ -1032,7 +1032,7 @@ function tndIrPago() {
   const nombre = document.getElementById('tnd-inp-nombre')?.value.trim();
   if (!nombre || nombre.length < 3) { alert('Por favor ingresa tu nombre (mínimo 3 caracteres)'); return; }
   const tel = document.getElementById('tnd-inp-tel')?.value.trim()||'';
-  if (!tel || tel.length < 7) { alert('Por favor ingresa tu número de WhatsApp (mínimo 7 dígitos)\nEsto nos permite confirmarte el pedido.'); return; }
+  if (!tel || tel.replace(/\s/g,'').length !== 9) { alert('Por favor ingresa tu número de WhatsApp (9 dígitos)\nEsto nos permite confirmarte el pedido.'); return; }
   _tiendaUser = {
     nombre,
     tel,
@@ -1066,11 +1066,8 @@ async function tndEnviarPedido() {
     alert('Tu nombre es demasiado largo (máximo 100 caracteres)'); return;
   }
   const telLimpio = (_tiendaUser?.tel||'').replace(/\s/g,'');
-  if (!telLimpio || telLimpio.length < 7) {
-    alert('Falta tu número de WhatsApp (mínimo 7 dígitos)'); return;
-  }
-  if (telLimpio.length > 15) {
-    alert('Tu número de WhatsApp es demasiado largo (máximo 15 dígitos)'); return;
+  if (!telLimpio || telLimpio.length !== 9) {
+    alert('Tu número de WhatsApp debe tener 9 dígitos'); return;
   }
   if (_tiendaCart.length === 0) {
     alert('Tu carrito está vacío'); return;
