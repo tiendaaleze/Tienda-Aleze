@@ -120,7 +120,7 @@ function reporteProductos(datos) {
   vendido.forEach(v => (v.items||[]).forEach(i => {
     if (!prods[i.nombre]) prods[i.nombre] = { cant: 0, total: 0, costo: 0 };
     prods[i.nombre].cant += i.cant;
-    prods[i.nombre].total += i.precio * i.cant;
+    prods[i.nombre].total += subtotalItemCarrito(i);
     const p = DB.productos.find(x=>x.id===i.prodId);
     prods[i.nombre].costo += (p?p.costo:0) * i.cant;
   }));
@@ -150,7 +150,7 @@ function reporteRentabilidad(datos, desde, hasta) {
     const p = DB.productos.find(x=>x.id===i.prodId); if(!p) return;
     if (!porProd[p.id]) porProd[p.id] = { nombre: p.nombre, costo: p.costo, precio: p.precio, cantVendida: 0, ingresos: 0, costoTotal: 0 };
     porProd[p.id].cantVendida += i.cant;
-    porProd[p.id].ingresos += i.precio * i.cant;
+    porProd[p.id].ingresos += subtotalItemCarrito(i);
     porProd[p.id].costoTotal += p.costo * i.cant;
   }));
   const data = Object.values(porProd).map(p => ({
@@ -360,7 +360,7 @@ async function exportReporte() {
   const prods = {};
   vf.forEach(v=>(v.items||[]).forEach(i=>{
     if(!prods[i.nombre])prods[i.nombre]={cant:0,tot:0,cos:0};
-    prods[i.nombre].cant+=i.cant; prods[i.nombre].tot+=i.precio*i.cant;
+    prods[i.nombre].cant+=i.cant; prods[i.nombre].tot+=subtotalItemCarrito(i);
     const p=DB.productos.find(x=>x.id===i.prodId); prods[i.nombre].cos+=(p?p.costo:0)*i.cant;
   }));
   const r2=[xr(ch('Producto'),ch('Cantidad'),ch('Ingresos S/'),ch('Costo S/'),ch('Ganancia S/'))];
@@ -373,7 +373,7 @@ async function exportReporte() {
   vf.forEach(v=>(v.items||[]).forEach(i=>{
     const p=DB.productos.find(x=>x.id===i.prodId); if(!p) return;
     if(!porP[p.id])porP[p.id]={nom:p.nombre,cant:0,ing:0,cos:0};
-    porP[p.id].cant+=i.cant; porP[p.id].ing+=i.precio*i.cant; porP[p.id].cos+=p.costo*i.cant;
+    porP[p.id].cant+=i.cant; porP[p.id].ing+=subtotalItemCarrito(i); porP[p.id].cos+=p.costo*i.cant;
   }));
   const r3=[xr(ch('Producto'),ch('Cantidad'),ch('Ingresos S/'),ch('Costo S/'),ch('Ganancia S/'),ch('Margen%'))];
   Object.values(porP).sort((a,b)=>(b.ing-b.cos)-(a.ing-a.cos)).forEach(d=>{
