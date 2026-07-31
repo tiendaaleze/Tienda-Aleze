@@ -190,7 +190,7 @@ async function _completarSesion(name, role) {
         getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', _limiteReconcilia))),// 5
         getDocsM(collectionM(dbModular, 'fiados')),        // fiados: todos, nunca deberia faltar    // 6
         getDocsM(collectionM(dbModular, 'clientes')),      // clientes: todos, nunca deberia faltar  // 7
-        getDocsM(queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _limiteReconcilia))),// 8
+        getDocsM(collectionM(dbModular, 'mermas')),        // mermas: todas, nunca deberia faltar — bajo volumen (pocas por mes), igual criterio que fiados/clientes. Antes tenia limite de 40 dias, lo que dejaba mermas viejas PERDIDAS PARA SIEMPRE si alguna vez faltaron localmente — ningun relogin las recuperaba, la propia consulta las excluia de raiz.
         getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', _limiteReconcilia))), // 9
         getDocsM(collectionM(dbModular, 'promociones')),                                             // 10
         getDocsM(collectionM(dbModular, 'proveedores')),                                             // 11
