@@ -590,7 +590,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             }),
             total: p.total, pagado: 0, fecha: p.fecha,
             descuentoCombo: p.descuento || 0, descuentoManual: 0,
-            origenOnline: true, sedeId: _sedeDespacho
+            origenOnline: true, sedeId: _sedeDespacho, estado: 'pendiente'
           };
           batch.set(docM(dbModular, 'fiados', String(_fiadoOnline.id)), _fiadoOnline);
           batch.set(docM(dbModular, 'clientes', String(cli.id)),
