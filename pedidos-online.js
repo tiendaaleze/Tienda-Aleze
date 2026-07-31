@@ -131,7 +131,7 @@ function renderPedidosOnline() {
           <strong style="color:var(--primary)">${sol(p.total)}</strong>
         </div>
         <div style="font-size:.8rem;color:var(--gray-700);margin-bottom:.4rem;line-height:1.5">
-          ${(p.items||[]).filter(i=>i.cant>0&&!i.eliminado).map(i=>`${i.nombre} x${i.cant} — ${sol(i.precio*i.cant)}`).join(' &nbsp;·&nbsp; ')}
+          ${(p.items||[]).filter(i=>i.cant>0&&!i.eliminado).map(i=>`${i.nombre} x${i.cant} — ${sol(subtotalItemCarrito(i))}`).join(' &nbsp;·&nbsp; ')}
         </div>
         <div class="flex-between" style="flex-wrap:wrap;gap:.4rem">
           <span style="font-size:.78rem;color:var(--gray-500)">
@@ -224,7 +224,7 @@ function _renderItemsEditorPedido(items) {
         </div>
       </td>
       <td style="font-size:.82rem">S/ ${item.precio.toFixed(2)}</td>
-      <td id="po-subtotal-${i}" style="font-weight:700;color:var(--primary)">S/ ${(item.precio*item.cant).toFixed(2)}</td>
+      <td id="po-subtotal-${i}" style="font-weight:700;color:var(--primary)">S/ ${subtotalItemCarrito(item).toFixed(2)}</td>
       <td>
         <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="poEliminarItem(${i})" title="Eliminar producto">🗑️</button>
       </td>
@@ -374,7 +374,7 @@ function guardarEdicionPedido() {
 
   // Recalcular total con items actuales y descuento
   const itemsActivos = (p.items||[]).filter(i => i.cant > 0 && !i.eliminado);
-  const subtotal     = itemsActivos.reduce((s,i) => s + i.precio * i.cant, 0);
+  const subtotal     = itemsActivos.reduce((s,i) => s + subtotalItemCarrito(i), 0);
   const total        = Math.max(0, subtotal - desc);
 
   // Si todos los productos fueron eliminados, advertir
@@ -492,7 +492,7 @@ function confirmarEntregaPedido(id) {
 
     let confirmMsg = `¿Confirmar entrega del pedido de ${p.clienteNombre||'cliente'}?\n\nSe despacha desde: ${_sedeDespacho}\n\nProductos a descontar del inventario:\n`;
     (p.items||[]).filter(i=>i.cant>0&&!i.eliminado).forEach(i => {
-      confirmMsg += `• ${i.nombre} x${i.cant} — ${sol(i.precio*i.cant)}\n`;
+      confirmMsg += `• ${i.nombre} x${i.cant} — ${sol(subtotalItemCarrito(i))}\n`;
     });
     confirmMsg += `\nTotal: ${sol(p.total)}\nMétodo: ${p.metodo}`;
     if (sinStock.length > 0) {
@@ -566,7 +566,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           id: p.id, fecha: p.fecha, hora: p.hora,
           cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
           clienteNombre: p.clienteNombre, items: itemsFinales,
-          subtotal: itemsFinales.reduce((s,i)=>s+i.precio*i.cant,0),
+          subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'completado',
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
@@ -603,7 +603,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           id: p.id, fecha: p.fecha, hora: p.hora,
           cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
           clienteNombre: p.clienteNombre, items: itemsFinales,
-          subtotal: itemsFinales.reduce((s,i)=>s+i.precio*i.cant,0),
+          subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'fiado',
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
