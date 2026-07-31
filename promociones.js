@@ -633,7 +633,8 @@ window.addToCart = function(prodId) {
   _addToCartOrig(prodId);
 };
 
-// Premio en POS visible sin interrumpir (Punto 7)
+// Premio en POS visible sin interrumpir — ahora muestra directamente cuánto dinero tiene
+// acumulado el cliente en puntos, sin pasar por umbrales de premios discretos.
 function actualizarPremioAlertPOS() {
   const cliId = parseInt(document.getElementById('pos-cliente').value)||null;
   const alertDiv = document.getElementById('pos-premio-alert');
@@ -641,45 +642,55 @@ function actualizarPremioAlertPOS() {
   const btnCanjear = document.getElementById('pos-premio-btn-canjear');
   if (!cliId||!alertDiv) { if(alertDiv) alertDiv.style.display='none'; return; }
   const est = estadoFidelizacion(cliId);
-  if (est.estado === 'premio_disponible') {
+  if (est.valorCanjeable > 0) {
     alertDiv.style.display='block';
     alertDiv.style.background = 'var(--accent-light)';
-    alertTxt.textContent = `🎉 ${getClienteNombre(cliId)} puede canjear: ${est.premio.nombre}`;
+    alertTxt.textContent = `🎉 ${getClienteNombre(cliId)} tiene ${est.saldo} pts — canjeable por ${sol(est.valorCanjeable)}`;
     if (btnCanjear) btnCanjear.style.display = 'inline-block';
-  } else if (est.estado === 'cerca') {
-    alertDiv.style.display='block';
-    alertDiv.style.background = '';
-    alertTxt.textContent = `${getClienteNombre(cliId)} está cerca de su próximo premio — le faltan ${est.faltan} puntos`;
-    if (btnCanjear) btnCanjear.style.display = 'none';
   } else {
     alertDiv.style.display='none';
     if (btnCanjear) btnCanjear.style.display = 'none';
   }
 }
 
-// ── Modal de canje: lista todos los premios que el saldo actual alcanza, cajero elige cual ──
+// ── Modal de canje: el cajero ingresa cuántos puntos canjear (hasta el saldo disponible),
+// con el equivalente en soles calculado al instante — reemplaza la lista de premios
+// preconfigurados del sistema anterior.
 function abrirModalCanje() {
   const cliId = parseInt(document.getElementById('pos-cliente').value) || null;
   if (!cliId) return;
-  const disponibles = premiosDisponibles(cliId);
-  if (!disponibles.length) { alert('Este cliente ya no tiene premios disponibles con su saldo actual.'); return; }
-  document.getElementById('modal-canje-cliente').textContent = `${getClienteNombre(cliId)} — saldo: ${(DB.clientes.find(c=>c.id===cliId)?.puntos)||0} puntos`;
-  document.getElementById('modal-canje-lista').innerHTML = disponibles.map(p => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--gray-100)">
-      <span>${p.tipo==='producto'?'📦':'💰'} <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">(${p.puntos} pts)</span></span>
-      <button type="button" class="btn btn-sm btn-primary" onclick="confirmarCanje(${cliId}, ${p.id})">Canjear</button>
-    </div>`).join('');
+  const est = estadoFidelizacion(cliId);
+  if (est.saldo <= 0) { alert('Este cliente todavía no tiene puntos acumulados.'); return; }
+  document.getElementById('modal-canje-cliente').textContent = `${getClienteNombre(cliId)} — saldo: ${est.saldo} puntos (equivale a ${sol(est.valorCanjeable)})`;
+  const inp = document.getElementById('canje-puntos-input');
+  inp.value = est.saldo;
+  inp.max = est.saldo;
+  inp.dataset.clienteId = cliId;
+  _actualizarPreviewCanje();
   abrirModal('modal-canje');
 }
 
-async function confirmarCanje(clienteId, premioId) {
-  const premio = (DB_EXT.premiosFidelizacion||[]).find(p => p.id === premioId);
-  if (!premio) return;
-  if (!confirm(`¿Confirmar canje de "${premio.nombre}" por ${premio.puntos} puntos?`)) return;
-  const canje = await procesarCanje(clienteId, premioId);
+// Recalcula el "= S/X" en vivo mientras el cajero tipea la cantidad de puntos a canjear.
+function _actualizarPreviewCanje() {
+  const inp = document.getElementById('canje-puntos-input');
+  const puntos = Math.floor(parseFloat(inp.value) || 0);
+  const tasaCanje = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaCanje) || 300;
+  const monto = Math.floor((puntos / tasaCanje) * 100) / 100;
+  document.getElementById('canje-preview').textContent = `= ${sol(monto)} de descuento`;
+}
+
+async function confirmarCanje() {
+  const inp = document.getElementById('canje-puntos-input');
+  const clienteId = parseInt(inp.dataset.clienteId);
+  const puntos = Math.floor(parseFloat(inp.value) || 0);
+  if (!clienteId || puntos <= 0) { alert('Ingresa una cantidad de puntos válida.'); return; }
+  const tasaCanje = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaCanje) || 300;
+  const monto = Math.floor((puntos / tasaCanje) * 100) / 100;
+  if (!confirm(`¿Confirmar canje de ${puntos} puntos por ${sol(monto)} de descuento?`)) return;
+  const canje = await procesarCanje(clienteId, puntos);
   if (canje) {
     cerrarModal('modal-canje');
-    alert('✅ Canje registrado: ' + premio.nombre);
+    alert('✅ Canje registrado: ' + sol(canje.montoDescuento) + ' de descuento aplicado.');
     actualizarPremioAlertPOS();
     try { calcTotal(); } catch(e) {}
   }
