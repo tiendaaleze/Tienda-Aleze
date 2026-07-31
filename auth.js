@@ -365,6 +365,7 @@ currentRole = role;
   fbEscuchar();
   fbEscucharPedidosOnline();
   fbEscucharCaja();
+  _iniciarListenersOperativos();
   _programarChequeoMedianoche();
   if (currentRole === 'admin') iniciarBackupAutomatico();
   _registrarNotificacionesPush();
