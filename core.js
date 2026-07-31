@@ -306,6 +306,10 @@ function cambiarSedeAdmin(sede) {
   _sedeAdminOverride = sede || null;
   const sedeEfectiva = sedeAdminEfectiva();
 
+  // Reconectar los 3 listeners que dependen de la sede activa (ventas/movimientos de hoy,
+  // fiados pendientes) — sin esto, seguirian escuchando la sede vieja hasta el proximo login.
+  try { _reconectarListenersPorSede(); } catch(e) { console.warn('Error reconectando listeners por sede:', e); }
+
   // Sincronizar los filtros de sede propios de cada pantalla — así, aunque el usuario
   // navegue a otra sección después, ya la encuentra filtrada a la sede correcta.
   ['rep-sede', 'hv-sede'].forEach(id => {
