@@ -115,18 +115,6 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
   document.getElementById('sueldo-jl').value = DB_EXT.sueldos['José Luis']   || 0;
   document.getElementById('cfg-nav-n').value = DB_EXT.navidad.n     || 3;
   document.getElementById('cfg-nav-v').value = DB_EXT.navidad.valor || 50;
-  // Niveles
-  document.getElementById('cfg-niveles-form').innerHTML = DB_EXT.niveles.map((n, i) => `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem">
-      <div class="form-group" style="margin:0">
-        <label style="font-size:.72rem">Umbral ${i+1} (S/)</label>
-        <input type="number" class="form-control" id="nv-u-${i}" value="${n.umbral}" />
-      </div>
-      <div class="form-group" style="margin:0">
-        <label style="font-size:.72rem">Premio máx (S/)</label>
-        <input type="number" class="form-control" id="nv-m-${i}" value="${n.max}" />
-      </div>
-   </div>`).join('');
   const _pp = DB.config.pasarelaPago || { activa: false, llavePublica: '' };
   document.getElementById('cfg-pasarela-activa').checked = !!_pp.activa;
   document.getElementById('cfg-pasarela-llave').value = _pp.llavePublica || '';
@@ -256,15 +244,6 @@ function guardarNavidad() {
   DB_EXT.navidad.valor = parseFloat(document.getElementById('cfg-nav-v').value) || 50;
   fbGuardarExt();
   alert('✅ Config. navideña guardada');
-}
-
-function guardarNiveles() {
-  DB_EXT.niveles.forEach((n, i) => {
-    n.umbral = parseFloat(document.getElementById('nv-u-' + i)?.value) || n.umbral;
-    n.max    = parseFloat(document.getElementById('nv-m-' + i)?.value) || n.max;
-  });
-  fbGuardarExt();
-  alert('✅ Niveles de premio guardados');
 }
 
 async function cambiarPassword() {
