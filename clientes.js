@@ -187,7 +187,7 @@ function renderFiados() {
           </span>
         </div>
         <div style="font-size:.8rem;margin-bottom:.3rem">
-          ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join(' · ')}
+          ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
         </div>
         <div style="font-size:.72rem;color:var(--gray-500)">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
         <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
@@ -278,7 +278,7 @@ function renderDetalleFiado(cid) {
         </span>
       </div>
       <div style="font-size:.8rem;margin-bottom:.3rem">
-        ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join(' · ')}
+        ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
       </div>
       <div style="font-size:.72rem;color:var(--gray-500)">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
       <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
@@ -398,12 +398,12 @@ function abrirPagoGlobal(cid) {
 // Mismo criterio en confirmarPagoFiado() y ejecutarPagoGlobal() — así el costo reconocido en
 // Dashboard/Capital coincide exactamente con qué se pagó, no una proporción uniforme sobre todo el fiado.
 function _asignarPagoAItems(fiado, monto) {
-  const itemsOrdenados = [...(fiado.items||[])].sort((a,b) => (a.precio*a.cant) - (b.precio*b.cant));
+  const itemsOrdenados = [...(fiado.items||[])].sort((a,b) => subtotalItemCarrito(a) - subtotalItemCarrito(b));
   let saldoItem = monto;
   let costo = 0;
   itemsOrdenados.forEach(i => {
     if (saldoItem <= 0) return;
-    const totalItem = i.precio * i.cant;
+    const totalItem = subtotalItemCarrito(i);
     const pendItem = totalItem - (i.pagado || 0);
     if (pendItem <= 0) return;
     const cubierto = Math.min(saldoItem, pendItem);
@@ -604,7 +604,7 @@ function abrirPagoFiado(id) {
       <strong>${getClienteNombre(f.clienteId)}</strong>
       ${cli && cli.tel ? `<span style="font-size:.78rem;color:var(--gray-500);margin-left:.5rem">📞 ${cli.tel}</span>` : ''}
       <div style="font-size:0.82rem;margin-top:.4rem">
-        ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join(' · ')}
+        ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
       </div>
       <div style="font-size:0.85rem;margin-top:.3rem">
         Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)} | <strong style="color:var(--danger)">Pendiente: ${sol(pendiente)}</strong>
@@ -716,7 +716,7 @@ function compartirFiadoWhatsapp() {
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
   const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
-  const itemsPend = f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join('\n');
+  const itemsPend = f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join('\n');
   const msg = `Hola ${nombre}, le recordamos su deuda en *${DB.config.nombre||'Tienda Aleze'}*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
   const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   window.open(url, '_blank');
@@ -821,7 +821,7 @@ function renderHistorialCliente() {
               ${pend > 0 ? sol(pend)+' pendiente' : '✅ Saldado'}
             </span>
           </div>
-          <div style="font-size:.8rem;margin-bottom:.3rem">${f.items.map(i=>`${i.nombre} x${i.cant} = ${sol(i.precio*i.cant)}`).join(' · ')}</div>
+          <div style="font-size:.8rem;margin-bottom:.3rem">${f.items.map(i=>`${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}</div>
           <div style="font-size:.72rem;color:var(--gray-500);margin-bottom:.3rem">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
           ${pagosF.length > 0 ? `<div style="font-size:.72rem;color:var(--gray-600);border-top:1px dashed var(--gray-200);padding-top:.3rem;margin-top:.3rem">
             ${pagosF.map(p=>`<span style="margin-right:.75rem">💳 ${p.fecha} ${p.hora} <em>${p.cajero}</em>: +${sol(p.monto)}</span>`).join('')}
