@@ -695,13 +695,16 @@ function tndDetalleAgregarCarrito() {
   const p = DB.productos.find(x => x.id === _tndDetalleProdId);
   if (!p) return;
   const cant = _tndDetalleCant;
-  if (cant > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
+  const existing = _tiendaCart.find(i => i.prodId === p.id);
+  // CRITICO — la validacion anterior solo miraba la cantidad nueva, no la suma con lo que ya
+  // estuviera en el carrito — permitia superar el stock real si el producto ya estaba agregado.
+  const cantTotalTrasAgregar = (existing ? existing.cant : 0) + cant;
+  if (cantTotalTrasAgregar > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
   const promo = _getPromoTienda(p);
   let precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
   const mayor = _tndDetalleData?.precioMayor;
   if (mayor && mayor.cantidadMin > 0 && cant >= mayor.cantidadMin) precio = mayor.precio;
   const cat = (DB.categorias||[]).find(c => c.id === p.cat);
-  const existing = _tiendaCart.find(i => i.prodId === p.id);
   if (existing) {
     existing.cant += cant;
     existing.precio = precio;
@@ -992,6 +995,16 @@ function tndSetMetodo(m) {
 function tndCartCant(prodId, delta) {
   const idx = _tiendaCart.findIndex(i => i.prodId === prodId);
   if (idx < 0) return;
+  // CRITICO — bug real confirmado: este +/- nunca verificaba stock, a diferencia de
+  // tndAgregarCarrito() (el botón de la grilla principal), que sí lo hace. Con esto, se podía
+  // subir la cantidad sin límite una vez que el producto ya estaba en el carrito. La
+  // verificación es interna — no hace falta un mensaje nuevo para el cliente, alcanza con que
+  // el botón + simplemente no haga nada más allá del stock real disponible.
+  if (delta > 0) {
+    const p = DB.productos.find(x => x.id === prodId);
+    const stockReal = p ? stockTotal(p) : 0;
+    if (_tiendaCart[idx].cant >= stockReal) return;
+  }
   _tiendaCart[idx].cant += delta;
   if (_tiendaCart[idx].cant <= 0) _tiendaCart.splice(idx, 1);
   tndSaveCart(); // persistir cambio de cantidad
