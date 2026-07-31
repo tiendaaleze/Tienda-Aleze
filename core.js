@@ -32,6 +32,22 @@ let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del c
 // anterior que la mantenía unificada.
 const _CLIENTE_CAMPOS_INCREMENTALES = ['compras', 'total', 'puntos'];
 const _clienteProxiesCreados = new WeakSet();
+// ── Escritura DIRECTA de la identidad de un cliente (nombre/alias/tel/dir/cumple) ──
+// CRITICO: reemplaza el patrón anterior de llamar a fbGuardar() al crear/editar un cliente
+// desde POS o Clientes — fbGuardar() NUNCA escribió clientes/{id} (solo poda arrays locales y
+// guarda config), así que el nombre quedaba SOLO en la memoria del dispositivo que lo creó.
+// Cualquier otro dispositivo terminaba viendo el documento real de Firestore, que recién se
+// creaba después con la primera venta (compras/total/puntos vía incrementM) — sin el nombre,
+// porque esa escritura nunca lo incluye. De ahí "Cliente sin nombre" en otros dispositivos, y
+// el riesgo de crear un cliente duplicado porque el nombre real nunca se pudo encontrar.
+function _guardarClienteDirecto(id, data, esNuevo) {
+  if (!dbModular) { console.warn('_guardarClienteDirecto: sin conexión, este cambio no llegó al servidor'); return; }
+  _sincIniciar('cliente_directo', id);
+  setDocM(docM(dbModular, 'clientes', String(id)), data, esNuevo ? {} : { merge: true })
+    .then(() => _sincTerminar('cliente_directo', id))
+    .catch(e => _sincError('cliente_directo', id, e, 'los datos del cliente'));
+}
+
 function fbAjustarCliente(id, campo, delta) {
   if (!dbModular || id == null || !delta) return; // [SDK modular]
   _sincIniciar('cliente', id);
