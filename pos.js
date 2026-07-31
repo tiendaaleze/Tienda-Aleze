@@ -127,7 +127,12 @@ function addToCart(prodId) {
     if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
   } else {
-    cart.push({ prodId, nombre: prod.nombre, precio, cant: prod.tipo === 'granel' ? 0.5 : 1, tipo: prod.tipo, unidad: prod.unidad });
+    // CRITICO - bug real confirmado: el valor inicial para granel era 0.5, pero el click
+    // siguiente (existing.cant++, mas abajo) SIEMPRE suma exactamente 1, sin importar el tipo
+    // de producto. La combinacion daba 0.5 + 1 = 1.5 en el segundo click, no 1.0 como se
+    // esperaria. Arreglado para que el primer click TAMBIEN sume 1, consistente con los
+    // siguientes — el peso exacto se ajusta despues con el campo de gramos, no a los clicks.
+    cart.push({ prodId, nombre: prod.nombre, precio, cant: 1, tipo: prod.tipo, unidad: prod.unidad });
   }
   renderCart(); calcTotal();
 }
@@ -144,9 +149,9 @@ function renderCart() {
       <div class="cart-item-qty">
         <button class="qty-btn" onclick="changeQty(${i},-1)">−</button>
        ${item.tipo==='granel'
-          ? `<input type="number" class="qty-val" min="0.01" step="0.01" value="${item.cant.toFixed(2)}"
+          ? `<input type="number" class="qty-val" min="1" step="1" value="${Math.round(item.cant*1000)}"
                onchange="setGranelQty(${i},this.value)"
-               style="width:62px;text-align:center;border:1px solid var(--gray-200);border-radius:4px;font-size:.85rem;padding:1px 3px">`
+               style="width:62px;text-align:center;border:1px solid var(--gray-200);border-radius:4px;font-size:.85rem;padding:1px 3px"> g`
           : `<span class="qty-val">${item.cant}</span>`}
         <button class="qty-btn" onclick="changeQty(${i},1)">+</button>
       </div>
@@ -165,10 +170,13 @@ function changeQty(i, delta) {
 
 function setGranelQty(i, val) {
   if (i >= cart.length) return;
-  const cant = parseFloat(val) || 0.01;
+  // El input muestra y recibe GRAMOS directos (ej. "337"), no kg decimal — se convierte acá,
+  // una sola vez, para no obligar al cajero a hacer la division mental.
+  const gramos = parseFloat(val) || 10;
   const prod = DB.productos.find(p => p.id === cart[i].prodId);
   const max = prod ? stockEnSede(prod) : 999;
-  cart[i].cant = Math.max(0.01, Math.min(max, parseFloat(cant.toFixed(2))));
+  const cant = gramos / 1000;
+  cart[i].cant = Math.max(0.01, Math.min(max, parseFloat(cant.toFixed(3))));
   // Actualizar precio del ítem sin re-renderizar el carrito completo
   const cartItems = document.querySelectorAll('.cart-item');
   if (cartItems[i]) {
@@ -1009,7 +1017,12 @@ function mobAddToCart(prodId) {
     if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
   } else {
-    cart.push({ prodId, nombre: prod.nombre, precio, cant: prod.tipo === 'granel' ? 0.5 : 1, tipo: prod.tipo, unidad: prod.unidad });
+    // CRITICO - bug real confirmado: el valor inicial para granel era 0.5, pero el click
+    // siguiente (existing.cant++, mas abajo) SIEMPRE suma exactamente 1, sin importar el tipo
+    // de producto. La combinacion daba 0.5 + 1 = 1.5 en el segundo click, no 1.0 como se
+    // esperaria. Arreglado para que el primer click TAMBIEN sume 1, consistente con los
+    // siguientes — el peso exacto se ajusta despues con el campo de gramos, no a los clicks.
+    cart.push({ prodId, nombre: prod.nombre, precio, cant: 1, tipo: prod.tipo, unidad: prod.unidad });
   }
   mobRenderCart();
   mobCalcTotal();
