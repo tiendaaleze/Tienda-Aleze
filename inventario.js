@@ -567,33 +567,6 @@ function imprimirQrEstante() {
   }
 }
 
-// Categoría rápida desde modal producto
-function abrirCatRapida() {
-  document.getElementById('catr-nombre').value = '';
-  document.getElementById('catr-emoji').value = '';
-  document.getElementById('catr-margen').value = '';
-  abrirModal('modal-cat-rapida');
-}
-
-function guardarCatRapida() {
-  const nombre = document.getElementById('catr-nombre').value.trim();
-  if (!nombre) { alert('Ingresa un nombre'); return; }
-  const nueva = {
-    id: getId(),
-    nombre,
-    emoji: document.getElementById('catr-emoji').value || '📦',
-    margen: parseFloat(document.getElementById('catr-margen').value) || 0,
-    imagen: ''
-  };
-  DB.categorias.push(nueva);
-  fbGuardarProductos();
-  // Actualizar el select del modal producto y seleccionar la nueva
-  updateModalCats();
-  document.getElementById('prod-cat').value = nueva.id;
-  actualizarPrecioSugerido();
-  cerrarModal('modal-cat-rapida');
-}
-
 function guardarCategoria() {
   if (currentRole !== 'admin') return;
   const nombre = document.getElementById('cat-nombre').value.trim();
