@@ -745,7 +745,7 @@ function tndRenderPanel() {
 
   if (_tndStep === 'cart') {
     titulo.textContent = '🛒 Tu carrito';
-    const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+    const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
     if (_tiendaCart.length === 0) {
       body.innerHTML = '<div style="text-align:center;padding:2rem;color:#9ca3af">🛒 Tu carrito está vacío<br><span style="font-size:.82rem">Agrega productos del catálogo</span></div>';
       footer.innerHTML = '<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>';
@@ -894,7 +894,7 @@ function tndRenderPanel() {
 
   if (_tndStep === 'pago') {
     titulo.textContent = '💳 Método de pago';
-    const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+    const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
     const metodos = [
       {v:'Efectivo',e:'💵 Efectivo'},
       {v:'Yape',e:'💜 Yape'},
@@ -910,7 +910,7 @@ function tndRenderPanel() {
         ${metodos.map(m=>`<div class="tnd-metodo-opt ${_tndMetodo===m.v?'selected':''}" onclick="tndSetMetodo('${m.v}')">${m.e}</div>`).join('')}
       </div>
       <div style="border-top:2px solid #e5e7eb;padding-top:.75rem;margin-top:.5rem">
-        ${_tiendaCart.map(i=>`<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:.25rem 0"><span>${i.nombre} x${i.cant}</span><span>S/ ${(i.precio*i.cant).toFixed(2)}</span></div>`).join('')}
+        ${_tiendaCart.map(i=>`<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:.25rem 0"><span>${i.nombre} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant}</span><span>S/ ${subtotalItemCarrito(i).toFixed(2)}</span></div>`).join('')}
         <div style="display:flex;justify-content:space-between;margin-top:.5rem;font-size:1rem;font-weight:700;color:#7C3AED">
           <span>TOTAL</span><span>S/ ${subtotal.toFixed(2)}</span>
         </div>
@@ -930,7 +930,7 @@ function tndRenderPanel() {
 // Sin ese despliegue, esta llamada falla con un error claro, no en silencio.
 async function tndPagarEnLinea() {
   if (!_tiendaUser?.nombre || !_tiendaUser?.tel) { alert('Completa tus datos antes de pagar.'); tndVolverDatos(); return; }
-  const subtotal = _tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0);
+  const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
   if (subtotal <= 0) { alert('Tu carrito está vacío.'); return; }
   if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
 
@@ -1061,7 +1061,7 @@ async function tndEnviarPedido() {
   if (_tiendaCart.length === 0) {
     alert('Tu carrito está vacío'); return;
   }
- const subtotal = Math.round(_tiendaCart.reduce((s,i) => s+i.precio*i.cant, 0) * 100) / 100;
+ const subtotal = Math.round(_tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0) * 100) / 100;
   if (!subtotal || subtotal <= 0) {
     alert('El total del pedido no es válido'); return;
   }
@@ -1140,7 +1140,7 @@ async function tndEnviarPedido() {
   if (_tiendaUser.tel) msg += `📱 *WhatsApp:* ${_tiendaUser.tel}\n`;
   msg += `\n*Productos:*\n`;
   _tiendaCart.forEach(i => {
-    msg += `• ${i.nombre} x${i.cant} — S/ ${(i.precio*i.cant).toFixed(2)}\n`;
+    msg += `• ${i.nombre} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant} — S/ ${subtotalItemCarrito(i).toFixed(2)}\n`;
   });
   msg += `\n*Total: S/ ${subtotal.toFixed(2)}*\n`;
   msg += `💳 *Pago:* ${_tndMetodo}\n`;
