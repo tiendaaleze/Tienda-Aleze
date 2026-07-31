@@ -1452,7 +1452,7 @@ function aplicarSug(i, id) {
   const p = DB.productos.find(x => x.id === id);
   if (p) {
     p.precio = v;
-    fbGuardar();
+    fbGuardarProductos();
     const row = input.closest('tr');
     if (row) {
       const btn = row.querySelector('button');
