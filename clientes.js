@@ -58,14 +58,26 @@ function editarCliente(id) {
 function guardarCliente() {
   const nombre = document.getElementById('cli-nombre').value.trim();
   if (!nombre) { alert('Ingresa el nombre'); return; }
-  const data = { nombre, alias: document.getElementById('cli-alias').value.trim(), tel: document.getElementById('cli-tel').value, dir: document.getElementById('cli-dir').value, cumple: document.getElementById('cli-cumple').value };
+  const tel = document.getElementById('cli-tel').value.trim();
+  // Peru: los celulares son 9 digitos, no 7 — evita aceptar numeros incompletos que despues
+  // no sirven para nada (ni para ubicar al cliente, ni para escribirle por WhatsApp).
+  if (tel && tel.replace(/\D/g,'').length !== 9) { alert('El teléfono debe tener 9 dígitos (formato de celular en Perú).'); return; }
+  const data = { nombre, alias: document.getElementById('cli-alias').value.trim(), tel, dir: document.getElementById('cli-dir').value, cumple: document.getElementById('cli-cumple').value };
   if (editingCliId) {
     const c = DB.clientes.find(x => x.id === editingCliId);
     Object.assign(c, data);
+    _guardarClienteDirecto(c.id, data, false);
   } else {
-    DB.clientes.push(_envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } }));
+    // Buscar por telefono ANTES de crear — evita el duplicado que causaba cruces de
+    // informacion entre sedes (mismo cliente con 2 o mas registros separados).
+    const _existente = tel ? DB.clientes.find(x => (x.tel||'').replace(/\D/g,'') === tel.replace(/\D/g,'')) : null;
+    if (_existente && !confirm(`Ya existe un cliente con este teléfono: "${_existente.nombre}".\n\n¿Confirmas que es una persona distinta y quieres crear un registro nuevo de todas formas?`)) {
+      return;
+    }
+    const nuevo = _envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } });
+    DB.clientes.push(nuevo);
+    _guardarClienteDirecto(nuevo.id, { id: nuevo.id, ...data, compras: 0, total: 0, deudaPorSede: nuevo.deudaPorSede, puntos: 0 }, true);
   }
-  fbGuardar();
   cerrarModal('modal-cliente');
   renderClientes();
   updatePosClientes();
