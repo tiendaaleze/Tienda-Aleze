@@ -601,6 +601,20 @@ function _norm(s) {
 }
 // ===================== UTILS =====================
 function sol(n) { return 'S/ ' + parseFloat(n || 0).toFixed(2); }
+
+// Redondea el subtotal de un item del carrito a los 10 centavos más cercanos — solo aplica a
+// productos por peso (granel), donde el precio exacto por gramo casi nunca cae en una moneda
+// pagable en efectivo (ej. S/1.97). Productos por unidad no se tocan, su precio ya es exacto.
+// Si el item YA tiene subtotalFinal grabado (viene de una venta/fiado ya persistida — ver
+// aplicarPreciosProporcionales), se usa ese valor directo, sin recalcular — así Reportes,
+// Historial y cualquier pantalla que muestre una venta pasada coincide exacto con lo que
+// realmente se cobró, en vez de recalcular precio*cant y arriesgarse a un numero distinto.
+function subtotalItemCarrito(item) {
+  if (item.subtotalFinal != null) return item.subtotalFinal;
+  const bruto = (item.precio || 0) * (item.cant || 0);
+  if (item.tipo !== 'granel') return bruto;
+  return Math.round(bruto * 10) / 10;
+}
 function today() {
   // Usar zona horaria de Lima (America/Lima = UTC-5) para evitar desfase nocturno
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
