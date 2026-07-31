@@ -796,13 +796,11 @@ async function cobrarFiado() {
 function mostrarTicket(venta) {
   const cfg = DB.config || {};
   const cfgNombre = cfg.nombre || 'Tienda Aleze';
-  const cfgDir    = cfg.direccion || '';
   const cfgMsg    = cfg.ticketMsg || '¡Gracias por su compra!';
   const comboDescuento = venta.descuentoCombo || 0;
   const descManual = venta.descuentoManual || (comboDescuento === 0 ? (venta.descuento||0) : 0);
   const html = `<div class="ticket" id="ticket-print">
     <div class="ticket-center"><strong style="font-size:1rem">${cfgNombre}</strong></div>
-    <div class="ticket-center" style="font-size:0.7rem;color:#666">${cfgDir}</div>
     ${cfg.telefono ? `<div class="ticket-center" style="font-size:0.7rem">Tel: ${cfg.telefono}</div>` : ''}
     <div class="ticket-line"></div>
     <div class="ticket-row"><span>Fecha:</span><span>${formatDate(venta.fecha)}</span></div>
