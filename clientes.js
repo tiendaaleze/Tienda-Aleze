@@ -24,12 +24,13 @@ _norm(c.tel||'').includes(_norm(buscar))
     <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
     <td>${c.tel||'-'}</td>
     <td>${c.cumple ? formatDate(c.cumple) : '-'}</td>
-   <td>${getNivel(c.total||0) ? `<span class="badge badge-gold">⭐ ${getNivel(c.total||0).desc}</span>` : '<span class="badge badge-gray">Regular</span>'}</td>
+   <td><span class="badge badge-gold">⭐ ${c.puntos||0} pts</span></td>
     <td><strong>${sol(c.total||0)}</strong></td>
     <td style="color:${_deudaSede>0?'var(--danger)':'var(--accent)'}"><strong>${_deudaSede > 0 ? sol(_deudaSede) : '✅ Al día'}</strong></td>
     <td style="white-space:nowrap">
       <button class="btn btn-outline btn-xs" onclick="verHistorialCliente(${c.id})">📋</button>
       <button class="btn btn-outline btn-xs" onclick="editarCliente(${c.id})">✏️ Editar</button>
+      ${currentRole === 'admin' ? `<button class="btn btn-outline btn-xs" onclick="asignarPuntosManual(${c.id})" title="Asignar puntos manualmente">⭐+</button>` : ''}
       <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarCliente(${c.id})">🗑️</button>
     </td>
   </tr>`; }).join('') || '<tr><td colspan="8" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin clientes</td></tr>';
@@ -908,11 +909,10 @@ function fallbackWA() {
 }
 
 // ===================== FRECUENTES =====================
-// ── Fidelización: configuración de puntos, premios, multiplicadores y su historial ──
+// ── Fidelización: configuración de puntos, tasa de canje y multiplicadores por categoría ──
 function renderFidelizacionConfig() {
   document.getElementById('fid-tasa-base').value = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaBase) || 1;
-  document.getElementById('fid-ventana-aviso').value = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.ventanaAviso) || 300;
-  renderPremiosFidelizacion();
+  document.getElementById('fid-tasa-canje').value = (DB_EXT.fidelizacion && DB_EXT.fidelizacion.tasaCanje) || 300;
   renderMultiplicadoresCategorias();
   renderCanjesHistorial();
 }
@@ -920,63 +920,10 @@ function renderFidelizacionConfig() {
 function guardarFidelizacionConfig() {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cambiar las reglas del programa de puntos.'); return; }
   const tasaBase = parseFloat(document.getElementById('fid-tasa-base').value) || 1;
-  const ventanaAviso = parseFloat(document.getElementById('fid-ventana-aviso').value) || 300;
-  DB_EXT.fidelizacion = { tasaBase, ventanaAviso };
+  const tasaCanje = parseFloat(document.getElementById('fid-tasa-canje').value) || 300;
+  DB_EXT.fidelizacion = { tasaBase, tasaCanje };
   fbGuardarExt();
   alert('✅ Configuración guardada.');
-}
-
-function _toggleCamposPremio() {
-  const tipo = document.getElementById('fid-nuevo-premio-tipo').value;
-  document.getElementById('fid-nuevo-premio-desc-wrap').style.display = tipo === 'descuento' ? 'block' : 'none';
-  const prodWrap = document.getElementById('fid-nuevo-premio-prod-wrap');
-  prodWrap.style.display = tipo === 'producto' ? 'block' : 'none';
-  if (tipo === 'producto') {
-    const sel = document.getElementById('fid-nuevo-premio-prod');
-    if (!sel.options.length) sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (costo S/${p.costo})</option>`).join('');
-  }
-}
-
-function renderPremiosFidelizacion() {
-  const el = document.getElementById('fid-premios-list');
-  const premios = DB_EXT.premiosFidelizacion || [];
-  if (!premios.length) { el.innerHTML = '<div style="color:var(--gray-400);padding:.5rem">Sin premios configurados — agrega el primero abajo.</div>'; return; }
-  el.innerHTML = [...premios].sort((a,b)=>a.puntos-b.puntos).map(p => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-bottom:1px solid var(--gray-100)">
-      <span><strong>${p.puntos} pts</strong> — ${p.tipo==='producto'?'📦':'💰'} ${p.nombre}</span>
-      <button type="button" class="btn btn-xs btn-danger" onclick="eliminarPremioFidelizacion(${p.id})">✕</button>
-    </div>`).join('');
-}
-
-function agregarPremioFidelizacion() {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede agregar premios del programa de puntos.'); return; }
-  const puntos = parseInt(document.getElementById('fid-nuevo-premio-puntos').value);
-  const tipo = document.getElementById('fid-nuevo-premio-tipo').value;
-  const nombre = document.getElementById('fid-nuevo-premio-nombre').value.trim();
-  if (!puntos || puntos <= 0 || !nombre) { alert('Completa puntos y nombre del premio.'); return; }
-  const premio = { id: getId(), puntos, nombre, tipo };
-  if (tipo === 'descuento') {
-    premio.monto = parseFloat(document.getElementById('fid-nuevo-premio-monto').value) || 0;
-    if (premio.monto <= 0) { alert('Ingresa el monto del descuento.'); return; }
-  } else {
-    premio.prodId = parseInt(document.getElementById('fid-nuevo-premio-prod').value) || null;
-    if (!premio.prodId) { alert('Selecciona el producto.'); return; }
-  }
-  if (!DB_EXT.premiosFidelizacion) DB_EXT.premiosFidelizacion = [];
-  DB_EXT.premiosFidelizacion.push(premio);
-  fbGuardarExt();
-  document.getElementById('fid-nuevo-premio-puntos').value = '';
-  document.getElementById('fid-nuevo-premio-nombre').value = '';
-  document.getElementById('fid-nuevo-premio-monto').value = '';
-  renderPremiosFidelizacion();
-}
-
-function eliminarPremioFidelizacion(id) {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar premios del programa de puntos.'); return; }
-  if (!confirm('¿Eliminar este premio?')) return;
-  DB_EXT.premiosFidelizacion = (DB_EXT.premiosFidelizacion||[]).filter(p => p.id !== id);
-  fbGuardarExt();
-  renderPremiosFidelizacion();
 }
 
 function renderMultiplicadoresCategorias() {
@@ -1007,7 +954,7 @@ function renderCanjesHistorial() {
     el.innerHTML = snap.docs.map(d => {
       const c = d.data();
       return `<div style="padding:.35rem 0;border-bottom:1px solid var(--gray-100);font-size:.85rem">
-        📅 ${formatDate(c.fecha)} — <strong>${getClienteNombre(c.clienteId)}</strong> canjeó <strong>${c.premioNombre}</strong> (${c.puntosUsados} pts)
+        📅 ${formatDate(c.fecha)} — <strong>${getClienteNombre(c.clienteId)}</strong> canjeó <strong>${c.puntosUsados} pts</strong> por ${sol(c.montoDescuento||0)} de descuento
       </div>`;
     }).join('');
   }).catch(() => { el.innerHTML = 'Error cargando canjes.'; });
@@ -1015,14 +962,6 @@ function renderCanjesHistorial() {
 
 function renderFrecuentes() {
   renderFidelizacionConfig();
-  // Niveles
-  document.getElementById('niveles-display').innerHTML = DB_EXT.niveles.map(n => `
-    <div class="card" style="text-align:center;border-top:4px solid var(--primary)">
-      <div style="font-size:1.5rem">🎁</div>
-      <div style="font-weight:700;font-size:.88rem;margin:.3rem 0">+S/ ${n.umbral}</div>
-      <div class="badge badge-gold">Hasta S/ ${n.max}</div>
-      <div style="font-size:.72rem;color:var(--gray-500);margin-top:.3rem">${n.desc}</div>
-    </div>`).join('');
   // Navidad
   const ng = parseInt(DB_EXT.navidad.n) || 3;
   const top = [...DB.clientes].filter(c => c.total > 0).sort((a, b) => b.total - a.total).slice(0, ng);
@@ -1042,10 +981,10 @@ function renderFrecuentes() {
   const todos = [...DB.clientes].sort((a, b) => b.total - a.total);
   document.getElementById('ranking-table').innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>Cliente</th><th>Alias</th><th>Consumo año</th><th>Nivel</th><th>Premio disponible</th></tr></thead>
+      <thead><tr><th>#</th><th>Cliente</th><th>Alias</th><th>Consumo año</th><th>Puntos</th><th>Canjeable</th></tr></thead>
       <tbody>${todos.map((c, i) => {
-        const nv = getNivel(c.total);
-        const pct = nv ? Math.min(100, c.total / nv.umbral * 100) : Math.min(100, c.total / 100 * 100);
+        const est = estadoFidelizacion(c.id);
+        const pct = Math.min(100, (c.total || 0) / 300 * 100);
         return `<tr>
           <td>${crowns[i] || i+1}</td>
           <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
@@ -1054,8 +993,8 @@ function renderFrecuentes() {
             <strong>${sol(c.total)}</strong>
             <div class="progress-bar" style="margin-top:.3rem"><div class="progress-fill" style="background:var(--primary);width:${pct}%"></div></div>
           </td>
-          <td>${nv ? `<span class="badge badge-gold">${nv.desc}</span>` : '<span class="badge badge-gray">Sin nivel aún</span>'}</td>
-          <td>${nv ? `<span style="color:var(--accent);font-weight:700">🎁 Hasta S/ ${nv.max}</span>` : '-'}</td>
+          <td><span class="badge badge-gold">⭐ ${est.saldo} pts</span></td>
+          <td>${est.valorCanjeable > 0 ? `<span style="color:var(--accent);font-weight:700">🎁 ${sol(est.valorCanjeable)}</span>` : '-'}</td>
           <td><button class="btn btn-outline btn-xs" onclick="verHistorialCliente(${c.id})">📋</button></td>
         </tr>`;
       }).join('')}</tbody>
