@@ -852,24 +852,15 @@ function tndRenderPanel() {
     } else {
       const cli = DB.clientes.find(c => c.id === clienteId);
       const est = estadoFidelizacion(clienteId);
-      const disponibles = premiosDisponibles(clienteId);
-      let progresoHtml = '';
-      if (est.estado === 'premio_disponible') {
-        progresoHtml = `<div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎉 ¡Ya tenés premio disponible! Pídelo en cualquiera de nuestras sedes.</div>`;
-      } else if (est.estado === 'cerca') {
-        progresoHtml = `<div style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Te faltan <strong>${est.faltan} puntos</strong> para tu próximo premio.</div>`;
-      }
       body.innerHTML = `
         <div style="text-align:center;padding:1rem 0">
           <div style="font-size:2.2rem;font-weight:800;color:#7C3AED">${cli.puntos||0}</div>
           <div style="font-size:.8rem;color:#6b7280">puntos acumulados</div>
         </div>
-        ${progresoHtml}
-        ${disponibles.length ? `
-          <div style="font-size:.85rem;font-weight:700;margin-bottom:.5rem">🎁 Podés canjear ahora:</div>
-          ${disponibles.map(p => `<div style="padding:.5rem;background:#F9FAFB;border-radius:6px;margin-bottom:.4rem;font-size:.82rem">${p.tipo==='producto'?'📦':'💰'} ${p.nombre}</div>`).join('')}
+        ${est.valorCanjeable > 0 ? `
+          <div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Podés canjear tus puntos por <strong>${sol(est.valorCanjeable)}</strong> de descuento.</div>
           <p style="font-size:.75rem;color:#9ca3af;margin-top:.5rem">Pídelo en caja al recoger tu pedido, o en cualquiera de nuestras sedes.</p>
-        ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para acercarte a tu próximo premio.</p>'}`;
+        ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para juntar puntos canjeables.</p>'}`;
       footer.innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`;
     }
   }
