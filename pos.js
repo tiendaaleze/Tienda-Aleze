@@ -886,9 +886,16 @@ function abrirCliRapido() {
 function guardarCliRapido() {
   const nombre = document.getElementById('cr-nombre').value.trim();
   if (!nombre) { alert('Ingresa un nombre'); return; }
-  const c = _envolverCliente({ id: getId(), nombre, alias: nombre, tel: document.getElementById('cr-tel').value, dir: '', cumple: '', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } });
+  const tel = document.getElementById('cr-tel').value.trim();
+  if (tel && tel.replace(/\D/g,'').length !== 9) { alert('El teléfono debe tener 9 dígitos (formato de celular en Perú).'); return; }
+  const _existente = tel ? DB.clientes.find(x => (x.tel||'').replace(/\D/g,'') === tel.replace(/\D/g,'')) : null;
+  if (_existente && !confirm(`Ya existe un cliente con este teléfono: "${_existente.nombre}".\n\n¿Confirmas que es una persona distinta y quieres crear un registro nuevo de todas formas?`)) {
+    return;
+  }
+  const data = { nombre, alias: nombre, tel, dir: '', cumple: '', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } };
+  const c = _envolverCliente({ id: getId(), ...data });
   DB.clientes.push(c);
-  fbGuardar();
+  _guardarClienteDirecto(c.id, { id: c.id, ...data, puntos: 0 }, true);
   updatePosClientes();
   document.getElementById('pos-cliente').value = c.id;
   const _bd = document.getElementById('pos-cliente-buscar'); if (_bd) _bd.value = c.alias || c.nombre;
