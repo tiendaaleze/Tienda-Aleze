@@ -614,7 +614,7 @@ function tndFiltrar() {
       <div class="tnd-prod-icon">${icon}</div>
       <div class="tnd-prod-name">${p.nombre}</div>
       ${precioOrig ? `<div class="tnd-prod-price-orig">S/ ${precioOrig.toFixed(2)}</div>` : ''}
-      <div class="tnd-prod-price">S/ ${precio.toFixed(2)}</div>
+      <div class="tnd-prod-price">S/ ${precio.toFixed(2)}${p.tipo==='granel'?'<span style="font-size:.65em;font-weight:400"> /kg</span>':''}</div>
 
       ${agotado ? '<div style="font-size:.75rem;color:#ef4444;margin-top:.25rem">Sin stock</div>' : ''}
     </div>`;
@@ -629,11 +629,15 @@ function tndAgregarCarrito(prodId) {
   const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
   const cat = (DB.categorias||[]).find(c => c.id === p.cat);
   const existing = _tiendaCart.find(i => i.prodId === prodId);
+  // Productos por peso (granel) se agregan de a bloques de 250g (0.25 kg) por click — tanto el
+  // primer click como los siguientes, siempre el mismo paso. Mismo bug que ya se corrigió en
+  // POS: si el primero usa un valor distinto al de los siguientes clicks, la suma queda mal.
+  const paso = p.tipo === 'granel' ? 0.25 : 1;
   if (existing) {
-    if (existing.cant >= stockTotal(p)) { alert('No hay más stock disponible'); return; }
-    existing.cant++;
+    if (existing.cant + paso > stockTotal(p)) { alert('No hay más stock disponible'); return; }
+    existing.cant = Math.round((existing.cant + paso) * 1000) / 1000;
   } else {
-    _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: 1, icon: cat?.emoji||'📦', tipo: p.tipo });
+    _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: paso, icon: cat?.emoji||'📦', tipo: p.tipo });
   }
   tndSaveCart(); // persistir en localStorage
   tndUpdateCartBadge();
@@ -672,7 +676,8 @@ let _tndDetalleProdId = null, _tndDetalleData = null, _tndDetalleCant = 1;
 function tndVerDetalle(prodId) {
   _tndDetalleProdId = prodId;
   _tndDetalleData = null;
-  _tndDetalleCant = 1;
+  const _pDet = DB.productos.find(x => x.id === prodId);
+  _tndDetalleCant = _pDet && _pDet.tipo === 'granel' ? 0.25 : 1;
   _tndStep = 'detalle-producto';
   window.location.hash = '#/producto/' + prodId;
   tndRenderPanel();
@@ -688,7 +693,12 @@ function tndVerDetalle(prodId) {
   }
 }
 function tndDetalleCambiarCant(delta) {
-  _tndDetalleCant = Math.max(1, _tndDetalleCant + delta);
+  const p = DB.productos.find(x => x.id === _tndDetalleProdId);
+  if (p && p.tipo === 'granel') {
+    _tndDetalleCant = Math.max(0.25, Math.round((_tndDetalleCant + 0.25 * Math.sign(delta)) * 1000) / 1000);
+  } else {
+    _tndDetalleCant = Math.max(1, _tndDetalleCant + delta);
+  }
   tndRenderPanel();
 }
 function tndDetalleAgregarCarrito() {
@@ -757,10 +767,10 @@ function tndRenderPanel() {
         <div class="tnd-cart-item-icon">${item.icon}</div>
         <div class="tnd-cart-item-info">
           <div class="tnd-cart-item-name">${item.nombre}</div>
-          <div class="tnd-cart-item-price">S/ ${item.precio.toFixed(2)} c/u</div>
+          <div class="tnd-cart-item-price">S/ ${item.precio.toFixed(2)} ${item.tipo==='granel'?'/kg':'c/u'}</div>
         </div>
         <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},-1)">−</button>
-        <span class="tnd-qty-val">${item.cant}</span>
+        <span class="tnd-qty-val">${item.tipo==='granel'?Math.round(item.cant*1000)+'g':item.cant}</span>
         <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},1)">+</button>
       </div>`).join('')}
       <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem;display:flex;justify-content:space-between;align-items:center">
@@ -818,14 +828,14 @@ function tndRenderPanel() {
           ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:160px;height:160px;object-fit:contain;border-radius:12px">` : `<div style="font-size:3rem">${cat?.emoji||'📦'}</div>`}
         </div>
         ${extra.length ? `<div style="display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem">${extra.map(u=>`<img src="${u}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb">`).join('')}</div>` : ''}
-        <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${p.precio.toFixed(2)}</div>
+        <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${p.precio.toFixed(2)}${p.tipo==='granel'?' <span style="font-size:.6em;font-weight:400">/kg</span>':''}</div>
         ${cargando ? '<p style="text-align:center;color:#9ca3af;font-size:.82rem">⏳ Cargando detalle...</p>' : ''}
         ${desc ? `<p style="font-size:.85rem;color:#4b5563;line-height:1.5;margin-bottom:1rem">${desc}</p>` : ''}
         ${mayor && mayor.cantidadMin > 0 ? `<div style="background:#EDE9FE;border-radius:8px;padding:.6rem;font-size:.8rem;color:#5B21B6;margin-bottom:1rem">💰 Desde ${mayor.cantidadMin} unidades: <strong>S/ ${mayor.precio.toFixed(2)} c/u</strong></div>` : ''}
         ${agotado ? '<p style="text-align:center;color:#ef4444;font-weight:700">Sin stock por el momento</p>' : `
           <div style="display:flex;align-items:center;justify-content:center;gap:1rem;margin-top:1rem">
             <button class="tnd-btn tnd-btn-outline" style="width:44px" onclick="tndDetalleCambiarCant(-1)">−</button>
-            <span style="font-size:1.2rem;font-weight:700;min-width:30px;text-align:center">${_tndDetalleCant}</span>
+            <span style="font-size:1.2rem;font-weight:700;min-width:30px;text-align:center">${p.tipo==='granel'?Math.round(_tndDetalleCant*1000)+'g':_tndDetalleCant}</span>
             <button class="tnd-btn tnd-btn-outline" style="width:44px" onclick="tndDetalleCambiarCant(1)">+</button>
           </div>`}`;
       footer.innerHTML = agotado
@@ -986,17 +996,21 @@ function tndSetMetodo(m) {
 function tndCartCant(prodId, delta) {
   const idx = _tiendaCart.findIndex(i => i.prodId === prodId);
   if (idx < 0) return;
+  // El boton siempre pasa -1/1 (direccion) — el paso real depende del tipo de producto: 250g
+  // (0.25) para granel, 1 unidad para el resto. Mismo criterio que tndAgregarCarrito().
+  const esGranel = _tiendaCart[idx].tipo === 'granel';
+  const paso = esGranel ? 0.25 * Math.sign(delta) : delta;
   // CRITICO — bug real confirmado: este +/- nunca verificaba stock, a diferencia de
   // tndAgregarCarrito() (el botón de la grilla principal), que sí lo hace. Con esto, se podía
   // subir la cantidad sin límite una vez que el producto ya estaba en el carrito. La
   // verificación es interna — no hace falta un mensaje nuevo para el cliente, alcanza con que
   // el botón + simplemente no haga nada más allá del stock real disponible.
-  if (delta > 0) {
+  if (paso > 0) {
     const p = DB.productos.find(x => x.id === prodId);
     const stockReal = p ? stockTotal(p) : 0;
     if (_tiendaCart[idx].cant >= stockReal) return;
   }
-  _tiendaCart[idx].cant += delta;
+  _tiendaCart[idx].cant = Math.round((_tiendaCart[idx].cant + paso) * 1000) / 1000;
   if (_tiendaCart[idx].cant <= 0) _tiendaCart.splice(idx, 1);
   tndSaveCart(); // persistir cambio de cantidad
   tndUpdateCartBadge();
