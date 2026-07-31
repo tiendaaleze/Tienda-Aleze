@@ -897,9 +897,24 @@ function compartirHistorialWhatsapp() {
 async function compartirWhatsapp() {
   const ticket = document.getElementById('ticket-print');
   if (!ticket) { alert('Sin ticket disponible'); return; }
+  // CRITICO: el ticket vive dentro de .modal, que tiene max-height:90dvh + overflow-y:auto —
+  // con muchos productos, el ticket crece mas alto que el modal visible y queda scrolleable.
+  // html2canvas puede capturar mal un elemento asi (solo lo que esta scrolleado a la vista, o
+  // con un alto mal calculado) — por eso "no cuadraba" con tickets largos. La solucion es
+  // clonar el ticket a un contenedor invisible, FUERA del modal, sin altura fija ni scroll, y
+  // capturar ESE clon — asi el resultado siempre incluye el ticket completo, sin importar
+  // cuantos productos tenga ni cuanto se haya scrolleado el modal en pantalla.
+  const clon = ticket.cloneNode(true);
+  clon.id = 'ticket-print-clon';
+  clon.style.position = 'fixed';
+  clon.style.left = '-9999px';
+  clon.style.top = '0';
+  clon.style.maxHeight = 'none';
+  clon.style.overflow = 'visible';
+  document.body.appendChild(clon);
   try {
     if (!window.html2canvas) { await new Promise(res => _loadHtml2Canvas(res)); }
-    const canvas = await html2canvas(ticket, { scale: 2, backgroundColor: '#ffffff' });
+    const canvas = await html2canvas(clon, { scale: 2, backgroundColor: '#ffffff' });
     canvas.toBlob(blob => {
       const file = new File([blob], 'ticket-aleze.png', { type: 'image/png' });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -913,6 +928,7 @@ async function compartirWhatsapp() {
       }
     }, 'image/png');
   } catch(e) { fallbackWA(); }
+  finally { clon.remove(); }
 }
 
 function fallbackWA() {
