@@ -168,6 +168,17 @@ let fbStorage = null;     // Firebase Storage — imágenes de productos
 let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
 let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
 let _fbCajaUnsub = null; // Listener dedicado a la colección caja — unica fuente de verdad
+// ── Listeners operativos nuevos — 3 dependen de la sede activa (se reconectan al cambiar de
+// sede), 5 son globales (no dependen de sede: stock trae ambas sedes en cada documento,
+// clientes/promociones/canjes son compartidos, mermas es de bajo volumen). ──
+let _fbStockUnsub = null;
+let _fbVentasHoyUnsub = null;      // depende de sede
+let _fbMovimientosHoyUnsub = null; // depende de sede
+let _fbFiadosPendUnsub = null;     // depende de sede
+let _fbClientesUnsub = null;
+let _fbPromocionesUnsub = null;
+let _fbMermasMesUnsub = null;
+let _fbCanjesUnsub = null;
 
 // ── Inicializar Firestore ──
 // RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
@@ -462,6 +473,228 @@ function fbEscucharCaja() {
     const pageId = activePage ? activePage.id.replace('page-','') : '';
     if (pageId === 'caja') { try { renderCaja(); } catch(e){} }
   }, err => { console.warn('Firestore listener error (caja):', err.code); });
+}
+
+// ── Helper generico: aplica los cambios de un snapshot (docChanges) sobre un array local en
+// memoria, SIN reemplazarlo entero — solo agrega/actualiza/quita lo que realmente cambio. Esto
+// es CRITICO para listeners filtrados (hoy, pendientes, mes actual): el array local tiene datos
+// FUERA del alcance del filtro (ventas de ayer, fiados ya pagados, mermas del mes pasado) que
+// vinieron de la reconciliacion de login — un reemplazo completo del array los borraria de
+// memoria por error, aunque sigan existiendo en Firestore.
+function _aplicarCambiosSnapshot(snapshot, arr, idKey = 'id') {
+  let huboCambio = false;
+  snapshot.docChanges().forEach(change => {
+    if (change.doc.metadata.hasPendingWrites) return; // eco optimista local — esperar confirmacion real del servidor
+    const data = change.doc.data();
+    const idx = arr.findIndex(x => String(x[idKey]) === change.doc.id);
+    if (change.type === 'removed') {
+      // El documento dejo de cumplir el filtro (ej. un fiado que se pago, saliendo de
+      // "pendiente") — no significa que se borro de Firestore, solo que ya no aplica acá.
+      if (idx !== -1) { arr.splice(idx, 1); huboCambio = true; }
+    } else { // 'added' o 'modified'
+      if (idx !== -1) { arr[idx] = data; } else { arr.push(data); }
+      huboCambio = true;
+    }
+  });
+  return huboCambio;
+}
+
+// ── Stock: sin filtro — cada documento ya trae ambas sedes en stockPorSede, y la cantidad de
+// productos esta acotada por el catalogo, no por el tiempo. Resuelve el reclamo real: una
+// boleta nueva o cualquier ajuste de stock se ve al instante en todos los dispositivos, sin
+// esperar relogin — incluida la preocupacion original de "los vendedores no ven el nuevo
+// ingreso de proveedores".
+function fbEscucharStock() {
+  if (!dbModular) return;
+  if (_fbStockUnsub) { _fbStockUnsub(); _fbStockUnsub = null; }
+  _fbStockUnsub = onSnapshotM(collectionM(dbModular, 'stock'), snapshot => {
+    let huboCambioReal = false;
+    snapshot.docChanges().forEach(change => {
+      if (change.doc.metadata.hasPendingWrites) return;
+      const prod = DB.productos.find(p => String(p.id) === change.doc.id);
+      const d = change.doc.data();
+      if (prod && d && d.stockPorSede) {
+        prod.stockPorSede = d.stockPorSede;
+        prod.stock = stockTotal(prod);
+        huboCambioReal = true;
+      }
+    });
+    if (!huboCambioReal) return;
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try {
+      if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
+      if (pageId === 'inventario') { filterInventario(); }
+    } catch(e){}
+  }, err => { console.warn('Firestore listener error (stock):', err.code); });
+}
+
+// ── Ventas y movimientos de HOY, filtrados por sede activa — se reconectan cada vez que
+// cambia la sede (ver _reconectarListenersPorSede). Se acotan a hoy a proposito: es lo que
+// resuelve "verlo mientras pasa" sin pagar por escuchar años de historial que ya nadie
+// necesita ver en vivo — el historial viejo lo sigue trayendo la reconciliacion de login.
+function fbEscucharVentasHoy() {
+  if (!dbModular) return;
+  if (_fbVentasHoyUnsub) { _fbVentasHoyUnsub(); _fbVentasHoyUnsub = null; }
+  const sede = sedeAdminEfectiva();
+  if (!DB.historialVentas) DB.historialVentas = [];
+  _fbVentasHoyUnsub = onSnapshotM(
+    queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '==', today()), whereM('sedeId', '==', sede)),
+    snapshot => {
+      if (!_aplicarCambiosSnapshot(snapshot, DB.historialVentas)) return;
+      try { renderDashboard(); } catch(e){}
+      const activePage = document.querySelector('.page.active');
+      const pageId = activePage ? activePage.id.replace('page-','') : '';
+      try {
+        if (pageId === 'historial-ventas') renderHistorialVentas();
+        if (pageId === 'caja') renderCaja();
+      } catch(e){}
+    }, err => { console.warn('Firestore listener error (ventas hoy):', err.code); });
+}
+
+function fbEscucharMovimientosHoy() {
+  if (!dbModular) return;
+  if (_fbMovimientosHoyUnsub) { _fbMovimientosHoyUnsub(); _fbMovimientosHoyUnsub = null; }
+  const sede = sedeAdminEfectiva();
+  if (!DB.movimientos) DB.movimientos = [];
+  _fbMovimientosHoyUnsub = onSnapshotM(
+    queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '==', today()), whereM('sedeId', '==', sede)),
+    snapshot => {
+      if (!_aplicarCambiosSnapshot(snapshot, DB.movimientos)) return;
+      const activePage = document.querySelector('.page.active');
+      const pageId = activePage ? activePage.id.replace('page-','') : '';
+      try { if (pageId === 'caja') renderCaja(); } catch(e){}
+    }, err => { console.warn('Firestore listener error (movimientos hoy):', err.code); });
+}
+
+// ── Fiados pendientes de la sede activa — filtrado por estado, no por fecha (un fiado puede
+// llevar meses sin pagarse y sigue siendo relevante verlo). Cuando un fiado se paga y deja de
+// cumplir "pendiente", el propio listener lo saca de la vista en todos los dispositivos, en
+// vivo, cerrando el riesgo real de doble cobro entre 2 personas que no se ven entre sedes.
+function fbEscucharFiadosPendientes() {
+  if (!dbModular) return;
+  if (_fbFiadosPendUnsub) { _fbFiadosPendUnsub(); _fbFiadosPendUnsub = null; }
+  const sede = sedeAdminEfectiva();
+  if (!DB.fiados) DB.fiados = [];
+  _fbFiadosPendUnsub = onSnapshotM(
+    queryM(collectionM(dbModular, 'fiados'), whereM('estado', '==', 'pendiente'), whereM('sedeId', '==', sede)),
+    snapshot => {
+      if (!_aplicarCambiosSnapshot(snapshot, DB.fiados)) return;
+      const activePage = document.querySelector('.page.active');
+      const pageId = activePage ? activePage.id.replace('page-','') : '';
+      try { if (pageId === 'fiados') renderFiados(); } catch(e){}
+    }, err => { console.warn('Firestore listener error (fiados pendientes):', err.code); });
+}
+
+// ── Clientes: sin filtro — compartidos entre sedes a proposito (puntos/compras/total son del
+// negocio completo). Resuelve el riesgo real de que 2 cajeros, en sedes distintas o la misma,
+// creen el mismo cliente sin saberlo.
+function fbEscucharClientes() {
+  if (!dbModular) return;
+  if (_fbClientesUnsub) { _fbClientesUnsub(); _fbClientesUnsub = null; }
+  if (!DB.clientes) DB.clientes = [];
+  _fbClientesUnsub = onSnapshotM(collectionM(dbModular, 'clientes'), snapshot => {
+    let huboCambio = false;
+    snapshot.docChanges().forEach(change => {
+      if (change.doc.metadata.hasPendingWrites) return;
+      const data = change.doc.data();
+      const idx = DB.clientes.findIndex(x => String(x.id) === change.doc.id);
+      if (change.type === 'removed') {
+        if (idx !== -1) { DB.clientes.splice(idx, 1); huboCambio = true; }
+      } else if (idx !== -1) {
+        // Actualizar en el lugar, preservando el Proxy ya envuelto — reemplazar el objeto
+        // entero perderia el wrapper y dejaria de sincronizar ediciones futuras desde acá.
+        // _clienteProxySkipSync evita que Object.assign, al escribir sobre el Proxy, dispare
+        // una escritura de vuelta a Firestore — este cambio YA vino de Firestore, reenviarlo
+        // seria una escritura redundante (y, peor, competiria con el propio origen del cambio).
+        _clienteProxySkipSync = true;
+        try { Object.assign(DB.clientes[idx], data); }
+        finally { _clienteProxySkipSync = false; }
+        huboCambio = true;
+      } else {
+        _migrarDeudaClienteSiHaceFalta(data);
+        DB.clientes.push(_envolverCliente(data));
+        huboCambio = true;
+      }
+    });
+    if (!huboCambio) return;
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try {
+      if (pageId === 'clientes') renderClientes();
+      if (pageId === 'pos')      updatePosClientes();
+    } catch(e){}
+  }, err => { console.warn('Firestore listener error (clientes):', err.code); });
+}
+
+// ── Promociones: sin filtro — pocas activas a la vez, y ya se habia pedido explicitamente
+// que la sincronizacion de productos y promociones fuera inmediata.
+function fbEscucharPromociones() {
+  if (!dbModular) return;
+  if (_fbPromocionesUnsub) { _fbPromocionesUnsub(); _fbPromocionesUnsub = null; }
+  if (!DB.promociones) DB.promociones = [];
+  _fbPromocionesUnsub = onSnapshotM(collectionM(dbModular, 'promociones'), snapshot => {
+    if (!_aplicarCambiosSnapshot(snapshot, DB.promociones)) return;
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try { if (pageId === 'promociones') renderPromociones(); } catch(e){}
+  }, err => { console.warn('Firestore listener error (promociones):', err.code); });
+}
+
+// ── Mermas del MES ACTUAL — no depende de sede (mermas se ven en conjunto), filtrado por mes
+// calendario porque un mes ya cerrado ya se cuadro, no hace falta seguir pagando por verlo en
+// vivo. La reconciliacion de login sigue trayendo TODAS, sin limite — este listener es solo
+// para lo que todavia esta "abierto" del mes en curso.
+function fbEscucharMermasMes() {
+  if (!dbModular) return;
+  if (_fbMermasMesUnsub) { _fbMermasMesUnsub(); _fbMermasMesUnsub = null; }
+  if (!DB.mermas) DB.mermas = [];
+  const _inicioMes = today().slice(0, 7) + '-01'; // YYYY-MM-01
+  _fbMermasMesUnsub = onSnapshotM(
+    queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _inicioMes)),
+    snapshot => {
+      if (!_aplicarCambiosSnapshot(snapshot, DB.mermas)) return;
+      const activePage = document.querySelector('.page.active');
+      const pageId = activePage ? activePage.id.replace('page-','') : '';
+      try { if (pageId === 'mermas') renderMermas(); } catch(e){}
+    }, err => { console.warn('Firestore listener error (mermas mes):', err.code); });
+}
+
+// ── Canjes: sin filtro — cierra el riesgo real de doble canje del mismo premio por 2
+// dispositivos que no se veian entre si, mismo motivo que fiados pendientes.
+function fbEscucharCanjes() {
+  if (!dbModular) return;
+  if (_fbCanjesUnsub) { _fbCanjesUnsub(); _fbCanjesUnsub = null; }
+  if (!DB.canjes) DB.canjes = [];
+  _fbCanjesUnsub = onSnapshotM(collectionM(dbModular, 'canjes'), snapshot => {
+    if (!_aplicarCambiosSnapshot(snapshot, DB.canjes)) return;
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try { if (pageId === 'frecuentes') renderFrecuentes(); } catch(e){}
+  }, err => { console.warn('Firestore listener error (canjes):', err.code); });
+}
+
+// ── Arranca los 8 listeners operativos nuevos de una — se llama una vez en el login (PASO 6,
+// junto a los que ya existian) y de vuelta cada vez que el admin cambia de sede activa (los 3
+// que dependen de sede se reconectan solos, los otros 5 no necesitan tocarse de nuevo).
+function _iniciarListenersOperativos() {
+  fbEscucharStock();
+  fbEscucharVentasHoy();
+  fbEscucharMovimientosHoy();
+  fbEscucharFiadosPendientes();
+  fbEscucharClientes();
+  fbEscucharPromociones();
+  fbEscucharMermasMes();
+  fbEscucharCanjes();
+}
+
+// ── Reconecta SOLO los 3 listeners que dependen de la sede activa — se llama cuando el admin
+// cambia de sede (ver cambiarSedeAdmin en core.js). Los otros 5 (stock, clientes, promociones,
+// mermas, canjes) no dependen de sede, no hace falta tocarlos de nuevo.
+function _reconectarListenersPorSede() {
+  fbEscucharVentasHoy();
+  fbEscucharMovimientosHoy();
+  fbEscucharFiadosPendientes();
 }
 
 // ── Patch DB: interceptar asignaciones de array para auto-guardar ──
