@@ -155,7 +155,7 @@ function renderCart() {
           : `<span class="qty-val">${item.cant}</span>`}
         <button class="qty-btn" onclick="changeQty(${i},1)">+</button>
       </div>
-      <div class="cart-item-price">${sol(item.precio * item.cant)}</div>
+      <div class="cart-item-price">${sol(subtotalItemCarrito(item))}</div>
       <button class="qty-btn" onclick="removeItem(${i})" style="background:var(--danger-light);color:var(--danger)">✕</button>
     </div>`).join('');
   if (isMobile()) mobUpdateBar();
@@ -201,9 +201,18 @@ function getCatIcono(catId, size) {
 }
 
 // ── Helper: distribute combo discount proportionally across items ──
+// Genera los items finales de una venta o fiado — con precio ajustado por combo si aplica, y
+// CRITICO: con el subtotal YA REDONDEADO grabado explícito en cada item (subtotalFinal). Sin
+// esto, Reportes/Historial/WhatsApp recalcularían precio*cant desde cero y mostrarían un
+// número distinto al que realmente se cobró en la venta — el redondeo de productos por peso
+// se perdería en cualquier pantalla que no sea el carrito original. Se usa tanto en
+// procesarVenta() como en cobrarFiado(), ambas pasan por esta misma función.
 function aplicarPreciosProporcionales(cartRef, comboInfo) {
   const result = cartRef.map(i => ({ ...i }));
-  if (!comboInfo || comboInfo.total === 0) return result;
+  if (!comboInfo || comboInfo.total === 0) {
+    result.forEach(i => { i.subtotalFinal = subtotalItemCarrito(i); });
+    return result;
+  }
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   promoActivas.forEach(promo => {
     const idx1 = result.findIndex(i => i.prodId == promo.prod1);
@@ -223,6 +232,7 @@ function aplicarPreciosProporcionales(cartRef, comboInfo) {
     result[idx1] = { ...result[idx1], precio: blend(r1, comboP1, result[idx1].cant), precioOriginal: r1, enCombo: true };
     result[idx2] = { ...result[idx2], precio: blend(r2, comboP2, result[idx2].cant), precioOriginal: r2, enCombo: true };
   });
+  result.forEach(i => { i.subtotalFinal = subtotalItemCarrito(i); });
   return result;
 }
 
@@ -415,7 +425,7 @@ function calcComboDescuento(cartRef) {
 }
 
 function calcTotal() {
-  const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
+  const sub = cart.reduce((s, i) => s + subtotalItemCarrito(i), 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const combo = calcComboDescuento(cart);
   const total = Math.max(0, sub - desc - combo.total);
@@ -496,7 +506,7 @@ async function procesarVenta() {
   // encima del incremento que el lote acaba de escribir. Ver nota en ensureCajaAbierta().
   await ensureCajaAbierta();
 
-  const sub = cart.reduce((s, i) => s + i.precio * i.cant, 0);
+  const sub = cart.reduce((s, i) => s + subtotalItemCarrito(i), 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const comboInfo = calcComboDescuento(cart);
   const comboDesc = comboInfo.total;
@@ -652,7 +662,7 @@ async function cobrarFiado() {
   if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
 
-  const sub = Math.round(cart.reduce((s, i) => s + i.precio * i.cant, 0) * 100) / 100;
+  const sub = Math.round(cart.reduce((s, i) => s + subtotalItemCarrito(i), 0) * 100) / 100;
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const comboInfo = calcComboDescuento(cart);
   const comboDesc = comboInfo.total;
@@ -804,7 +814,7 @@ function mostrarTicket(venta) {
     <div class="ticket-line"></div>
     ${venta.items.map(i => {
       const tag = i.enCombo ? ' 🎁' : '';
-      return `<div class="ticket-row"><span>${i.nombre}${tag} x${i.tipo==='granel'?i.cant.toFixed(2):i.cant}</span><span>${sol(i.precio*i.cant)}</span></div>`;
+      return `<div class="ticket-row"><span>${i.nombre}${tag} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant}</span><span>${sol(subtotalItemCarrito(i))}</span></div>`;
     }).join('')}
     <div class="ticket-line"></div>
     ${comboDescuento > 0 ? `<div class="ticket-row" style="color:#6c3fff"><span>🎁 Dcto. combo:</span><span>-${sol(comboDescuento)}</span></div>` : ''}
