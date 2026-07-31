@@ -868,7 +868,7 @@ function tndRenderPanel() {
           <div style="font-size:.8rem;color:#6b7280">puntos acumulados</div>
         </div>
         ${est.valorCanjeable > 0 ? `
-          <div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Podés canjear tus puntos por <strong>${sol(est.valorCanjeable)}</strong> de descuento.</div>
+          <div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Puedes canjear tus puntos por <strong>${sol(est.valorCanjeable)}</strong> de descuento.</div>
           <p style="font-size:.75rem;color:#9ca3af;margin-top:.5rem">Pídelo en caja al recoger tu pedido, o en cualquiera de nuestras sedes.</p>
         ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para juntar puntos canjeables.</p>'}`;
       footer.innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`;
