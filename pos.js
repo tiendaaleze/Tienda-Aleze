@@ -835,7 +835,7 @@ function _fidelizacionTicketHtml(clienteId) {
   if (!clienteId) return '';
   const est = estadoFidelizacion(clienteId);
   if (est.valorCanjeable > 0) {
-    return `<div class="ticket-center">🎁 Tenés <strong>${est.saldo} puntos</strong> — canjeable por ${sol(est.valorCanjeable)}</div><div class="ticket-line"></div>`;
+    return `<div class="ticket-center">🎁 Tienes <strong>${est.saldo} puntos</strong> — canjeable por ${sol(est.valorCanjeable)}</div><div class="ticket-line"></div>`;
   }
   return '';
 }
