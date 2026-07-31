@@ -77,15 +77,13 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
     ? '<p style="color:var(--gray-500);font-size:0.85rem">✅ Sin alertas</p>'
     : alertas.map(a => `<div class="alert-item ${a.tipo}"><span>${icons[a.tipo]}</span><div class="alert-text"><strong>${a.titulo}</strong><span>${a.sub}</span></div></div>`).join('');
 
-  // Top clientes por gasto — insignia de puntos real (antes usaba el sistema de niveles
-  // viejo, sin relación con Fidelización). "Cerca" muestra el mismo aviso que en POS/ticket.
+  // Top clientes por gasto — insignia de puntos real, con el valor canjeable si ya alcanza.
   const sortedCli = [...DB.clientes].sort((a,b)=>(b.total||0)-(a.total||0)).slice(0,5);
   const crowns = ['🥇','🥈','🥉','4️⃣','5️⃣'];
   document.getElementById('dash-frecuentes').innerHTML = sortedCli.map((c,i) => {
     const est = estadoFidelizacion(c.id);
-    let badgeFid = `<span class="badge" style="background:var(--gray-100);color:var(--gray-500)">${c.puntos||0} pts</span>`;
-    if (est.estado === 'premio_disponible') badgeFid = `<span class="badge badge-gold">🎉 Premio disponible</span>`;
-    else if (est.estado === 'cerca') badgeFid = `<span class="badge badge-gold">🎁 Faltan ${est.faltan} pts</span>`;
+    let badgeFid = `<span class="badge" style="background:var(--gray-100);color:var(--gray-500)">${est.saldo} pts</span>`;
+    if (est.valorCanjeable > 0) badgeFid = `<span class="badge badge-gold">🎁 Canjeable: ${sol(est.valorCanjeable)}</span>`;
     return `<div class="flex-between" style="padding:.35rem 0;border-bottom:1px solid var(--gray-100)"><span>${crowns[i]} <strong style="font-size:.85rem">${c.alias||c.nombre}</strong></span><div style="text-align:right"><div style="font-size:.85rem;font-weight:700;color:var(--primary)">${sol(c.total||0)}</div>${badgeFid}</div></div>`;
   }).join('');
 
