@@ -870,11 +870,6 @@
             <button type="button" class="btn btn-primary" onclick="agregarUsuarioStaff()">➕ Agregar usuario</button>
           </div>
           <div class="card">
-            <div class="card-title">🎁 Niveles programa frecuentes</div>
-            <div id="cfg-niveles-form"></div>
-            <button type="button" class="btn btn-primary mt-2" onclick="guardarNiveles()">Guardar niveles</button>
-          </div>
-          <div class="card">
             <div class="card-title">💼 Sueldos mensuales (S/)</div>
             <div class="form-group"><label>Jose Carlos</label><input type="number" class="form-control" id="sueldo-jc" value="0" /></div>
             <div class="form-group"><label>Shessira</label><input type="number" class="form-control" id="sueldo-sh" value="0" /></div>
@@ -941,29 +936,9 @@
           <div class="card-title">⚙️ Configuración de puntos</div>
           <div class="grid-2">
             <div class="form-group"><label>Puntos por sol gastado (base)</label><input type="number" class="form-control" id="fid-tasa-base" step="0.1" min="0.1" /></div>
-            <div class="form-group"><label>Avisar cuando falten (puntos)</label><input type="number" class="form-control" id="fid-ventana-aviso" step="10" min="0" /></div>
+            <div class="form-group"><label>Puntos para S/1 de descuento al canjear</label><input type="number" class="form-control" id="fid-tasa-canje" step="10" min="1" /></div>
           </div>
           <button type="button" class="btn btn-primary btn-sm" onclick="guardarFidelizacionConfig()">Guardar configuración</button>
-        </div>
-
-        <div class="card" style="margin-bottom:1rem">
-          <div class="card-title">🎁 Premios canjeables</div>
-          <div id="fid-premios-list"></div>
-          <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap;align-items:flex-end">
-            <div class="form-group" style="margin:0"><label style="font-size:.75rem">Puntos</label><input type="number" class="form-control" id="fid-nuevo-premio-puntos" style="max-width:100px" /></div>
-            <div class="form-group" style="margin:0"><label style="font-size:.75rem">Tipo</label>
-              <select class="form-control" id="fid-nuevo-premio-tipo" style="max-width:130px" onchange="_toggleCamposPremio()">
-                <option value="descuento">💰 Descuento</option>
-                <option value="producto">📦 Producto</option>
-              </select>
-            </div>
-            <div class="form-group" style="margin:0" id="fid-nuevo-premio-desc-wrap"><label style="font-size:.75rem">Descuento (S/)</label><input type="number" class="form-control" id="fid-nuevo-premio-monto" step="0.5" style="max-width:110px" /></div>
-            <div class="form-group" style="margin:0;display:none;min-width:200px" id="fid-nuevo-premio-prod-wrap"><label style="font-size:.75rem">Producto</label>
-              <select class="form-control" id="fid-nuevo-premio-prod"></select>
-            </div>
-            <div class="form-group" style="margin:0;flex:1;min-width:150px"><label style="font-size:.75rem">Nombre visible</label><input type="text" class="form-control" id="fid-nuevo-premio-nombre" placeholder="Ej: S/10 de descuento" /></div>
-            <button type="button" class="btn btn-outline btn-sm" onclick="agregarPremioFidelizacion()">+ Agregar</button>
-          </div>
         </div>
 
         <div class="card" style="margin-bottom:1rem">
@@ -976,10 +951,6 @@
           <div id="fid-canjes-historial"></div>
         </div>
 
-        <div class="card" style="background:linear-gradient(135deg,var(--primary-light),#fff);margin-bottom:1rem">
-          <div class="card-title">🎁 Niveles de premio (editables en Configuración) <span style="font-size:.72rem;color:var(--gray-400);font-weight:400">— sistema anterior, en revisión</span></div>
-          <div class="grid-4" id="niveles-display"></div>
-        </div>
         <div class="card" style="margin-bottom:1rem"><div class="card-title">🎄 Canasta Navideña — Top clientes del año</div><div id="ranking-navidad"></div></div>
         <div class="card"><div class="card-title">📊 Ranking anual completo</div><div id="ranking-table"></div></div>
       </div>
@@ -1611,13 +1582,18 @@
 <div class="modal-overlay" id="modal-canje">
   <div class="modal">
     <div class="modal-header">
-      <h3>🎁 Canjear premio</h3>
+      <h3>🎁 Canjear puntos</h3>
       <button type="button" class="modal-close" onclick="cerrarModal('modal-canje')">✕</button>
     </div>
     <div id="modal-canje-cliente" style="font-size:.85rem;color:var(--gray-600);margin-bottom:.75rem"></div>
-    <div id="modal-canje-lista"></div>
-    <div style="display:flex;justify-content:flex-end;margin-top:1rem">
-      <button type="button" class="btn btn-outline btn-sm" onclick="cerrarModal('modal-canje')">Cerrar</button>
+    <div class="form-group">
+      <label>Puntos a canjear</label>
+      <input type="number" class="form-control" id="canje-puntos-input" min="1" step="1" oninput="_actualizarPreviewCanje()" />
+    </div>
+    <div id="canje-preview" style="font-weight:700;color:var(--accent);text-align:center;padding:.5rem 0"></div>
+    <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem">
+      <button type="button" class="btn btn-outline btn-sm" onclick="cerrarModal('modal-canje')">Cancelar</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="confirmarCanje()">Canjear</button>
     </div>
   </div>
 </div>
