@@ -811,16 +811,13 @@ function mostrarTicket(venta) {
   abrirModal('modal-ticket');
 }
 
-// Opción B acordada: progreso visible, nunca la conversión a soles — usa el saldo YA actualizado
-// (mostrarTicket se llama después de sumar los puntos de esta venta, no antes).
+// Con el modelo nuevo (puntos = dinero directo, sin premios escalonados) no hay motivo para
+// ocultar el valor en soles como antes — es justamente lo transparente que se buscaba.
 function _fidelizacionTicketHtml(clienteId) {
   if (!clienteId) return '';
   const est = estadoFidelizacion(clienteId);
-  if (est.estado === 'premio_disponible') {
-    return `<div class="ticket-center" style="font-weight:700">🎉 ¡Ya puedes canjear: ${est.premio.nombre}!</div><div class="ticket-line"></div>`;
-  }
-  if (est.estado === 'cerca') {
-    return `<div class="ticket-center">🎁 Te faltan <strong>${est.faltan} puntos</strong> para tu próximo premio</div><div class="ticket-line"></div>`;
+  if (est.valorCanjeable > 0) {
+    return `<div class="ticket-center">🎁 Tenés <strong>${est.saldo} puntos</strong> — canjeable por ${sol(est.valorCanjeable)}</div><div class="ticket-line"></div>`;
   }
   return '';
 }
@@ -831,12 +828,9 @@ function _actualizarPremioBoxTicket(clienteId) {
   if (!pb) return;
   if (!clienteId) { pb.style.display = 'none'; return; }
   const est = estadoFidelizacion(clienteId);
-  if (est.estado === 'premio_disponible') {
+  if (est.valorCanjeable > 0) {
     pb.style.display = 'block';
-    document.getElementById('premio-txt').innerHTML = `<strong>${getClienteNombre(clienteId)}</strong> ya puede canjear: <strong>${est.premio.nombre}</strong>`;
-  } else if (est.estado === 'cerca') {
-    pb.style.display = 'block';
-    document.getElementById('premio-txt').innerHTML = `<strong>${getClienteNombre(clienteId)}</strong> está a <strong>${est.faltan} puntos</strong> de su próximo premio`;
+    document.getElementById('premio-txt').innerHTML = `<strong>${getClienteNombre(clienteId)}</strong> tiene ${est.saldo} pts — canjeable por <strong>${sol(est.valorCanjeable)}</strong>`;
   } else {
     pb.style.display = 'none';
   }
@@ -858,11 +852,8 @@ function onClienteChange() {
   if (!c) { inf.style.display = 'none'; return; }
   inf.style.display = 'block';
   document.getElementById('pos-cli-nombre').textContent = (c.alias||c.nombre) + ' ';
-  // Info de puntos real, en vez del sistema de niveles viejo (mismo criterio que en Dashboard).
   const est = estadoFidelizacion(id);
-  let fidTxt = (c.puntos||0) + ' pts';
-  if (est.estado === 'premio_disponible') fidTxt = '🎉 Premio disponible';
-  else if (est.estado === 'cerca') fidTxt = '🎁 Faltan ' + est.faltan + ' pts';
+  const fidTxt = est.valorCanjeable > 0 ? `🎁 ${est.saldo} pts (canjeable: ${sol(est.valorCanjeable)})` : (est.saldo + ' pts');
   document.getElementById('pos-cli-consumo').textContent = 'Consumo año: ' + sol(c.total) + ' | ' + fidTxt;
   // Mostrar alerta de premio sin interrumpir
   actualizarPremioAlertPOS();
