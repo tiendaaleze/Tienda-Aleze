@@ -179,7 +179,7 @@ function setGranelQty(i, val) {
 }
 
 function removeItem(i) { cart.splice(i, 1); renderCart(); calcTotal(); }
-function clearCart() { cart = []; renderCart(); calcTotal(); document.getElementById('pos-search').value = ''; const dc = document.getElementById('pos-descuento'); if (dc) dc.value = ''; renderPosGrid(); try { updatePosCartBadge(); } catch(e){} try { mobUpdateBar(); } catch(e){} }
+function clearCart() { cart = []; renderCart(); calcTotal(); document.getElementById('pos-search').value = ''; const dc = document.getElementById('pos-descuento'); if (dc) dc.value = ''; const mp = document.getElementById('pos-metodo-pago'); if (mp) mp.value = 'Efectivo'; renderPosGrid(); try { updatePosCartBadge(); } catch(e){} try { mobUpdateBar(); } catch(e){} }
 
 
 // ── Helper: get category icon (image if available, else emoji) ──
