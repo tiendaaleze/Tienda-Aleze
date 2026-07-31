@@ -197,7 +197,18 @@ async function _completarSesion(name, role) {
         getDocsM(collectionM(dbModular, 'boletas')),                                                 // 12
         getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia)))  // 13
       ]);
-      const _ok = i => _resultados[i].status === 'fulfilled' ? _resultados[i].value : null;
+      // CRITICO: antes, si una de estas 14 lecturas fallaba, solo se veia un aviso generico
+      // ("no se pudo reconciliar X") sin la razon real del error (permission-denied? red
+      // caida? App Check bloqueado?) — imposible diagnosticar con certeza cuando pasaba. Ahora
+      // se registra el codigo y mensaje real de CADA fallo, identificado por nombre.
+      const _nombresLectura = ['db_productos','db_ext','config','caja','stock','ventas','fiados',
+        'clientes','mermas','movimientos','promociones','proveedores','boletas','gastos'];
+      const _ok = i => {
+        if (_resultados[i].status === 'fulfilled') return _resultados[i].value;
+        const _razon = _resultados[i].reason;
+        console.warn(`[Offline] Fallo la lectura de '${_nombresLectura[i]}' — código: ${_razon?.code || 'desconocido'}, mensaje: ${_razon?.message || _razon}`);
+        return null;
+      };
       const snapProd = _ok(0), snapExt = _ok(1), snapConfig = _ok(2), cajaSnap = _ok(3), stockSnap = _ok(4),
             ventasSnap = _ok(5), fiadosSnap = _ok(6), clientesSnap = _ok(7), mermasSnap = _ok(8),
             movimientosSnap = _ok(9), promocionesSnap = _ok(10), proveedoresSnap = _ok(11),
