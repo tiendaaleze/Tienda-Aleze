@@ -42,7 +42,7 @@ function renderCaja() {
 }
 
 async function abrirCaja() {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede abrir caja. Podés ver el estado actual, pero no modificarlo.'); return; }
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede abrir caja. Puedes ver el estado actual, pero no modificarlo.'); return; }
   const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
   const sede = sedeAdminEfectiva();
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
@@ -92,7 +92,7 @@ function _saldoEfectivoTeorico() {
   return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresosEfectivo||0) - (DB.caja.retiros||0);
 }
 async function abrirRetiroEfectivo() {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede retirar efectivo. Podés ver el estado actual, pero no modificarlo.'); return; }
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede retirar efectivo. Puedes ver el estado actual, pero no modificarlo.'); return; }
   // CRITICO: ensureCajaAbierta() (con su lectura real al servidor) va PRIMERO, antes de
   // calcular "disponible" — si esto se calculaba antes, con la cache local todavia fria,
   // podia bloquear un retiro real diciendo "no hay efectivo" aunque el servidor si lo
@@ -151,7 +151,7 @@ function actualizarDiferenciaCierre() {
   notaWrap.style.display = Math.abs(diff) > 5 ? 'block' : 'none';
 }
 async function confirmarCierreCaja() {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cerrar caja. Podés ver el estado actual, pero no modificarlo.'); return; }
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cerrar caja. Puedes ver el estado actual, pero no modificarlo.'); return; }
   const contado = parseFloat(document.getElementById('cc-contado').value);
   if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
   const nota = document.getElementById('cc-nota').value.trim();
@@ -304,7 +304,7 @@ function _renderMovsTabla(movsVis) {
 }
 
 async function registrarMovimiento() {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar movimientos manuales. Podés ver el estado actual, pero no modificarlo.'); return; }
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar movimientos manuales. Puedes ver el estado actual, pero no modificarlo.'); return; }
   const tipo = document.getElementById('mov-tipo').value;
   const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
   const desc = document.getElementById('mov-desc').value;
