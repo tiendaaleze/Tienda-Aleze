@@ -231,7 +231,7 @@ function reporteMermas(desde, hasta, sede) {
 
 function reporteFiados(sede) {
  const data = DB.clientes.map(c => {
-    const deudaReal = DB.fiados.filter(f => f.clienteId === c.id && (!sede || (f.sedeId||'principal') === sede)).reduce((s,f) => s + Math.max(0, f.total - f.pagado), 0);
+    const deudaReal = DB.fiados.filter(f => f.clienteId === c.id && (!sede || (f.sedeId||'principal') === sede)).reduce((s,f) => s + fiadoMontoPendiente(f), 0);
     return { nombre: c.alias||c.nombre, deuda: deudaReal };
   }).filter(d => d.deuda > 0).sort((a,b) => b.deuda - a.deuda);
   const total = data.reduce((s,d)=>s+d.deuda,0);
@@ -398,7 +398,7 @@ async function exportReporte() {
   r4.push(xr(cs('TOTAL PÉRDIDA'),cs(''),cs(''),cs(''),cn(merLst.reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0))));
 
   // Hoja 5: Fiados
-  const fLst=DB.clientes.map(c=>({nom:c.alias||c.nombre,deu:DB.fiados.filter(f=>f.clienteId===c.id).reduce((s,f)=>s+Math.max(0,f.total-f.pagado),0)})).filter(d=>d.deu>0).sort((a,b)=>b.deu-a.deu);
+  const fLst=DB.clientes.map(c=>({nom:c.alias||c.nombre,deu:DB.fiados.filter(f=>f.clienteId===c.id).reduce((s,f)=>s+fiadoMontoPendiente(f),0)})).filter(d=>d.deu>0).sort((a,b)=>b.deu-a.deu);
   const r5=[xr(ch('Cliente'),ch('Deuda S/'))];
   fLst.forEach(d=>r5.push(xr(cs(d.nom),cn(d.deu))));
   r5.push(xr(cs('TOTAL'),cn(fLst.reduce((s,d)=>s+d.deu,0))));
