@@ -34,7 +34,7 @@ function renderMermas() {
   // Por sede, mismo criterio que el resto de pantallas operativas.
   const _sedeM = sedeAdminEfectiva();
   const _mermasSede = DB.mermas.filter(m => (m.sedeId||'principal') === _sedeM);
-  const totalPerd = _mermasSede.reduce((s, m) => { const p = DB.productos.find(x => x.id === m.prodId); return s + (p ? p.costo * m.cant : 0); }, 0);
+  const totalPerd = _mermasSede.reduce((s, m) => s + costoMerma(m), 0);
   const mesMermas = _mermasSede.filter(m => m.fecha.startsWith(today().substring(0,7))).length;
   const motivos = {};
   _mermasSede.forEach(m => motivos[m.motivo] = (motivos[m.motivo]||0)+1);
@@ -45,7 +45,7 @@ function renderMermas() {
 
   document.getElementById('merma-tbody').innerHTML = _mermasSede.map(m => {
     const p = DB.productos.find(x => x.id === m.prodId);
-    const perdida = p ? p.costo * m.cant : 0;
+    const perdida = costoMerma(m);
     return `<tr>
       <td>${formatDate(m.fecha)}</td>
       <td>${p ? p.nombre : '<span style="color:var(--gray-400)">Producto eliminado</span>'}</td>
@@ -201,7 +201,7 @@ if (editingMermaId) {
       _deltasStock.push({ prod: p, delta });
     });
 
-    const _mermaActualizada = { ...old, prodId, cant, motivo, obs, sedeId: _sede };
+    const _mermaActualizada = { ...old, prodId, cant, motivo, obs, sedeId: _sede, costoUnitario: prod.costo };
     batch.set(docM(dbModular, 'mermas', String(old.id)), _mermaActualizada);
 
     _sincIniciar('merma_lote', old.id);
@@ -217,11 +217,11 @@ if (editingMermaId) {
       p.stockPorSede[_sede] = Math.max(0, Math.round(((p.stockPorSede[_sede]||0)+delta)*1000)/1000);
       p.stock = stockTotal(p);
     });
-    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede;
+    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede; old.costoUnitario = prod.costo;
     fbGuardar(); fbGuardarProductos();
   } else {
     if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
-    const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede };
+    const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede, costoUnitario: prod.costo };
     batch.set(docM(dbModular, 'stock', String(prod.id)),
       { [`stockPorSede.${_sede}`]: incrementM(-cant) }, { merge: true });
     batch.set(docM(dbModular, 'mermas', String(nuevaMerma.id)), nuevaMerma);
