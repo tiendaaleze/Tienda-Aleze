@@ -653,6 +653,15 @@ function costoVenta(v) {
   }, 0);
 }
 
+// Mismo criterio que costoVenta() — prioriza el costo historico guardado en la propia merma
+// al momento de registrarla, y solo cae al costo actual del producto si es una merma anterior
+// a este arreglo (y aun asi, solo si el producto sigue existiendo en el catalogo).
+function costoMerma(m) {
+  if (m.costoUnitario != null) return m.costoUnitario * (m.cant||0);
+  const p = DB.productos.find(x => x.id === m.prodId);
+  return p ? p.costo * (m.cant||0) : 0;
+}
+
 // Redondea el subtotal de un item del carrito a los 10 centavos más cercanos — solo aplica a
 // productos por peso (granel), donde el precio exacto por gramo casi nunca cae en una moneda
 // pagable en efectivo (ej. S/1.97). Productos por unidad no se tocan, su precio ya es exacto.
