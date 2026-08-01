@@ -708,8 +708,7 @@ function getAlertas() {
     else if (diff === 2) { const key='bday2_'+c.id+'_'+_yr; if (!ignoradas[key]) alertas.push({tipo:'info', titulo:'🎂 En 2 días cumple '+(c.alias||c.nombre), sub:'Anticipa el detalle', key}); }
   });
  DB.fiados.forEach(f => {
-  // Saneamos la visualización y validación del saldo para eliminar decimales huérfanos
-  const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
+  const pendiente = fiadoMontoPendiente(f);
   if (pendiente > 0) {
     const key = 'fiado_' + f.id + '_' + pendiente;
     if (!ignoradas[key]) alertas.push({ tipo:'info', titulo:'Fiado pendiente: '+getClienteNombre(f.clienteId), sub:'Debe '+sol(pendiente), key });
