@@ -1302,7 +1302,7 @@ async function sincronizarMermasInventario() {
         id: getId(), prodId: p.id, cant: cantidad,
         motivo: d.motivo || 'Inventario mensual',
         obs: 'Registrado desde inventario mensual ' + formatDate(fechaInv),
-        fecha: fechaInv, usuario: currentUser, sedeId: sede
+        fecha: fechaInv, usuario: currentUser, sedeId: sede, costoUnitario: p.costo
       };
       _pendientes.push({ prod: p, delta: diff, merma: _mermaInv }); // diff ya es negativo
     }
