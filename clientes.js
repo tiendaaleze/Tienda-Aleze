@@ -127,8 +127,8 @@ function renderFiados() {
     const valorActual = selCli.value;
     selCli.innerHTML = '<option value="">Todos los clientes</option>';
     let fiadosParaSelector = _fiadosSede;
-    if (estado === 'pendiente') fiadosParaSelector = fiadosParaSelector.filter(f => (f.total - f.pagado) > 0.01);
-    if (estado === 'pagado')    fiadosParaSelector = fiadosParaSelector.filter(f => (f.total - f.pagado) <= 0.01);
+    if (estado === 'pendiente') fiadosParaSelector = fiadosParaSelector.filter(f => fiadoPendiente(f));
+    if (estado === 'pagado')    fiadosParaSelector = fiadosParaSelector.filter(f => !fiadoPendiente(f));
     const cidsConFiados = [...new Set(fiadosParaSelector.map(f => f.clienteId))];
     cidsConFiados.forEach(cid => {
       const cli = DB.clientes.find(c => c.id === cid);
@@ -149,8 +149,8 @@ function renderFiados() {
   if (cliFilter) clienteIds = clienteIds.filter(cid => cid === cliFilter);
 
   // Filtro por estado
-  if (estado === 'pendiente') clienteIds = clienteIds.filter(cid => porCliente[cid].some(f => (f.total - f.pagado) > 0));
-  if (estado === 'pagado') clienteIds = clienteIds.filter(cid => porCliente[cid].every(f => (f.total - f.pagado) <= 0));
+  if (estado === 'pendiente') clienteIds = clienteIds.filter(cid => porCliente[cid].some(f => fiadoPendiente(f)));
+  if (estado === 'pagado') clienteIds = clienteIds.filter(cid => porCliente[cid].every(f => !fiadoPendiente(f)));
 
   // Filtro por fecha — aplica sobre fiados individuales
   if (desde || hasta) {
@@ -159,12 +159,12 @@ function renderFiados() {
     ));
   }
 
-  const totalDeuda = _fiadosSede.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
+  const totalDeuda = _fiadosSede.reduce((s, f) => s + fiadoMontoPendiente(f), 0);
   const clientesConDeuda = [...new Set(_fiadosSede.map(f => f.clienteId))].filter(cid =>
-    _fiadosSede.filter(f => f.clienteId === cid).some(f => (f.total - f.pagado) > 0)
+    _fiadosSede.filter(f => f.clienteId === cid).some(f => fiadoPendiente(f))
   ).length;
   const mayor = [...new Set(_fiadosSede.map(f => f.clienteId))].reduce((m, cid) => {
-    const d = _fiadosSede.filter(f => f.clienteId === cid).reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
+    const d = _fiadosSede.filter(f => f.clienteId === cid).reduce((s, f) => s + fiadoMontoPendiente(f), 0);
     return Math.max(m, d);
   }, 0);
   document.getElementById('fiados-total').textContent = sol(totalDeuda);
@@ -183,14 +183,14 @@ function renderFiados() {
     const nombre = cli ? (cli.alias || cli.nombre) : 'Anónimo';
     const tel = cli ? cli.tel : '';
     let fiados = porCliente[cid];
-    if (desde || hasta) fiados = fiados.filter(f => ((!desde || f.fecha >= desde) && (!hasta || f.fecha <= hasta)) || (f.total - f.pagado) > 0.01);
-    else fiados = fiados.filter(f => f.fecha >= _hace30diasStr || (f.total - f.pagado) > 0.01);
+    if (desde || hasta) fiados = fiados.filter(f => ((!desde || f.fecha >= desde) && (!hasta || f.fecha <= hasta)) || fiadoPendiente(f));
+    else fiados = fiados.filter(f => f.fecha >= _hace30diasStr || fiadoPendiente(f));
     const totalCli = Math.round(fiados.reduce((s, f) => s + f.total, 0) * 100) / 100;
     const pagadoCli = Math.round(fiados.reduce((s, f) => s + f.pagado, 0) * 100) / 100;
     const pendienteCli = Math.round((totalCli - pagadoCli) * 100) / 100;
     const detalleId = 'fiado-detalle-' + cid;
     const detalle = [...fiados].sort((a,b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.id - a.id).map(f => {
-      const pend = Math.round((f.total - f.pagado) * 100) / 100;
+      const pend = fiadoMontoPendiente(f);
       return `<div style="border-left:3px solid var(--warning);padding:.5rem .75rem;margin-bottom:.5rem;background:white;border-radius:0 6px 6px 0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
           <span style="font-size:.75rem;color:var(--gray-500)">${formatDate(f.fecha)}</span>
@@ -276,12 +276,12 @@ function renderDetalleFiado(cid) {
   let fiados  = DB.fiados.filter(f => f.clienteId === cid);
   // Un pendiente nunca desaparece por el filtro de fecha (sigue siendo deuda real) — el
   // filtro de fecha solo acota lo YA PAGADO.
-  if (desde) fiados = fiados.filter(f => f.fecha >= desde || (f.total - f.pagado) > 0.01);
-  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta || (f.total - f.pagado) > 0.01);
-  if (tipo === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
-  if (tipo === 'pagado')    fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
+  if (desde) fiados = fiados.filter(f => f.fecha >= desde || fiadoPendiente(f));
+  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta || fiadoPendiente(f));
+  if (tipo === 'pendiente') fiados = fiados.filter(f => fiadoPendiente(f));
+  if (tipo === 'pagado')    fiados = fiados.filter(f => !fiadoPendiente(f));
   const html = [...fiados].sort((a,b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.id - a.id).map(f => {
-    const pend = Math.round((f.total - f.pagado) * 100) / 100;
+    const pend = fiadoMontoPendiente(f);
     return `<div style="border-left:3px solid var(--warning);padding:.5rem .75rem;margin-bottom:.5rem;background:white;border-radius:0 6px 6px 0">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
         <span style="font-size:.75rem;color:var(--gray-500)">${formatDate(f.fecha)}</span>
@@ -373,16 +373,16 @@ function compartirResumenFiadoCliente(cid) {
   let fiados  = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeCRF);
   // Un pendiente nunca desaparece por el filtro de fecha (sigue siendo deuda real) — el
   // filtro de fecha solo acota lo YA PAGADO.
-  if (desde) fiados = fiados.filter(f => f.fecha >= desde || (f.total - f.pagado) > 0.01);
-  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta || (f.total - f.pagado) > 0.01);
-  if (tipo === 'pendiente') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
-  if (tipo === 'pagado')    fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
-  const totalPend = Math.round(fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
+  if (desde) fiados = fiados.filter(f => f.fecha >= desde || fiadoPendiente(f));
+  if (hasta) fiados = fiados.filter(f => f.fecha <= hasta || fiadoPendiente(f));
+  if (tipo === 'pendiente') fiados = fiados.filter(f => fiadoPendiente(f));
+  if (tipo === 'pagado')    fiados = fiados.filter(f => !fiadoPendiente(f));
+  const totalPend = Math.round(fiados.reduce((s, f) => s + fiadoMontoPendiente(f), 0) * 100) / 100;
   let msg = `Hola ${nombre}, su resumen de fiados en *${DB.config.nombre||'Tienda Aleze'}*:\n`;
   if (desde || hasta) msg += `📅 Período: ${desde ? formatDate(desde) : 'inicio'} al ${hasta ? formatDate(hasta) : 'hoy'}\n`;
   msg += '\n';
   fiados.forEach(f => {
-    const pend = Math.round((f.total - f.pagado) * 100) / 100;
+    const pend = fiadoMontoPendiente(f);
     msg += `📌 ${formatDate(f.fecha)}: ${f.items.map(i => i.nombre + ' x' + i.cant).join(', ')} → ${sol(f.total)}`;
     msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
   });
@@ -395,7 +395,7 @@ function abrirPagoGlobal(cid) {
   const cli = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
   const _sedeAPG = sedeAdminEfectiva();
- const pendienteTotal = Math.round(DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeAPG).reduce((s,f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
+ const pendienteTotal = Math.round(DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeAPG).reduce((s,f) => s + fiadoMontoPendiente(f), 0) * 100) / 100;
   if (pendienteTotal <= 0) { alert('Este cliente no tiene deuda pendiente.'); return; }
   const monto = parseFloat(prompt(`Pago global para ${nombre}\nDeuda total: ${sol(pendienteTotal)}\n\nIngresa el monto a pagar:`));
   if (!monto || isNaN(monto) || monto <= 0) return;
@@ -431,7 +431,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   metodo = metodo || 'Efectivo';
   let saldo = montoTotal;
   const _sedeEPG = sedeAdminEfectiva();
-  const fiados = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && (f.total - f.pagado) > 0).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
+  const fiados = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && fiadoPendiente(f)).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
 
   // Mismo criterio que la venta: TODOS los fiados tocados, el cliente, caja, movimiento y
   // cada registro de historial viajan en un solo lote — o se aplican todos juntos, o ninguno.
@@ -445,7 +445,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
 
   fiados.forEach(f => {
     if (saldo <= 0) return;
-    const pendFiado = Math.round((f.total - f.pagado) * 100) / 100;
+    const pendFiado = fiadoMontoPendiente(f);
     const montoPagadoEsteFiado = Math.min(saldo, pendFiado);
     if (montoPagadoEsteFiado > 0) {
       // Nota: _asignarPagoAItems SI modifica f.items[].pagado como parte de calcular el costo
@@ -456,7 +456,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
       const costoAsociado = _asignarPagoAItems(f, montoPagadoEsteFiado);
       const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' };
       const _fPagado = Math.round((f.pagado + montoPagadoEsteFiado) * 100) / 100;
-      const _fEstado = _fPagado >= f.total ? 'pagado' : 'pendiente';
+      const _fEstado = (Math.round((f.total - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
       batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: [...(f.pagos||[]), _fPagoEntry], estado: _fEstado });
       saldo = Math.round((saldo - montoPagadoEsteFiado) * 100) / 100;
       const _entry = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado, sedeId: _sedeEPG };
@@ -528,7 +528,7 @@ function confirmarEliminarFiado(id) {
     alert('⛔ Este fiado pertenece a la otra sede — no se puede modificar desde acá.');
     return;
   }
-  const pend = f.total - f.pagado;
+  const pend = fiadoMontoPendiente(f);
   const opciones = pend > 0
     ? `¿Cómo deseas eliminar este fiado de ${sol(f.total)}?
 
@@ -610,7 +610,7 @@ function abrirPagoFiado(id) {
   editingFiadoId = id;
   const f = DB.fiados.find(x => x.id === id);
   const cli = DB.clientes.find(c => c.id === f.clienteId);
-  const pendiente = f.total - f.pagado;
+  const pendiente = fiadoMontoPendiente(f);
   document.getElementById('fiado-detalle').innerHTML = `
     <div style="background:var(--gray-50);border-radius:8px;padding:0.75rem;margin-bottom:1rem">
       <strong>${getClienteNombre(f.clienteId)}</strong>
@@ -650,7 +650,7 @@ async function confirmarPagoFiado() {
   }
   const monto = parseFloat(document.getElementById('fiado-pago-monto').value) || 0;
   const metodo = document.getElementById('fiado-pago-metodo')?.value || 'Efectivo';
-const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
+const pendiente = fiadoMontoPendiente(f);
   if (monto <= 0 || monto > pendiente) { alert('Monto inválido. Máximo: ' + sol(pendiente)); return; }
   const costoAsociado = _asignarPagoAItems(f, monto);
 
@@ -665,7 +665,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
 
   const _fPagos = [...(f.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
   const _fPagado = Math.round((f.pagado + monto) * 100) / 100;
-  const _fEstado = _fPagado >= f.total ? 'pagado' : 'pendiente';
+  const _fEstado = (Math.round((f.total - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
   batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede, estado: _fEstado });
 
   batch.set(docM(dbModular, 'clientes', String(f.clienteId)), {
@@ -723,7 +723,7 @@ const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
 function compartirFiadoWhatsapp() {
   const f = DB.fiados.find(x => x.id === editingFiadoId);
   if (!f) return;
-  const pendiente = Math.round((f.total - f.pagado) * 100) / 100;
+  const pendiente = fiadoMontoPendiente(f);
   if (pendiente <= 0) { alert('Este fiado ya está pagado — no hay deuda que recordar.'); return; }
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
@@ -787,8 +787,8 @@ function renderHistorialCliente() {
   if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
 
   // Filtro por tipo
-  if (tipo === 'pendientes') fiados = fiados.filter(f => (f.total - f.pagado) > 0);
-  else if (tipo === 'pagados') fiados = fiados.filter(f => (f.total - f.pagado) <= 0);
+  if (tipo === 'pendientes') fiados = fiados.filter(f => fiadoPendiente(f));
+  else if (tipo === 'pagados') fiados = fiados.filter(f => !fiadoPendiente(f));
 
   const contenido = document.getElementById('hcli-contenido');
 
@@ -819,12 +819,12 @@ function renderHistorialCliente() {
     return;
   }
 
-  const totalPend = fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0);
+  const totalPend = fiados.reduce((s, f) => s + fiadoMontoPendiente(f), 0);
   document.getElementById('hcli-resumen-filtro').textContent = `${fiados.length} venta(s) encontrada(s) · Pendiente: ${sol(totalPend)}`;
   contenido.innerHTML = fiados.length === 0
     ? '<p style="color:var(--gray-400);text-align:center;padding:1rem">Sin registros para los filtros seleccionados</p>'
     : [...fiados].sort((a,b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.id - a.id).map(f => {
-        const pend = f.total - f.pagado;
+        const pend = fiadoMontoPendiente(f);
         const pagosF = (f.pagos || []);
         return `<div style="border-left:3px solid ${pend>0?'var(--warning)':'var(--accent)'};padding:.6rem .75rem;margin-bottom:.6rem;background:white;border-radius:0 6px 6px 0;box-shadow:var(--shadow)">
           <div style="display:flex;justify-content:space-between;margin-bottom:.3rem">
@@ -878,11 +878,11 @@ function compartirHistorialWhatsapp() {
     pagos.forEach(p => { msg += `• ${p.fecha} ${p.hora} — ${sol(p.monto)} (${p.cajero})\n`; });
     msg += `\n*Total abonado: ${sol(total)}*\n`;
   } else {
-    if (tipo === 'pendientes') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) > 0);
-    else if (tipo === 'pagados') fiados = fiados.filter(f => (Math.round((f.total - f.pagado) * 100) / 100) <= 0);
-    const totalPend = Math.round(fiados.reduce((s, f) => s + Math.max(0, f.total - f.pagado), 0) * 100) / 100;
+    if (tipo === 'pendientes') fiados = fiados.filter(f => fiadoPendiente(f));
+    else if (tipo === 'pagados') fiados = fiados.filter(f => !fiadoPendiente(f));
+    const totalPend = Math.round(fiados.reduce((s, f) => s + fiadoMontoPendiente(f), 0) * 100) / 100;
     fiados.forEach(f => {
-      const pend = Math.round((f.total - f.pagado) * 100) / 100;
+      const pend = fiadoMontoPendiente(f);
       msg += `📌 ${formatDate(f.fecha)}: ${f.items.map(i=>`${i.nombre} x${i.cant}`).join(', ')} → ${sol(f.total)}`;
       msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
     });
