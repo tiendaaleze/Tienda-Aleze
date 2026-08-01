@@ -128,8 +128,14 @@ function reporteProductos(datos) {
     if (!prods[i.nombre]) prods[i.nombre] = { cant: 0, total: 0, costo: 0 };
     prods[i.nombre].cant += i.cant;
     prods[i.nombre].total += subtotalItemCarrito(i);
-    const p = DB.productos.find(x=>x.id===i.prodId);
-    prods[i.nombre].costo += (p?p.costo:0) * i.cant;
+    // Prioriza el costo historico guardado en el item — solo cae al costo actual del producto
+    // si esa venta es anterior a este arreglo, y aun asi solo si el producto sigue existiendo.
+    if (i.costoUnitario != null) {
+      prods[i.nombre].costo += i.costoUnitario * i.cant;
+    } else {
+      const p = DB.productos.find(x=>x.id===i.prodId);
+      prods[i.nombre].costo += (p?p.costo:0) * i.cant;
+    }
   }));
   const sorted = Object.entries(prods).sort((a,b)=>b[1].cant-a[1].cant).slice(0,10);
 
@@ -151,14 +157,24 @@ function reporteProductos(datos) {
 
 function reporteRentabilidad(datos, desde, hasta) {
   const { vendido, cobrado } = datos;
-  // Por producto
+  // Por producto — CRITICO: se agrupa por el prodId guardado en el ITEM, nunca por una
+  // relectura del catalogo actual. Antes, si un producto se eliminaba del catalogo, la venta
+  // completa desaparecia de este reporte (ni ingreso ni costo se contaban) — "Rentabilidad
+  // real" y "Ganancia bruta" quedaban mal, en cualquier direccion segun el margen del producto
+  // eliminado. El nombre y el costo tambien vienen del propio item (historico), nunca de una
+  // relectura que pueda fallar si el producto ya no existe.
   const porProd = {};
   vendido.forEach(v => (v.items||[]).forEach(i => {
-    const p = DB.productos.find(x=>x.id===i.prodId); if(!p) return;
-    if (!porProd[p.id]) porProd[p.id] = { nombre: p.nombre, costo: p.costo, precio: p.precio, cantVendida: 0, ingresos: 0, costoTotal: 0 };
-    porProd[p.id].cantVendida += i.cant;
-    porProd[p.id].ingresos += subtotalItemCarrito(i);
-    porProd[p.id].costoTotal += p.costo * i.cant;
+    const key = i.prodId;
+    if (!porProd[key]) porProd[key] = { nombre: i.nombre, cantVendida: 0, ingresos: 0, costoTotal: 0 };
+    porProd[key].cantVendida += i.cant;
+    porProd[key].ingresos += subtotalItemCarrito(i);
+    if (i.costoUnitario != null) {
+      porProd[key].costoTotal += i.costoUnitario * i.cant;
+    } else {
+      const p = DB.productos.find(x=>x.id===i.prodId);
+      porProd[key].costoTotal += (p ? p.costo : 0) * i.cant;
+    }
   }));
   const data = Object.values(porProd).map(p => ({
     ...p,
@@ -172,7 +188,7 @@ function reporteRentabilidad(datos, desde, hasta) {
   const gastosMes = DB_EXT.gastos.filter(g=>g.fecha&&g.fecha>=desde&&g.fecha<=hasta).reduce((s,g)=>s+g.monto,0);
   const gastosRec = DB_EXT.gastosRec.reduce((s,g)=>s+g.monto,0);
   const sueldos = Object.values(DB_EXT.sueldos).reduce((s,v)=>s+v,0);
-  const mermasCosto = DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta).reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0);
+  const mermasCosto = DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta).reduce((s,m)=>s+costoMerma(m),0);
   const rentReal = totalGan - gastosMes - gastosRec - sueldos - mermasCosto;
   const totalCobrado = cobrado.reduce((s,v)=>s+v.total,0);
 
@@ -215,20 +231,20 @@ function reporteRentabilidad(datos, desde, hasta) {
 
 function reporteMermas(desde, hasta, sede) {
   const mermas = DB.mermas.filter(m => m.fecha >= desde && m.fecha <= hasta && (!sede || (m.sedeId||'principal') === sede));
-  const total = mermas.reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0);
+  const total = mermas.reduce((s,m)=>s+costoMerma(m),0);
   document.getElementById('rep-stats').innerHTML = `
     <div class="stat-card red"><div class="stat-label">Pérdida total período</div><div class="stat-value">${sol(total)}</div></div>
     <div class="stat-card orange"><div class="stat-label">N° registros</div><div class="stat-value">${mermas.length}</div></div>`;
   document.getElementById('rep-tabla-titulo').textContent = 'Detalle de mermas';
   document.getElementById('rep-tabla-wrap').innerHTML = `
     <table><thead><tr><th>Fecha</th><th>Producto</th><th>Cantidad</th><th>Motivo</th><th>Pérdida S/</th></tr></thead>
-    <tbody>${mermas.map(m=>{const p=DB.productos.find(x=>x.id===m.prodId);return`<tr><td>${formatDate(m.fecha)}</td><td>${p?p.nombre:'-'}</td><td>${m.cant}</td><td>${m.motivo}</td><td style="color:var(--danger);font-weight:700">${sol(p?p.costo*m.cant:0)}</td></tr>`;}).join('')}</tbody>
+    <tbody>${mermas.map(m=>{const p=DB.productos.find(x=>x.id===m.prodId);return`<tr><td>${formatDate(m.fecha)}</td><td>${p?p.nombre:(m.nombre||'(producto eliminado)')}</td><td>${m.cant}</td><td>${m.motivo}</td><td style="color:var(--danger);font-weight:700">${sol(costoMerma(m))}</td></tr>`;}).join('')}</tbody>
     <tfoot><tr style="background:var(--gray-50);font-weight:700"><td colspan="4">TOTAL PÉRDIDA</td><td style="color:var(--danger)">${sol(total)}</td></tr></tfoot>
     </table>`;
   if (chartReporte) chartReporte.destroy();
   // Chart por motivo
   const porMotivo = {};
-  mermas.forEach(m => { const p=DB.productos.find(x=>x.id===m.prodId); porMotivo[m.motivo]=(porMotivo[m.motivo]||0)+(p?p.costo*m.cant:0); });
+  mermas.forEach(m => { porMotivo[m.motivo]=(porMotivo[m.motivo]||0)+costoMerma(m); });
   chartReporte = new Chart(document.getElementById('chart-reporte').getContext('2d'), {
     type: 'doughnut',
     data: { labels: Object.keys(porMotivo), datasets: [{ data: Object.values(porMotivo), backgroundColor: ['#EF4444','#F59E0B','#7C3AED','#3B82F6','#10B981'] }] },
@@ -391,7 +407,7 @@ async function exportReporte() {
   const gOp=DB_EXT.gastos.filter(g=>g.fecha&&g.fecha>=desde&&g.fecha<=hasta).reduce((s,g)=>s+g.monto,0);
   const gRec=DB_EXT.gastosRec.reduce((s,g)=>s+g.monto,0);
   const sue=Object.values(DB_EXT.sueldos).reduce((s,v)=>s+v,0);
-  const mer=DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta).reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0);
+  const mer=DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta).reduce((s,m)=>s+costoMerma(m),0);
   r3.push(xr(cs(''),cs(''),cs(''),cs(''),cs(''),cs('')));
   r3.push(xr(cs('Ganancia bruta'),cs(''),cs(''),cs(''),cn(gB),cs('')));
   r3.push(xr(cs('Gastos operativos'),cs(''),cs(''),cs(''),cn(-(gOp+gRec+sue)),cs('')));
@@ -401,8 +417,8 @@ async function exportReporte() {
   // Hoja 4: Mermas
   const merLst=DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta);
   const r4=[xr(ch('Fecha'),ch('Producto'),ch('Cantidad'),ch('Motivo'),ch('Pérdida S/'))];
-  merLst.forEach(m=>{const p=DB.productos.find(x=>x.id===m.prodId);r4.push(xr(cs(formatDate(m.fecha)),cs(p?p.nombre:'-'),cn(m.cant),cs(m.motivo),cn(p?p.costo*m.cant:0)));});
-  r4.push(xr(cs('TOTAL PÉRDIDA'),cs(''),cs(''),cs(''),cn(merLst.reduce((s,m)=>{const p=DB.productos.find(x=>x.id===m.prodId);return s+(p?p.costo*m.cant:0);},0))));
+  merLst.forEach(m=>{const p=DB.productos.find(x=>x.id===m.prodId);r4.push(xr(cs(formatDate(m.fecha)),cs(p?p.nombre:(m.nombre||'(producto eliminado)')),cn(m.cant),cs(m.motivo),cn(costoMerma(m))));});
+  r4.push(xr(cs('TOTAL PÉRDIDA'),cs(''),cs(''),cs(''),cn(merLst.reduce((s,m)=>s+costoMerma(m),0))));
 
   // Hoja 5: Fiados
   const fLst=DB.clientes.map(c=>({nom:c.alias||c.nombre,deu:DB.fiados.filter(f=>f.clienteId===c.id).reduce((s,f)=>s+fiadoMontoPendiente(f),0)})).filter(d=>d.deu>0).sort((a,b)=>b.deu-a.deu);
