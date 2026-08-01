@@ -346,7 +346,7 @@ function fbGuardar() {
   if (DB.fiados && DB.fiados.length) {
     const _limitePodaFiados = new Date(); _limitePodaFiados.setDate(_limitePodaFiados.getDate() - 90);
     const _limitePodaFiadosStr = _limitePodaFiados.toISOString().split('T')[0];
-    DB.fiados = DB.fiados.filter(f => (f.total - f.pagado) > 0.01 || f.fecha >= _limitePodaFiadosStr);
+    DB.fiados = DB.fiados.filter(f => fiadoPendiente(f) || f.fecha >= _limitePodaFiadosStr);
   }
   fbGuardarConfig();
 }
