@@ -44,8 +44,8 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
 
   // Deuda en fiados — por sede, mismo criterio que el resto del dashboard. Capital se retiró
   // de acá (sigue disponible en su propia pantalla) — es algo de largo plazo, no algo del día.
-  const _fiadosPendDash = (DB.fiados||[]).filter(f => (f.sedeId||'principal') === _sedeDash && (f.total - f.pagado) > 0.01);
-  const _deudaTotalDash = _fiadosPendDash.reduce((s,f) => s + (f.total - f.pagado), 0);
+  const _fiadosPendDash = (DB.fiados||[]).filter(f => (f.sedeId||'principal') === _sedeDash && fiadoPendiente(f));
+  const _deudaTotalDash = _fiadosPendDash.reduce((s,f) => s + fiadoMontoPendiente(f), 0);
   document.getElementById('dash-fiados-deuda').textContent = sol(_deudaTotalDash);
   document.getElementById('dash-fiados-clientes').textContent = new Set(_fiadosPendDash.map(f=>f.clienteId)).size + ' cliente(s)';
 
