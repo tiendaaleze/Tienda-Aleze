@@ -24,7 +24,7 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   const costoHoy = ventasHoy.reduce((s,v) => s + costoVenta(v), 0);
   // Mermas del día
   const mermasHoy = (DB.mermas||[]).filter(m=>m.fecha===hoy && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
-    const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
+    return s + costoMerma(m);
   },0);
   const gastosHoy = (DB_EXT.gastos||[]).filter(g=>g.fecha===hoy && (g.sedeId||'principal')===_sedeDash).reduce((s,g)=>s+g.monto,0);
   const costoFiadosHoy = hvAll.filter(v => v.fecha === hoy && v.origen === 'pago_fiado').reduce((s,v) => {
@@ -60,7 +60,7 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   const costoMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado')
     .reduce((s,v)=>s+costoVenta(v),0);
   const mermasMes = (DB.mermas||[]).filter(m=>m.fecha&&m.fecha.startsWith(mes) && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
-    const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
+    return s + costoMerma(m);
   },0);
   const rentReal = ventasMes - costoMes - gastosMes - sueldosMes - gastosRec - mermasMes - DB_EXT.capital.cuota;
   const deficit = rentReal - DB_EXT.capital.meta;
