@@ -528,7 +528,10 @@ async function procesarVenta() {
   } else {
     venta = {
       id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
-      items: itemsConPrecioReal, subtotal: sub,
+      items: itemsConPrecioReal.map(i => {
+        const prod = DB.productos.find(p => p.id === i.prodId);
+        return { ...i, costoUnitario: prod ? prod.costo : 0 };
+      }), subtotal: sub,
       descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
       total, metodo, clienteId, sedeId: sedeAdminEfectiva()
     };
