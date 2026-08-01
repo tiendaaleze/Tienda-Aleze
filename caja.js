@@ -682,7 +682,7 @@ async function updateCapStats() {
   const gastosRec  = DB_EXT.gastosRec.reduce((s,g) => s+g.monto, 0);
   const sueldosMes = Object.values(DB_EXT.sueldos).reduce((s,v) => s+v, 0);
   const mermasMes  = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(mes))
-    .reduce((s,m) => { const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0); }, 0);
+    .reduce((s,m) => s + costoMerma(m), 0);
   const totalGastos = gastosMes + gastosRec + sueldosMes;
   const ganBruta    = ventasMes - costoMes;
   const rentReal    = ganBruta - totalGastos - mermasMes - DB_EXT.capital.cuota;
@@ -693,7 +693,7 @@ async function updateCapStats() {
   const costoAnio  = cobradoAnio.reduce((s,v) => s+_costoDeVenta(v), 0);
   const gastosAnio = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(anio)).reduce((s,g) => s+g.monto, 0);
   const mermasAnio = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(anio))
-    .reduce((s,m) => { const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0); }, 0);
+    .reduce((s,m) => s + costoMerma(m), 0);
   const rentAnio = (ventasAnio - costoAnio) - gastosAnio - mermasAnio;
 
   document.getElementById('rent-real-detalle').innerHTML = `
@@ -827,7 +827,7 @@ async function abrirCerrarMes() {
   const gastosRec  = DB_EXT.gastosRec.reduce((s,g) => s+g.monto, 0);
   const sueldosMes = Object.values(DB_EXT.sueldos).reduce((s,v) => s+v, 0);
   const mermasMes  = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(mes))
-    .reduce((s,m) => { const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0); }, 0);
+    .reduce((s,m) => s + costoMerma(m), 0);
   const ganancia = (ventasMes - costoMes) - gastosMes - gastosRec - sueldosMes - mermasMes;
   document.getElementById('cm-monto').value = ganancia.toFixed(2);
   document.getElementById('cm-detalle').textContent =
