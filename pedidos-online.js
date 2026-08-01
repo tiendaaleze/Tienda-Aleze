@@ -562,10 +562,14 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
 
       let _ventaOnline = null, _fiadoOnline = null;
       if (_esPagado) {
+        const _itemsConCosto = itemsFinales.map(i => {
+          const prod = DB.productos.find(x => x.id === i.prodId);
+          return { ...i, costoUnitario: prod ? prod.costo : 0 };
+        });
         _ventaOnline = {
           id: p.id, fecha: p.fecha, hora: p.hora,
           cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
-          clienteNombre: p.clienteNombre, items: itemsFinales,
+          clienteNombre: p.clienteNombre, items: _itemsConCosto,
           subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'completado',
