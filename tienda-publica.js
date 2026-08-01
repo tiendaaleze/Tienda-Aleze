@@ -352,15 +352,25 @@ function _renderTienda() {
   display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1rem;
 }
 .tnd-prod-card {
-  background:white;border-radius:14px;padding:1rem;
+  background:white;border-radius:14px;overflow:hidden;
   box-shadow:0 1px 4px rgba(0,0,0,.08);cursor:pointer;
   transition:all .15s;border:2px solid transparent;
-  display:flex;flex-direction:column;align-items:center;text-align:center;
+  display:flex;flex-direction:column;
   position:relative;
 }
 .tnd-prod-card:hover:not(.agotado) { border-color:#7C3AED;transform:translateY(-2px); }
 .tnd-prod-card.agotado { opacity:.6;cursor:not-allowed; }
-.tnd-prod-icon { font-size:2.5rem;margin-bottom:.4rem; }
+/* La imagen ahora ocupa todo el ancho de la tarjeta, en formato cuadrado — es lo que
+   realmente resalta el producto, en vez de un ícono chico perdido en espacio en blanco.
+   Fondo gris muy suave para que fotos con fondo blanco/transparente no se "pierdan". */
+.tnd-prod-img-wrap {
+  width:100%;aspect-ratio:1/1;background:#F3F4F6;
+  display:flex;align-items:center;justify-content:center;
+  padding:.85rem;box-sizing:border-box;
+}
+.tnd-prod-img-wrap img { width:100%;height:100%;object-fit:contain; }
+.tnd-prod-icon-emoji { font-size:3.6rem; }
+.tnd-prod-info { padding:.75rem .9rem .9rem;text-align:center; }
 .tnd-prod-name { font-size:.85rem;font-weight:700;color:#1f2937;margin-bottom:.25rem;line-height:1.2; }
 .tnd-prod-price { font-size:1.1rem;font-weight:800;color:#7C3AED; }
 .tnd-prod-price-orig { font-size:.75rem;color:#9ca3af;text-decoration:line-through; }
@@ -595,10 +605,10 @@ function tndFiltrar() {
     const agotado = stockTotal(p) <= 0;
     const cat = (DB.categorias||[]).find(c => c.id === p.cat);
    const icon = p.imagen
-      ? `<img src="${p.imagen}" style="width:60px;height:60px;object-fit:contain;border-radius:8px">`
+      ? `<img src="${p.imagen}" alt="${p.nombre}">`
       : cat?.imagen
-        ? `<img src="${cat.imagen}" style="width:60px;height:60px;object-fit:cover;border-radius:8px">`
-        : (cat?.emoji || '📦');
+        ? `<img src="${cat.imagen}" alt="${p.nombre}">`
+        : `<span class="tnd-prod-icon-emoji">${cat?.emoji || '📦'}</span>`;
     const badge = _getStockBadge(p);
     const promo = _getPromoTienda(p);
     const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
@@ -611,12 +621,13 @@ function tndFiltrar() {
       ${p.tieneDetalle ? `<div style="position:absolute;top:6px;left:6px;background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px;z-index:2">🔍 +Detalle</div>` : ''}
       <div class="tnd-prod-badge">${badge}</div>
   ${p.esCombo ? `<div class="tnd-prod-promo" style="background:var(--accent)">OFERTA</div>` : promo ? `<div class="tnd-prod-promo">PROMO</div>` : ''}
-      <div class="tnd-prod-icon">${icon}</div>
-      <div class="tnd-prod-name">${p.nombre}</div>
-      ${precioOrig ? `<div class="tnd-prod-price-orig">S/ ${precioOrig.toFixed(2)}</div>` : ''}
-      <div class="tnd-prod-price">S/ ${precio.toFixed(2)}${p.tipo==='granel'?'<span style="font-size:.65em;font-weight:400"> /kg</span>':''}</div>
-
-      ${agotado ? '<div style="font-size:.75rem;color:#ef4444;margin-top:.25rem">Sin stock</div>' : ''}
+      <div class="tnd-prod-img-wrap">${icon}</div>
+      <div class="tnd-prod-info">
+        <div class="tnd-prod-name">${p.nombre}</div>
+        ${precioOrig ? `<div class="tnd-prod-price-orig">S/ ${precioOrig.toFixed(2)}</div>` : ''}
+        <div class="tnd-prod-price">S/ ${precio.toFixed(2)}${p.tipo==='granel'?'<span style="font-size:.65em;font-weight:400"> /kg</span>':''}</div>
+        ${agotado ? '<div style="font-size:.75rem;color:#ef4444;margin-top:.25rem">Sin stock</div>' : ''}
+      </div>
     </div>`;
   }).join('') || '<p style="grid-column:1/-1;text-align:center;color:#9ca3af;padding:2rem">Sin productos que coincidan</p>';
 }
