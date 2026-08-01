@@ -618,6 +618,21 @@ function _norm(s) {
 // ===================== UTILS =====================
 function sol(n) { return 'S/ ' + parseFloat(n || 0).toFixed(2); }
 
+// ── Fiados: monto pendiente real y si "todavía debe algo" — CRITICO, corrige un bug real de
+// punto flotante confirmado (JavaScript: 0.1 + 0.2 no da exactamente 0.3). Varios lugares del
+// sistema comparaban (f.total - f.pagado) contra 0 sin ninguna tolerancia — un fiado
+// completamente pagado podía quedar con un residuo invisible como 0.0000000000018, que se ve
+// y redondea como "S/ 0.00" en cualquier pantalla, pero técnicamente sigue siendo > 0. Eso
+// hacía que el filtro "Con pendiente" siguiera mostrando clientes ya pagados en su totalidad.
+// Esta es la ÚNICA función que debe usarse para decidir si un fiado sigue pendiente — nunca
+// comparar (f.total - f.pagado) directo contra 0 en ningún otro lugar del código.
+function fiadoMontoPendiente(f) {
+  return Math.max(0, Math.round(((f.total||0) - (f.pagado||0)) * 100) / 100);
+}
+function fiadoPendiente(f) {
+  return fiadoMontoPendiente(f) > 0;
+}
+
 // Redondea el subtotal de un item del carrito a los 10 centavos más cercanos — solo aplica a
 // productos por peso (granel), donde el precio exacto por gramo casi nunca cae en una moneda
 // pagable en efectivo (ej. S/1.97). Productos por unidad no se tocan, su precio ya es exacto.
