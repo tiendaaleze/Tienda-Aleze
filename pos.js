@@ -42,13 +42,15 @@ function renderPosGrid(search = '') {
       return promo ? promo.precioPromo : p.precio;
     })();
     const iconHtml = p.imagen
-      ? `<div style="width:46px;height:46px;margin:0 auto .3rem;border-radius:8px;overflow:hidden"><img src="${p.imagen}" style="width:100%;height:100%;object-fit:cover" /></div>`
-      : `<div class="p-icon">${getCatIcono(p.cat)}</div>`;
+      ? `<div class="p-img-wrap"><img src="${p.imagen}" alt="${p.nombre}"></div>`
+      : `<div class="p-img-wrap"><div class="p-icon">${getCatIcono(p.cat)}</div></div>`;
     return `<div class="product-card" onclick="addToCart(${p.id})">
       ${iconHtml}
-      <div class="p-name">${p.nombre}</div>
-      <div class="p-price">${sol(precioMostrar)} ${promoTag}</div>
-      <div class="p-stock">Stock: ${stockEnSede(p)} ${p.unidad}</div>
+      <div class="p-info">
+        <div class="p-name">${p.nombre}</div>
+        <div class="p-price">${sol(precioMostrar)} ${promoTag}</div>
+        <div class="p-stock">Stock: ${stockEnSede(p)} ${p.unidad}</div>
+      </div>
     </div>`;
   }).join('') || '<p style="color:var(--gray-400);font-size:0.85rem;padding:1rem">Sin productos</p>';
 }
@@ -195,7 +197,11 @@ function getCatIcono(catId, size) {
   const c = DB.categorias.find(x => x.id == catId);
   if (!c) return '📦';
   if (c.imagen) return c.imagen.startsWith('data:') || c.imagen.startsWith('http')
-    ? '<img src="'+c.imagen+'" style="width:'+(size||28)+'px;height:'+(size||28)+'px;object-fit:cover;border-radius:4px;vertical-align:middle"/>'
+    // Sin "size" explicito, llena el contenedor (pensado para .p-img-wrap, formato cuadrado) —
+    // con "size" explicito, mantiene el comportamiento anterior para otros usos futuros chicos.
+    ? (size
+        ? '<img src="'+c.imagen+'" style="width:'+size+'px;height:'+size+'px;object-fit:cover;border-radius:4px;vertical-align:middle"/>'
+        : '<img src="'+c.imagen+'" style="width:100%;height:100%;object-fit:contain"/>')
     : (c.emoji || '📦');
   return c.emoji || '📦';
 }
@@ -998,15 +1004,17 @@ function renderMobPosGrid(prods) {
     })();
     const stockBajo = stockEnSede(p) <= p.stockMin;
     const iconHtml = p.imagen
-      ? `<div style="width:44px;height:44px;margin:0 auto .25rem;border-radius:8px;overflow:hidden"><img src="${p.imagen}" style="width:100%;height:100%;object-fit:cover"/></div>`
-      : `<div class="p-icon">${getCatIcono(p.cat)}</div>`;
+      ? `<div class="p-img-wrap"><img src="${p.imagen}" alt="${p.nombre}"></div>`
+      : `<div class="p-img-wrap"><div class="p-icon">${getCatIcono(p.cat)}</div></div>`;
     const _stockSede = stockEnSede(p);
     return `<div class="product-card${_stockSede === 0 && !p.esCombo ? ' opacity-50' : ''}" onclick="mobAddToCart(${p.id})" style="${_stockSede===0 && !p.esCombo?'opacity:.45;pointer-events:none':''}">
       ${tag}
       ${iconHtml}
-      <div class="p-name">${p.nombre}</div>
-      <div class="p-price" style="${stockBajo?'color:var(--danger)':''}">S/ ${precio.toFixed(2)}</div>
-      <div class="p-stock" style="${stockBajo?'color:var(--danger);font-weight:700':''}">Stock: ${_stockSede} ${p.unidad}</div>
+      <div class="p-info">
+        <div class="p-name">${p.nombre}</div>
+        <div class="p-price" style="${stockBajo?'color:var(--danger)':''}">S/ ${precio.toFixed(2)}</div>
+        <div class="p-stock" style="${stockBajo?'color:var(--danger);font-weight:700':''}">Stock: ${_stockSede} ${p.unidad}</div>
+      </div>
     </div>`;
   }).join('') || '<p style="color:var(--gray-400);text-align:center;padding:2rem;grid-column:1/-1">Sin productos</p>';
 }
