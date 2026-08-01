@@ -1,5 +1,5 @@
 // ================================================
-// Service Worker — Aleze Shop
+// Service Worker — Tienda Aleze
 // Estrategia: Network First, fallback a caché
 // Versión: 1.0.0
 // ================================================
