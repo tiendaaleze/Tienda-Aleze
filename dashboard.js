@@ -19,11 +19,9 @@ function renderDashboard() {
 document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobradosHoy);
   document.getElementById('dash-ventas-num').textContent = txHoy + ' transacciones';
 
-  // Rentabilidad hoy (cost uses actual item prices from historial)
-  const costoHoy = ventasHoy.reduce((s,v) => s + (v.items||[]).reduce((ss,i) => {
-    const p = DB.productos.find(x=>x.id===i.prodId);
-    return ss + (p ? p.costo * i.cant : 0);
-  }, 0), 0);
+  // Rentabilidad hoy — costoVenta() prioriza el costo historico guardado en cada item, y solo
+  // cae al costo actual del producto si esa venta es anterior a este arreglo.
+  const costoHoy = ventasHoy.reduce((s,v) => s + costoVenta(v), 0);
   // Mermas del día
   const mermasHoy = (DB.mermas||[]).filter(m=>m.fecha===hoy && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
     const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
@@ -60,7 +58,7 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   const sueldosMes = Object.values(DB_EXT.sueldos||{}).reduce((s,v)=>s+v,0);
   const gastosRec = (DB_EXT.gastosRec||[]).reduce((s,g)=>s+g.monto,0);
   const costoMes = hvAll.filter(v=>v.fecha&&v.fecha.startsWith(mes)&&v.estado!=='anulado'&&v.estado!=='fiado')
-    .reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
+    .reduce((s,v)=>s+costoVenta(v),0);
   const mermasMes = (DB.mermas||[]).filter(m=>m.fecha&&m.fecha.startsWith(mes) && (m.sedeId||'principal')===_sedeDash).reduce((s,m)=>{
     const p=DB.productos.find(x=>x.id===m.prodId); return s+(p?p.costo*m.cant:0);
   },0);
