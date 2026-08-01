@@ -633,6 +633,26 @@ function fiadoPendiente(f) {
   return fiadoMontoPendiente(f) > 0;
 }
 
+// ── Costo real de una venta/fiado/pago — CRITICO, corrige 2 problemas reales confirmados:
+// 1) Ventas normales (procesarVenta) nunca guardaban costoUnitario en sus items — solo
+//    fiados lo hacían. Sin eso, cualquier reporte que recalculara el costo tenía que volver a
+//    buscar el producto ACTUAL en el catálogo — si ese producto se eliminó despues de la
+//    venta, el costo salía en S/0.00, aunque la venta sí tuvo un costo real ese día.
+// 2) Un pago de fiado (origen 'pago_fiado') no tiene array de items — es un registro de pago,
+//    no de venta — pero sí trae su costoAsociado ya calculado al momento del pago. Varios
+//    reportes ignoraban este campo por completo, mostrando costo cero para pagos reales.
+// Esta funcion resuelve ambos: prioriza el costo historico guardado en el item (o el
+// costoAsociado del pago), y solo si no existe (ventas viejas, antes de este arreglo) cae al
+// costo actual del producto como aproximacion.
+function costoVenta(v) {
+  if (v.origen === 'pago_fiado' && v.costoAsociado != null) return v.costoAsociado;
+  return (v.items||[]).reduce((s,i) => {
+    if (i.costoUnitario != null) return s + i.costoUnitario * i.cant;
+    const p = DB.productos.find(x => x.id === i.prodId);
+    return s + (p ? p.costo * i.cant : 0);
+  }, 0);
+}
+
 // Redondea el subtotal de un item del carrito a los 10 centavos más cercanos — solo aplica a
 // productos por peso (granel), donde el precio exacto por gramo casi nunca cae en una moneda
 // pagable en efectivo (ej. S/1.97). Productos por unidad no se tocan, su precio ya es exacto.
