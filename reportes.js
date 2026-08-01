@@ -76,9 +76,15 @@ function reporteVentas(datos) {
   const labels = Object.keys(porDia).sort();
   const data = labels.map(d => porDia[d]);
   const total = vendido.reduce((s,v) => s+v.total, 0);
-  const costoTotal = vendido.reduce((s,v) => s+(v.items||[]).reduce((ss,i) => { const p=DB.productos.find(x=>x.id===i.prodId); return ss+(p?p.costo*i.cant:0); },0), 0);
+  const costoTotal = vendido.reduce((s,v) => s+costoVenta(v), 0);
   const ganancia = total - costoTotal;
   const totalCobrado = cobrado.reduce((s,v)=>s+v.total,0);
+  // CRITICO: "Ganancia bruta" de arriba es devengado (vendido) — a proposito NO incluye pagos
+  // de fiado, para no duplicar el ingreso (la venta ya se conto el dia que se creo el fiado).
+  // Pero eso dejaba la ganancia REAL de cobrar un fiado invisible en todo este reporte, aunque
+  // el Dashboard si la mostrara — costoVenta() ya sabe leer el costoAsociado de un pago.
+  const costoCobrado = cobrado.reduce((s,v) => s+costoVenta(v), 0);
+  const gananciaCobrada = totalCobrado - costoCobrado;
 
   if (chartReporte) chartReporte.destroy();
   chartReporte = new Chart(document.getElementById('chart-reporte').getContext('2d'), {
@@ -87,7 +93,7 @@ function reporteVentas(datos) {
       { label: 'Ventas S/', data, borderColor: '#7C3AED', backgroundColor: 'rgba(124,58,237,0.1)', fill: true, tension: 0.4 },
       { label: 'Ganancia S/', data: labels.map(d => {
         const vs = vendido.filter(v=>v.fecha===d);
-        const c = vs.reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
+        const c = vs.reduce((s,v)=>s+costoVenta(v),0);
         return vs.reduce((s,v)=>s+v.total,0) - c;
       }), borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.08)', fill: true, tension: 0.4 }
     ]},
@@ -97,7 +103,8 @@ function reporteVentas(datos) {
   document.getElementById('rep-stats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Vendido (devengado)</div><div class="stat-value">${sol(total)}</div></div>
     <div class="stat-card blue" style="border-left-color:var(--info)"><div class="stat-label">Cobrado (caja real)</div><div class="stat-value">${sol(totalCobrado)}</div></div>
-    <div class="stat-card green"><div class="stat-label">Ganancia bruta S/</div><div class="stat-value">${sol(ganancia)}</div></div>
+    <div class="stat-card green"><div class="stat-label">Ganancia bruta (devengado) S/</div><div class="stat-value">${sol(ganancia)}</div></div>
+    <div class="stat-card green" style="border-left-color:var(--accent)"><div class="stat-label">Ganancia real cobrada S/ <span style="font-weight:400;font-size:.68rem;color:var(--gray-400)">(incluye pagos de fiado)</span></div><div class="stat-value">${sol(gananciaCobrada)}</div></div>
     <div class="stat-card"><div class="stat-label">N° transacciones</div><div class="stat-value">${vendido.length}</div></div>`;
 
   document.getElementById('rep-tabla-titulo').textContent = 'Ventas por día (devengado)';
@@ -105,7 +112,7 @@ function reporteVentas(datos) {
     <table><thead><tr><th>Fecha</th><th>Transacc.</th><th>Total S/</th><th>Costo S/</th><th>Ganancia S/</th></tr></thead>
     <tbody>${labels.map(d => {
       const vs = vendido.filter(v=>v.fecha===d);
-      const c = vs.reduce((s,v)=>s+(v.items||[]).reduce((ss,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return ss+(p?p.costo*i.cant:0);},0),0);
+      const c = vs.reduce((s,v)=>s+costoVenta(v),0);
       const g = porDia[d]-c;
       return `<tr><td>${formatDate(d)}</td><td>${vs.length}</td><td>${sol(porDia[d])}</td><td style="color:var(--danger)">${sol(c)}</td><td style="color:var(--accent);font-weight:700">${sol(g)}</td></tr>`;
     }).join('')}
@@ -347,7 +354,7 @@ async function exportReporte() {
     if (!porDia[v.fecha]) porDia[v.fecha] = {tx:0, tot:0, cos:0};
     porDia[v.fecha].tx++;
     porDia[v.fecha].tot += v.total;
-    porDia[v.fecha].cos += (v.items||[]).reduce((s,i)=>{const p=DB.productos.find(x=>x.id===i.prodId);return s+(p?p.costo*i.cant:0);},0);
+    porDia[v.fecha].cos += costoVenta(v);
   });
   const r1 = [xr(ch('Fecha'),ch('Transacciones'),ch('Total S/'),ch('Costo S/'),ch('Ganancia S/'))];
   Object.keys(porDia).sort().forEach(d => {
