@@ -570,7 +570,7 @@ Escribe 1 para confirmar:`;
       const cantMerma = Math.round(cantMermaExacta * 100) / 100;
       const perdidaMonto = Math.round(prod.costo * cantMermaExacta * 100) / 100;
       if (perdidaMonto <= 0) return;
-    const _mermaFI = { id: getId(), prodId: i.prodId, cant: cantMerma, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' — ' + getClienteNombre(f.clienteId), fecha: today(), usuario: currentUser, sedeId: f.sedeId || 'principal' };
+    const _mermaFI = { id: getId(), prodId: i.prodId, cant: cantMerma, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' — ' + getClienteNombre(f.clienteId), fecha: today(), usuario: currentUser, sedeId: f.sedeId || 'principal', costoUnitario: prod.costo };
     DB.mermas.push(_mermaFI);
       fbSincronizarMerma(_mermaFI);
       _algunaMermaRegistrada = true;
