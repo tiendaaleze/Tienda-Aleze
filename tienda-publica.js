@@ -374,7 +374,9 @@ function _renderTienda() {
 .tnd-prod-name { font-size:.85rem;font-weight:700;color:#1f2937;margin-bottom:.25rem;line-height:1.2; }
 .tnd-prod-price { font-size:1.1rem;font-weight:800;color:#7C3AED; }
 .tnd-prod-price-orig { font-size:.75rem;color:#9ca3af;text-decoration:line-through; }
-.tnd-prod-promo { position:absolute;top:8px;left:8px;color:white;font-size:.63rem;font-weight:700;padding:2px 7px;border-radius:4px;z-index:1;background:#EF4444; }
+.tnd-badges-left { position:absolute;top:8px;left:8px;z-index:2;display:flex;flex-direction:column;gap:4px;align-items:flex-start; }
+.tnd-badge-detalle { background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px; }
+.tnd-prod-promo { color:white;font-size:.63rem;font-weight:700;padding:2px 7px;border-radius:4px;background:#EF4444; }
 .tnd-prod-badge { position:absolute;top:8px;right:8px; }
 .tnd-panel-overlay {
   position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;
@@ -617,10 +619,12 @@ function tndFiltrar() {
     const sugerido = precioCat && precioCat !== p.precio ? precioCat : null;
 
     const accionClic = agotado ? '' : (p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`);
-    return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${accionClic}" style="position:relative">
-      ${p.tieneDetalle ? `<div style="position:absolute;top:6px;left:6px;background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px;z-index:2">🔍 +Detalle</div>` : ''}
+ return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${accionClic}" style="position:relative">
+      <div class="tnd-badges-left">
+        ${p.tieneDetalle ? `<span class="tnd-badge-detalle">🔍 Detalle</span>` : ''}
+        ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">PROMO</span>` : ''}
+      </div>
       <div class="tnd-prod-badge">${badge}</div>
-  ${p.esCombo ? `<div class="tnd-prod-promo" style="background:var(--accent)">OFERTA</div>` : promo ? `<div class="tnd-prod-promo">PROMO</div>` : ''}
       <div class="tnd-prod-img-wrap">${icon}</div>
       <div class="tnd-prod-info">
         <div class="tnd-prod-name">${p.nombre}</div>
