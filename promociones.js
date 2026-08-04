@@ -316,17 +316,40 @@ function onPromoImgSelect(e) {
   reader.onload = function(ev) {
     const img = new Image();
     img.onload = function() {
+      // CRITICO: esta imagen nunca subia a Storage — quedaba como base64 directo dentro del
+      // propio documento de la promocion en Firestore, la unica de las 4 subidas de imagen
+      // del sistema que hacia esto. Ahora sube a Storage igual que producto/categoria/fotos
+      // extra, consistente con el resto — y de paso, sin recorte forzado (preserva
+      // proporcion). 200px es de sobra para esta miniatura, que nunca se ve mas grande.
+      const ratioPromo = Math.min(200 / img.width, 200 / img.height, 1);
       const canvas = document.createElement('canvas');
-      canvas.width = 128; canvas.height = 128;
+      canvas.width = Math.round(img.width * ratioPromo);
+      canvas.height = Math.round(img.height * ratioPromo);
       const ctx = canvas.getContext('2d');
-      const scale = Math.max(128/img.width, 128/img.height);
-      const sw = 128/scale, sh = 128/scale;
-      const sx = (img.width-sw)/2, sy = (img.height-sh)/2;
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 128, 128);
-      const data = canvas.toDataURL('image/webp', 0.78);
-      document.getElementById('promo-img-data').value = data;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const previewData = canvas.toDataURL('image/webp', 0.78);
       const preview = document.getElementById('promo-img-preview');
-      if (preview) preview.innerHTML = `<img src="${data}" style="width:100%;height:100%;object-fit:cover;border-radius:8px"/>`;
+      if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:8px"/>`;
+      if (!fbStorage) {
+        document.getElementById('promo-img-data').value = previewData;
+        return;
+      }
+      if (preview) preview.insertAdjacentHTML('afterend', '<span id="_promo-img-upload-lbl" style="font-size:.72rem;color:var(--primary)">⏳ Subiendo...</span>');
+      canvas.toBlob(async (blob) => {
+        try {
+          const fileName = `promociones/${editingPromoId || Date.now()}.webp`;
+          const ref = fbStorage.ref(fileName);
+          await ref.put(blob, { contentType: 'image/webp' });
+          const url = await ref.getDownloadURL();
+          document.getElementById('promo-img-data').value = url;
+          const lbl = document.getElementById('_promo-img-upload-lbl');
+          if (lbl) lbl.remove();
+        } catch(err) {
+          document.getElementById('promo-img-data').value = previewData;
+          const lbl = document.getElementById('_promo-img-upload-lbl');
+          if (lbl) lbl.textContent = '⚠️ Error Storage — imagen guardada local';
+        }
+      }, 'image/webp', 0.78);
     };
     img.src = ev.target.result;
   };
