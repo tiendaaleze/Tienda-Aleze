@@ -225,6 +225,15 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       // IndexedDB compitiendo con la de dbModular, causando permission-denied y demoras de
       // varios minutos (ya corregido, quitando esa llamada).
       fbAuth = firebase.auth();
+      // CRITICO: sin esto, el SDK de Auth "adivina" el mejor metodo de persistencia segun el
+      // navegador — en ciertos navegadores moviles con proteccion de privacidad fuerte, esa
+      // auto-deteccion intenta requestStorageAccess() (pensado para contextos de iframe de
+      // terceros, que esta app nunca es — corre standalone/PWA). Cuando el navegador la
+      // rechaza ("Permission denied", visto en consola), el SDK puede quedar en un estado
+      // roto que produce el TypeError no capturado que sigue justo despues en los logs.
+      // Fijando el metodo explicito (localStorage simple, mismo origen, sin necesidad de
+      // ningun permiso de terceros) se evita que el SDK intente esa deteccion en absoluto.
+      try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch(persErr) { console.warn('[Auth] No se pudo fijar persistencia explicita (Compat):', persErr.message); }
       fbStorage = firebase.storage();
       // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
       // Y las Cloud Functions ya fueron desplegadas manualmente. Si no se desplegaron,
@@ -272,6 +281,9 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
             dbModular = window.__fbModular.firestore.getFirestore(appModular);
           }
           authModular = window.__fbModular.auth.getAuth(appModular);
+          try {
+            await window.__fbModular.auth.setPersistence(authModular, window.__fbModular.auth.browserLocalPersistence);
+          } catch (persErrMod) { console.warn('[Auth] No se pudo fijar persistencia explicita (Modular):', persErrMod.message); }
           storageModular = window.__fbModular.storage.getStorage(appModular);
           ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
              updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
