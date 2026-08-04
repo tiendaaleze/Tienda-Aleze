@@ -147,16 +147,6 @@
     </div>
   </header>
 
-  <!-- Barra propia para la sede administrativa — antes vivía apretada en el header junto al
-       badge de sincronización, causaba el mismo problema de espacio que ya se corrigió ahí.
-       Solo se muestra para admin. -->
-  <div id="sede-context-bar" style="display:none;align-items:center;gap:.4rem;background:#EDE9FE;border-bottom:1px solid #DDD6FE;padding:.15rem .75rem;font-size:.72rem;min-height:0;line-height:1.2">
-    <span style="color:#5B21B6;font-weight:600">📍</span>
-    <select id="sede-admin-selector" style="font-size:.7rem;padding:.1rem .35rem;border-radius:5px;border:1px solid #C4B5FD;background:#fff;color:#5B21B6" onchange="cambiarSedeAdmin(this.value)" title="Sede en la que estás operando administrativamente — boletas, mermas, productos nuevos, gastos, caja e inventario se registran/muestran ahí">
-      <option value="">Mi sede</option>
-    </select>
-  </div>
-
   <div class="main-wrap">
     <aside id="sidebar">
       <!-- Header con toggle -->
@@ -788,11 +778,6 @@
             </select>
             <input type="date" class="form-control" id="rep-desde" style="width:150px" onchange="generarReporte()" />
             <input type="date" class="form-control" id="rep-hasta" style="width:150px" onchange="generarReporte()" />
-            <select class="form-control" id="rep-sede" style="width:150px" onchange="generarReporte()">
-              <option value="">Todas las sedes</option>
-              <option value="principal">Principal</option>
-              <option value="Tienda Aleze II">Tienda Aleze II</option>
-            </select>
             <button type="button" class="btn btn-outline btn-sm" onclick="exportReporte()">📥 Exportar Excel</button>
           </div>
         </div>
@@ -852,19 +837,13 @@
           <div class="card">
             <div class="card-title">👥 Gestión de usuarios</div>
             <div id="usuarios-staff-list" style="margin-bottom:.75rem"></div>
-            <div style="font-size:.72rem;color:var(--gray-400);margin-bottom:.5rem">Esto solo administra el nombre, rol y sede visibles en el sistema. La cuenta (correo + contraseña) se crea aparte, directamente en Firebase Authentication.</div>
+            <div style="font-size:.72rem;color:var(--gray-400);margin-bottom:.5rem">Esto solo administra el nombre y rol visibles en el sistema. La cuenta (correo + contraseña) se crea aparte, directamente en Firebase Authentication.</div>
             <div class="form-group"><label>Nombre</label><input type="text" class="form-control" id="nuevo-usr-nombre" placeholder="Nombre completo" /></div>
             <div class="form-group"><label>Correo (ya creado en Firebase Auth)</label><input type="email" class="form-control" id="nuevo-usr-email" placeholder="correo@gmail.com" /></div>
             <div class="form-group"><label>Rol</label>
               <select class="form-control" id="nuevo-usr-rol">
                 <option value="cajero">Cajero</option>
                 <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div class="form-group"><label>Sede</label>
-              <select class="form-control" id="nuevo-usr-sede">
-                <option value="principal">Sede I (Principal)</option>
-                <option value="Tienda Aleze II">Sede II (Tienda Aleze II)</option>
               </select>
             </div>
             <button type="button" class="btn btn-primary" onclick="agregarUsuarioStaff()">➕ Agregar usuario</button>
@@ -1056,13 +1035,8 @@
               <option value="pos">POS (tienda)</option>
               <option value="online">Online (tienda web)</option>
             </select>
-            <select class="form-control" id="hv-sede" style="width:150px" onchange="renderHistorialVentas()">
-              <option value="">Todas las sedes</option>
-              <option value="principal">Principal</option>
-              <option value="Tienda Aleze II">Tienda Aleze II</option>
-            </select>
             <input type="text" class="form-control" id="hv-buscar" placeholder="Buscar cajero, producto..." style="width:200px" oninput="renderHistorialVentas()" />
-            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('hv-desde').value='';document.getElementById('hv-hasta').value='';document.getElementById('hv-estado').value='';document.getElementById('hv-origen').value='';document.getElementById('hv-sede').value='';document.getElementById('hv-buscar').value='';renderHistorialVentas()">🔄 Limpiar filtros</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('hv-desde').value='';document.getElementById('hv-hasta').value='';document.getElementById('hv-estado').value='';document.getElementById('hv-origen').value='';document.getElementById('hv-buscar').value='';renderHistorialVentas()">🔄 Limpiar filtros</button>
           </div>
         </div>
         <div class="grid-4" id="hv-stats" style="margin-bottom:1rem"></div>
@@ -1070,7 +1044,7 @@
           <div class="table-wrap">
             <table id="hv-table">
               <thead>
-                <tr><th>Fecha</th><th>Hora</th><th>Origen</th><th>Sede</th><th>Cajero/Cliente</th><th>Productos</th><th>Total S/</th><th>Método</th><th>Estado</th><th>Acciones</th></tr>
+                <tr><th>Fecha</th><th>Hora</th><th>Origen</th><th>Cajero/Cliente</th><th>Productos</th><th>Total S/</th><th>Método</th><th>Estado</th><th>Acciones</th></tr>
               </thead>
               <tbody id="hv-tbody"></tbody>
             </table>
@@ -1149,7 +1123,7 @@
         </div>
         <div class="form-group"><label>Precio de venta (S/) *</label><input type="number" class="form-control" id="prod-precio" step="0.01" oninput="calcMargen()" /></div>
         <div class="form-group"><label>Margen calculado</label><input type="text" class="form-control" id="prod-margen" readonly style="background:var(--gray-50);font-weight:700" /></div>
-        <div class="form-group" id="prod-stock-wrap"><label>Stock inicial (en tu sede) *</label><input type="number" class="form-control" id="prod-stock" step="0.01" />
+        <div class="form-group" id="prod-stock-wrap"><label>Stock inicial *</label><input type="number" class="form-control" id="prod-stock" step="0.01" />
           <div id="prod-stock-nota" style="display:none;font-size:.72rem;color:var(--gray-500);margin-top:.3rem">Para cambiar stock de un producto existente: usa Boletas (compra), Mermas (pérdida), o Inventario mensual (conteo físico) — no se edita aquí.</div>
         </div>
         <div class="form-group"><label>Stock mínimo (alerta)</label><input type="number" class="form-control" id="prod-stock-min" step="0.01" value="5" /></div>
@@ -1390,27 +1364,6 @@
   </div>
 </div>
 
-<!-- Modal Merma -->
-<div class="modal-overlay" id="modal-traslado">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>🔄 Traslado de mercadería entre sedes</h3>
-      <button type="button" class="modal-close" onclick="cerrarModal('modal-traslado')">✕</button>
-    </div>
-    <div class="form-group"><label>Producto *</label><select class="form-control" id="trsl-prod" onchange="_traspasoActualizarInfo()"></select></div>
-    <div id="trsl-stock-info" style="font-size:.78rem;color:var(--gray-500);margin:-.5rem 0 .75rem"></div>
-    <div class="grid-2">
-      <div class="form-group"><label>Desde</label><input type="text" class="form-control" id="trsl-origen" readonly style="background:var(--gray-50)" /></div>
-      <div class="form-group"><label>Hacia *</label><select class="form-control" id="trsl-destino"></select></div>
-    </div>
-    <div class="form-group"><label>Cantidad *</label><input type="number" class="form-control" id="trsl-cantidad" step="0.01" /></div>
-    <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem">
-      <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-traslado')">Cancelar</button>
-      <button type="button" class="btn btn-primary" onclick="confirmarTraslado()">Confirmar traslado</button>
-    </div>
-  </div>
-</div>
-
 <div class="modal-overlay" id="modal-merma">
   <div class="modal">
     <div class="modal-header">
@@ -1519,14 +1472,6 @@
           <label>Límite de unidades <span style="font-size:.75rem;color:var(--gray-400)">(pausa automática al llegar)</span></label>
           <input type="number" class="form-control" id="promo-limite" value="100" min="1" step="1" />
         </div>
-        <div class="form-group">
-          <label>Sede <span style="font-size:.75rem;color:var(--gray-400)">(para liquidar stock concentrado en un solo local, sin traslado)</span></label>
-          <select class="form-control" id="promo-sede">
-            <option value="">Todas las sedes</option>
-            <option value="principal">Solo Principal</option>
-            <option value="Tienda Aleze II">Solo Tienda Aleze II</option>
-          </select>
-        </div>
       </div>
       <div>
         <div style="background:var(--gray-50);border-radius:10px;padding:1rem;margin-bottom:.75rem">
@@ -1627,7 +1572,7 @@
     <div style="display:flex;gap:.75rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap">
       <div class="form-group" style="margin:0"><label style="font-size:.78rem;font-weight:600">Fecha de inventario</label><input type="date" class="form-control" id="inv-mens-fecha" style="width:160px" /></div>
       <button type="button" class="btn btn-accent btn-sm" style="margin-top:1.2rem" onclick="sincronizarMermasInventario()">🔄 Sincronizar mermas</button>
-      <button type="button" class="btn btn-outline btn-sm" style="margin-top:1.2rem" onclick="exportarInventarioMensual()">📥 Exportar conteo (esta sede)</button>
+      <button type="button" class="btn btn-outline btn-sm" style="margin-top:1.2rem" onclick="exportarInventarioMensual()">📥 Exportar conteo</button>
       <button type="button" class="btn btn-outline btn-sm" style="margin-top:1.2rem" onclick="exportarValorizacionInventario()">💰 Exportar valorización</button>
     </div>
     <div class="table-wrap"><table>
