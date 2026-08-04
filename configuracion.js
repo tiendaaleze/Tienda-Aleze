@@ -298,8 +298,84 @@ async function _vaciarColeccion(nombreColeccion) {
     console.warn('_vaciarColeccion: no se pudo vaciar ' + nombreColeccion, e);
   }
 }
-// Reinicia caja de TODAS las sedes conocidas, no solo la de la sesión actual — un reset de
-// dashboard es del negocio completo, no de una sola sede.
+// ── Migración manual, una sola vez: corrige registros que todavía tengan sedeId="Tienda
+// Aleze II" (de cuando el negocio operaba con 2 sedes) — como sedeAdminEfectiva() ahora
+// siempre resuelve 'principal', cualquier registro viejo con ese sedeId queda invisible en
+// reportes/historial/dashboard (nunca coincide con ningun filtro), aunque el dato siga
+// existiendo intacto en Firestore. Esto lo trae de vuelta a la vista, sin borrar nada.
+async function migrarResiduosSede2() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede ejecutar esto.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento.'); return; } // [SDK modular]
+  if (!confirm('Esto revisa TODA la base de datos (ventas, fiados, movimientos, mermas, gastos, capital) buscando registros viejos con "Tienda Aleze II" y los corrige a la sede única actual, sin borrar nada. Puede tardar unos segundos.\n\n¿Continuar?')) return;
+
+  const _colecciones = ['ventas', 'fiados', 'movimientos', 'mermas', 'gastos', 'capital_movimientos'];
+  let _totalCorregidos = 0;
+  const _resumen = {};
+
+  for (const nombreCol of _colecciones) {
+    try {
+      const snap = await getDocsM(collectionM(dbModular, nombreCol));
+      const docsAActualizar = snap.docs.filter(d => d.data().sedeId === 'Tienda Aleze II');
+      _resumen[nombreCol] = docsAActualizar.length;
+      _totalCorregidos += docsAActualizar.length;
+      for (let i = 0; i < docsAActualizar.length; i += 450) {
+        const batch = writeBatchM(dbModular);
+        docsAActualizar.slice(i, i + 450).forEach(d => batch.update(d.ref, { sedeId: 'principal' }));
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn('migrarResiduosSede2: error en ' + nombreCol, e);
+      _resumen[nombreCol] = 'error — ver consola';
+    }
+  }
+
+  // Clientes: verificacion explicita ademas de la migracion automatica que ya corre en cada
+  // login (_migrarDeudaClienteSiHaceFalta) — por si algun cliente nunca se toco en ninguna
+  // sesion desde el cambio, y quedo con el campo viejo en Firestore sin que nadie lo notara.
+  let _clientesMigrados = 0;
+  try {
+    const snapCli = await getDocsM(collectionM(dbModular, 'clientes'));
+    const clientesConDeudaVieja = snapCli.docs.filter(d => d.data().deudaPorSede != null);
+    _clientesMigrados = clientesConDeudaVieja.length;
+    for (let i = 0; i < clientesConDeudaVieja.length; i += 450) {
+      const batch = writeBatchM(dbModular);
+      clientesConDeudaVieja.slice(i, i + 450).forEach(d => {
+        const dp = d.data().deudaPorSede || {};
+        const deudaTotal = Object.values(dp).reduce((s,v) => s + (v||0), 0);
+        batch.update(d.ref, { deuda: deudaTotal, deudaPorSede: deleteFieldM() });
+      });
+      await batch.commit();
+    }
+  } catch (e) {
+    console.warn('migrarResiduosSede2: error migrando clientes', e);
+  }
+
+  // Documento de caja de la sede vieja — se revisa el saldo ANTES de borrar, por si quedó
+  // dinero real ahí que nunca se movió a la caja principal.
+  let _avisoCajaVieja = '';
+  try {
+    const cajaVieja = await getDocM(docM(dbModular, 'caja', 'Tienda Aleze II'));
+    if (cajaVieja.exists()) {
+      const cv = cajaVieja.data();
+      const saldoVieja = (cv.inicial||0) + (cv.ingresos||0) - (cv.egresos||0);
+      if (Math.abs(saldoVieja) > 0.01) {
+        _avisoCajaVieja = `\n\n⚠️ El documento de caja de la sede vieja tiene un saldo de S/ ${saldoVieja.toFixed(2)} que no se movió — revísalo manualmente en Firebase antes de borrarlo, para no perder ese dinero de la contabilidad.`;
+      } else {
+        await deleteDocM(docM(dbModular, 'caja', 'Tienda Aleze II'));
+        _avisoCajaVieja = '\n\nEl documento de caja vacío de la sede vieja se eliminó.';
+      }
+    }
+  } catch (e) {
+    console.warn('migrarResiduosSede2: error revisando caja vieja', e);
+  }
+
+  alert(`✅ Migración completada.\n\nRegistros corregidos por colección:\n` +
+    _colecciones.map(c => `• ${c}: ${_resumen[c]}`).join('\n') +
+    `\n• clientes con deuda vieja: ${_clientesMigrados}` +
+    `\n\nTotal: ${_totalCorregidos + _clientesMigrados} registros corregidos.` + _avisoCajaVieja);
+}
+
+// Reinicia la caja del negocio a su estado inicial (sin abrir, sin movimientos).
 function _reiniciarCaja() {
   const vacia = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
   DB._cajas.principal = { ...vacia };
