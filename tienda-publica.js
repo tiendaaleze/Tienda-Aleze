@@ -564,7 +564,7 @@ function _tndRenderHome() {
   // Categorias como riel de burbujas — reemplaza las fotos-collage con texto incrustado (ver
   // nota mas abajo) por circulos de color + emoji: mas liviano, mas consistente, y con scroll
   // horizontal real en vez de una grilla vertical estatica.
-  const cats2 = (DB.categorias||[]).filter(c => c.nombre);
+  const cats2 = (DB.categorias||[]).filter(c => c.nombre && !c.oculta);
   const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-row">${cats2.map(c => {
     // La foto de categoria (si existe) suele traer el nombre ya escrito dentro de la propia
     // imagen (asi la subio el admin) — en un circulo de 64px ese texto queda ilegible, asi
@@ -606,8 +606,8 @@ let _tndStep = 'cart'; // cart | datos | pago | confirmacion
 function tndRenderCats() {
   const el = document.getElementById('tnd-cats');
   if (!el) return;
-  const catPromo = (DB.categorias||[]).find(c => c.nombre === 'Promociones');
-  const otrosCats = (DB.categorias||[]).filter(c => c.nombre !== 'Promociones');
+  const catPromo = (DB.categorias||[]).find(c => c.nombre === 'Promociones' && !c.oculta);
+  const otrosCats = (DB.categorias||[]).filter(c => c.nombre !== 'Promociones' && !c.oculta);
   const catsOrdenadas = catPromo ? [catPromo, ...otrosCats] : otrosCats;
   el.innerHTML = `<span class="tnd-cat-tag active" onclick="tndSetCat('')">Todos</span>` +
     catsOrdenadas.map(c => `<span class="tnd-cat-tag" onclick="tndSetCat(${c.id})">${c.imagen ? `<img src="${c.imagen}" style="width:16px;height:16px;object-fit:cover;border-radius:3px;vertical-align:middle">` : c.emoji} ${c.nombre}</span>`).join('');
