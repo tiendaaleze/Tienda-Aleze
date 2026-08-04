@@ -150,13 +150,12 @@ function _envolverTodosClientes() {
   if (Array.isArray(DB.clientes)) DB.clientes = DB.clientes.map(c => { _migrarDeudaClienteSiHaceFalta(c); return _envolverCliente(c); });
 }
 
-// ── Sede administrativa (más allá de offline): sede 2 no tiene admin propio, así que el admin
-// necesita poder operar (boletas, mermas, productos nuevos, gastos, caja) para cualquier sede
-// sin que eso cambie currentUserSedeId — sus VENTAS siguen siendo de su sede física real.
-let _sedeAdminOverride = null;
+// El negocio opera con una sola sede — se mantiene esta funcion (en vez de escribir
+// 'principal' literal en cada uno de los cientos de lugares que la llaman) para no tener que
+// tocar cada punto de contacto del sistema por separado, con el mismo riesgo de romper algo
+// que ya evaluamos al decidir esta estrategia.
 function sedeAdminEfectiva() {
-  if (currentRole === 'admin' && _sedeAdminOverride) return _sedeAdminOverride;
-  return currentUserSedeId || 'principal';
+  return 'principal';
 }
 // Promo por sede: liquidar stock concentrado en un local sin forzar traslado innecesario.
 // sedeId vacio = todas las sedes (default, compatible con promos ya creadas).
@@ -290,58 +289,6 @@ async function asignarPuntosManual(clienteId) {
   alert(`✅ Puntos actualizados. Nuevo saldo: ${cli.puntos} puntos.`);
   try { renderFrecuentes(); } catch(e){}
   try { renderClientes(); } catch(e){}
-}
-
-// Cambiar de sede es un cambio de CONTEXTO COMPLETO — no solo dónde se crean registros
-// nuevos (boletas, mermas, gastos, caja), también qué se está VIENDO en reportes, historial
-// e inventario. Antes solo tocaba lo primero, lo que hacía parecer que "no pasaba nada" al
-// cambiar. Ahora sincroniza los filtros de sede propios de cada pantalla y refresca lo que
-// esté activo, con confirmación explícita antes de aplicar (no es un cambio menor).
-function cambiarSedeAdmin(sede) {
-  const _sedeAnterior = _sedeAdminOverride;
-  const _nombreSede = s => s === 'principal' || !s ? 'Sede I (Principal)' : 'Sede II (Tienda Aleze II)';
-
-  if (!confirm(`¿Cambiar a ${_nombreSede(sede)}?\n\nEsto cambia dónde se registran boletas, mermas, gastos y caja, Y qué estás viendo en reportes, historial e inventario — todo el contexto de la sesión.`)) {
-    // Revertir el selector visualmente si cancela — el <select> ya cambió de valor al disparar onchange.
-    const sel = document.getElementById('sede-admin-selector');
-    if (sel) sel.value = _sedeAnterior || '';
-    return;
-  }
-
-  _sedeAdminOverride = sede || null;
-  const sedeEfectiva = sedeAdminEfectiva();
-
-  // Reconectar los 3 listeners que dependen de la sede activa (ventas/movimientos de hoy,
-  // fiados pendientes) — sin esto, seguirian escuchando la sede vieja hasta el proximo login.
-  try { _reconectarListenersPorSede(); } catch(e) { console.warn('Error reconectando listeners por sede:', e); }
-
-  // Sincronizar los filtros de sede propios de cada pantalla — así, aunque el usuario
-  // navegue a otra sección después, ya la encuentra filtrada a la sede correcta.
-  ['rep-sede', 'hv-sede'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = sedeEfectiva;
-  });
-
-  try {
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    const _refrescos = {
-      'dashboard': renderDashboard,
-      'caja': renderCaja,
-      'reportes': generarReporte,
-      'historial-ventas': renderHistorialVentas,
-      'inventario': renderInvTable,
-      'mermas': renderMermas,
-      'gastos': renderGastos,
-      'fiados': renderFiados,
-      'pos': () => { try { renderPos(); } catch(e){} try { if (isMobile()) renderMobPos(); } catch(e){} },
-      'frecuentes': renderFrecuentes,
-    };
-    if (_refrescos[pageId]) _refrescos[pageId]();
-  } catch(e) { console.warn('cambiarSedeAdmin: error al refrescar la vista', e); }
-
-  // Aviso posterior, breve — confirma que el cambio se aplicó de verdad, no solo el selector.
-  setTimeout(() => alert(`✅ Ahora estás en ${_nombreSede(sede)} — vista y registros nuevos aplican a esta sede.`), 100);
 }
 
 // Extended DB with new modules
@@ -562,18 +509,6 @@ async function navigate(page) {
   });
   if (page === 'dashboard') renderDashboard();
   if (page === 'pos') {
-    // Aviso bloqueante: si el admin sigue "operando" en una sede distinta a la de su login,
-    // conviene confirmarlo antes de vender — evita vender en Sede II sin darse cuenta porque
-    // quedó así después de revisar algo y se olvidó de volver a su sede.
-    if (currentRole === 'admin' && _sedeAdminOverride && sedeAdminEfectiva() !== currentUserSedeId) {
-      const _nombreSedeAct = sedeAdminEfectiva() === 'principal' ? 'Sede I (Principal)' : 'Sede II (Tienda Aleze II)';
-      const _volverAMiSede = confirm(`⚠️ Estás vendiendo en ${_nombreSedeAct} — no es tu sede de inicio de sesión.\n\nAceptar: volver a mi sede antes de continuar.\nCancelar: seguir vendiendo en ${_nombreSedeAct} (si estás físicamente ahí).`);
-      if (_volverAMiSede) {
-        _sedeAdminOverride = null;
-        const _selSede = document.getElementById('sede-admin-selector');
-        if (_selSede) _selSede.value = '';
-      }
-    }
     if (dbModular && DB.productos.length === 0) { // [SDK modular]
       getDocM(docM(dbModular, 'aleze', 'db_productos')).then(snap => {
         if (snap.exists()) { // en modular, exists es un METODO, no una propiedad
