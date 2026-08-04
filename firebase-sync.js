@@ -457,7 +457,7 @@ function fbEscuchar() {
       .catch(e => console.warn('No se pudo migrar el historial viejo de capital', e));
   }
 
-  // Listener para DB_EXT (sueldos, gastos, capital, niveles, navidad)
+  // Listener para DB_EXT (sueldos, capital, config extendida)
   onSnapshotM(docM(dbModular, 'aleze', 'db_ext'), snapshot => { // [SDK modular]
     if (_fbEscribiendo) return;
     if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
