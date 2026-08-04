@@ -519,7 +519,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       if (!cli && (p.clienteNombre||'').length >= 2) {
         cli = _envolverCliente({ id: getId(), nombre: p.clienteNombre, alias: p.clienteNombre,
                 tel: p.clienteTel||p.telefono||'', dir: p.clienteDir||'',
-                cumple: '', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } });
+                cumple: '', compras: 0, total: 0, deuda: 0 });
         _esClienteNuevo = true;
       }
 
@@ -580,7 +580,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         if (cli) {
           batch.set(docM(dbModular, 'clientes', String(cli.id)),
             _esClienteNuevo
-              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 }, puntos: 0 }
+              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: 0, puntos: 0 }
               : { compras: incrementM(1), total: incrementM(p.total) },
             { merge: true });
         }
@@ -599,8 +599,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           batch.set(docM(dbModular, 'fiados', String(_fiadoOnline.id)), _fiadoOnline);
           batch.set(docM(dbModular, 'clientes', String(cli.id)),
             _esClienteNuevo
-              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0, [_sedeDespacho]: p.total }, puntos: 0 }
-              : { compras: incrementM(1), total: incrementM(p.total), deudaPorSede: { [_sedeDespacho]: incrementM(p.total) } },
+              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: p.total, puntos: 0 }
+              : { compras: incrementM(1), total: incrementM(p.total), deuda: incrementM(p.total) },
             { merge: true });
         }
         const _ventaOnlineFiado = {
@@ -667,7 +667,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             DB.fiados.push(_fiadoOnline);
           }
           if (cli) {
-            _aplicarDeudaLocal(cli, _sedeDespacho, p.total);
+            _aplicarDeudaLocal(cli, p.total);
             cli.compras = (cli.compras||0) + 1;
             cli.total   = (cli.total||0)   + p.total;
           }
