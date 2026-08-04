@@ -23,13 +23,11 @@ let currentUser = null;
 let currentRole = null;
 let currentUserSedeId = null; // Fase 1 arquitectura multi-sede — sedeId del cajero logueado
 
-// ── Clientes offline-seguro: mismo Proxy que caja/stock, pero por CLIENTE, no por sede ──
-// puntos/compras/total siguen siendo del cliente completo (fidelización no depende de en qué
-// sede compró). deuda se maneja aparte (ver deudaPorSede más abajo) — con varios cajeros que
-// no se conocen entre sedes, cobrar o perdonar una deuda que se originó en la otra sede no
-// tiene sentido de negocio real, así que se separó a propósito, revirtiendo una decisión
-// anterior que la mantenía unificada.
-const _CLIENTE_CAMPOS_INCREMENTALES = ['compras', 'total', 'puntos'];
+// ── Clientes offline-seguro: mismo Proxy que caja/stock, pero por CLIENTE ──
+// puntos/compras/total/deuda son del cliente completo — con una sola sede, no hay ningun
+// motivo para separar la deuda por sede como se hizo antes (esa separacion existia
+// especificamente porque 2 cajeros de sedes distintas no se conocian entre si).
+const _CLIENTE_CAMPOS_INCREMENTALES = ['compras', 'total', 'puntos', 'deuda'];
 const _clienteProxiesCreados = new WeakSet();
 // ── Escritura DIRECTA de la identidad de un cliente (nombre/alias/tel/dir/cumple) ──
 // CRITICO: reemplaza el patrón anterior de llamar a fbGuardar() al crear/editar un cliente
@@ -56,60 +54,29 @@ function fbAjustarCliente(id, campo, delta) {
   ).then(() => _sincTerminar('cliente', id))
    .catch(e => _sincError('cliente', id, e, 'los datos del cliente (puntos/compras)'));
 }
-// ── Deuda por sede: campo separado del Proxy genérico de arriba porque es un objeto anidado
-// (deudaPorSede.principal / deudaPorSede["Tienda Aleze II"]), no un número plano — Firestore
-// soporta increment() sobre un campo anidado vía notación de punto, así que sigue siendo
-// atómico igual que antes, solo que apunta a la sede correcta en vez de un total mezclado.
-function fbAjustarClienteDeudaSede(id, sede, delta) {
-  if (!dbModular || id == null || !delta) return;
-  _sincIniciar('cliente_deuda', id);
-  setDocM(docM(dbModular, 'clientes', String(id)),
-    { deudaPorSede: { [sede]: incrementM(delta) } },
-    { merge: true }
-  ).then(() => _sincTerminar('cliente_deuda', id))
-   .catch(e => _sincError('cliente_deuda', id, e, 'la deuda del cliente'));
-}
-// Reemplaza el patrón "cli.deuda = X" que antes pasaba por el Proxy genérico — ahora se llama
-// explícitamente, con la sede correspondiente, en cada punto donde antes se asignaba deuda
-// directo. Actualiza la memoria local Y dispara la escritura atómica a Firestore.
-function ajustarDeudaCliente(cli, sede, delta) {
+// Reemplaza el patrón "cli.deuda = X" cuando la escritura necesita quedar fuera del Proxy
+// (por ejemplo, para disparar la escritura desde una función que ya la calculó a mano).
+// Actualiza la memoria local Y dispara la escritura atómica a Firestore.
+function ajustarDeudaCliente(cli, delta) {
   if (!cli || !delta) return;
-  if (!cli.deudaPorSede) cli.deudaPorSede = { principal: 0, 'Tienda Aleze II': 0 };
-  const actual = cli.deudaPorSede[sede] || 0;
-  cli.deudaPorSede[sede] = Math.max(0, Math.round((actual + delta) * 100) / 100);
-  fbAjustarClienteDeudaSede(cli.id, sede, delta);
+  cli.deuda = Math.max(0, Math.round(((cli.deuda||0) + delta) * 100) / 100);
+  fbAjustarCliente(cli.id, 'deuda', delta);
 }
 // Version "solo memoria" de ajustarDeudaCliente — para cuando un LOTE atomico ya escribio el
 // cambio a Firestore (venta, fiado, pago...) y esta funcion solo necesita reflejar lo mismo en
 // la copia local, sin disparar una escritura independiente encima (eso duplicaria el ajuste,
 // mismo tipo de bug que ya se corrigio para caja con _cajaProxySkipSync).
-function _aplicarDeudaLocal(cli, sede, delta) {
+function _aplicarDeudaLocal(cli, delta) {
   if (!cli || !delta) return;
-  if (!cli.deudaPorSede) cli.deudaPorSede = { principal: 0, 'Tienda Aleze II': 0 };
-  const actual = cli.deudaPorSede[sede] || 0;
-  cli.deudaPorSede[sede] = Math.max(0, Math.round((actual + delta) * 100) / 100);
+  cli.deuda = Math.max(0, Math.round(((cli.deuda||0) + delta) * 100) / 100);
 }
-// Deuda de un cliente EN UNA SEDE ESPECÍFICA — nunca la suma de ambas, eso mezclaría
-// exactamente lo que se separó a propósito. Es la función que hay que usar en el 99% de los casos.
-function deudaClienteEnSede(cli, sede) {
-  if (!cli || !cli.deudaPorSede) return 0;
-  return cli.deudaPorSede[sede] || 0;
-}
-// Única excepción válida a "nunca sumar sedes": saber si un cliente tiene deuda en CUALQUIER
-// sede antes de eliminarlo del todo — ahí sí hace falta ver el conjunto completo.
-function deudaClienteTotal(cli) {
-  if (!cli || !cli.deudaPorSede) return 0;
-  return Object.values(cli.deudaPorSede).reduce((s,v) => s + (v||0), 0);
-}
-// Migración defensiva: clientes con el campo viejo "deuda" (plano, antes de esta separación)
-// se convierten a deudaPorSede la primera vez que se tocan — todo lo viejo cae en "principal"
-// por ser la sede donde se originó la mayoría del historial hasta ahora. Sin esto, un cliente
-// con deuda vieja se vería con deudaPorSede vacío (0 en ambas sedes), perdiendo el rastro real
-// de lo que debía.
+// Migración defensiva: clientes que todavía traigan el campo viejo deudaPorSede (de cuando
+// el negocio operaba con 2 sedes) se convierten de vuelta a un solo campo deuda — sumando lo
+// que hubiera en cada sede, para no perder ningún rastro de lo que debían.
 function _migrarDeudaClienteSiHaceFalta(cli) {
-  if (!cli.deudaPorSede) {
-    cli.deudaPorSede = { principal: cli.deuda || 0, 'Tienda Aleze II': 0 };
-    delete cli.deuda;
+  if (cli.deudaPorSede) {
+    cli.deuda = Object.values(cli.deudaPorSede).reduce((s,v) => s + (v||0), 0);
+    delete cli.deudaPorSede;
   }
 }
 function fbSincronizarClienteCampo(id, campo, valor) {
@@ -294,7 +261,6 @@ async function asignarPuntosManual(clienteId) {
 // Extended DB with new modules
 const DB_EXT = {
   sueldos: {'Jose Carlos':0,'Shessira':0,'José Luis':0},
-  navidad: {n:3, valor:50},
   // ── Fidelización (puntos canjeables por dinero, sin catálogo de premios) ──
   // tasaBase: puntos por sol gastado (se multiplica ademas por el multiplicador de cada
   // categoria, configurable en Frecuentes). tasaCanje: cuantos puntos equivalen a S/1 al
