@@ -18,8 +18,7 @@ function renderClientes() {
 _norm(c.alias||'').includes(_norm(buscar)) ||
 _norm(c.tel||'').includes(_norm(buscar))
   ) : DB.clientes;
-  const _sedeCli = sedeAdminEfectiva();
-  document.getElementById('cli-tbody').innerHTML = lista.map(c => { const _deudaSede = deudaClienteEnSede(c, _sedeCli); return `<tr>
+  document.getElementById('cli-tbody').innerHTML = lista.map(c => { const _deudaSede = c.deuda||0; return `<tr>
     <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
     <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
     <td>${c.tel||'-'}</td>
@@ -68,15 +67,14 @@ function guardarCliente() {
     Object.assign(c, data);
     _guardarClienteDirecto(c.id, data, false);
   } else {
-    // Buscar por telefono ANTES de crear — evita el duplicado que causaba cruces de
-    // informacion entre sedes (mismo cliente con 2 o mas registros separados).
+    // Buscar por telefono ANTES de crear — evita duplicar el mismo cliente por error.
     const _existente = tel ? DB.clientes.find(x => (x.tel||'').replace(/\D/g,'') === tel.replace(/\D/g,'')) : null;
     if (_existente && !confirm(`Ya existe un cliente con este teléfono: "${_existente.nombre}".\n\n¿Confirmas que es una persona distinta y quieres crear un registro nuevo de todas formas?`)) {
       return;
     }
-    const nuevo = _envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } });
+    const nuevo = _envolverCliente({ id: getId(), ...data, compras: 0, total: 0, deuda: 0 });
     DB.clientes.push(nuevo);
-    _guardarClienteDirecto(nuevo.id, { id: nuevo.id, ...data, compras: 0, total: 0, deudaPorSede: nuevo.deudaPorSede, puntos: 0 }, true);
+    _guardarClienteDirecto(nuevo.id, { id: nuevo.id, ...data, compras: 0, total: 0, deuda: 0, puntos: 0 }, true);
   }
   cerrarModal('modal-cliente');
   renderClientes();
@@ -87,10 +85,8 @@ function guardarCliente() {
 function eliminarCliente(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar clientes.'); return; }
   const c = DB.clientes.find(x => x.id === id);
-  // Unica excepcion valida a "nunca sumar sedes" — eliminar el cliente lo borra por completo,
-  // asi que hay que confirmar que no tenga deuda pendiente en NINGUNA de las 2.
-  const _deudaTotal = deudaClienteTotal(c);
-  if (c && _deudaTotal > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(_deudaTotal) + ' (entre ambas sedes). Salda los fiados antes de eliminarlo.'); return; }
+  const _deudaTotal = c ? (c.deuda||0) : 0;
+  if (c && _deudaTotal > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(_deudaTotal) + '. Salda los fiados antes de eliminarlo.'); return; }
   if (!confirm('¿Eliminar cliente?')) return;
   DB.clientes = DB.clientes.filter(c => c.id !== id);
   if (dbModular) deleteDocM(docM(dbModular, 'clientes', String(id))).catch(e => console.warn('No se pudo borrar clientes/'+id, e)); // [SDK modular]
@@ -467,7 +463,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   });
 
   batch.set(docM(dbModular, 'clientes', String(cid)), {
-    deudaPorSede: { [_sedeEPG]: incrementM(-montoTotal) }
+    deuda: incrementM(-montoTotal)
   }, { merge: true });
 
   const _movId = getId();
@@ -498,7 +494,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   const cli = DB.clientes.find(c => c.id === cid);
   if (cli) {
     _clienteProxySkipSync = true;
-    try { _aplicarDeudaLocal(cli, _sedeEPG, -montoTotal); }
+    try { _aplicarDeudaLocal(cli, -montoTotal); }
     finally { _clienteProxySkipSync = false; }
   }
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
@@ -553,7 +549,7 @@ Escribe 1 para confirmar:`;
     const cli = DB.clientes.find(c => c.id === f.clienteId);
     
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 1 ===
-    if (cli) ajustarDeudaCliente(cli, f.sedeId||'principal', -pend);
+    if (cli) ajustarDeudaCliente(cli, -pend);
     
     fbGuardar(); fbGuardarProductos();
     renderFiados(); renderInventario && renderInventario();
@@ -586,7 +582,7 @@ Escribe 1 para confirmar:`;
     const cli = DB.clientes.find(c => c.id === f.clienteId);
     
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 2 ===
-    if (cli) ajustarDeudaCliente(cli, f.sedeId||'principal', -pend);
+    if (cli) ajustarDeudaCliente(cli, -pend);
     
     fbGuardar(); fbGuardarProductos();
     renderFiados(); try { renderMermas(); } catch(e) {}
@@ -669,7 +665,7 @@ const pendiente = fiadoMontoPendiente(f);
   batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede, estado: _fEstado });
 
   batch.set(docM(dbModular, 'clientes', String(f.clienteId)), {
-    deudaPorSede: { [f.sedeId || sede]: incrementM(-monto) }
+    deuda: incrementM(-monto)
   }, { merge: true });
 
   const _movId = getId();
@@ -700,7 +696,7 @@ const pendiente = fiadoMontoPendiente(f);
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   if (cli) {
     _clienteProxySkipSync = true;
-    try { _aplicarDeudaLocal(cli, f.sedeId || sede, -monto); }
+    try { _aplicarDeudaLocal(cli, -monto); }
     finally { _clienteProxySkipSync = false; }
   }
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
@@ -990,21 +986,7 @@ function renderCanjesHistorial() {
 
 function renderFrecuentes() {
   renderFidelizacionConfig();
-  // Navidad
-  const ng = parseInt(DB_EXT.navidad.n) || 3;
-  const top = [...DB.clientes].filter(c => c.total > 0).sort((a, b) => b.total - a.total).slice(0, ng);
   const crowns = ['🥇','🥈','🥉','4️⃣','5️⃣'];
-  document.getElementById('ranking-navidad').innerHTML = `
-    <p style="font-size:.82rem;color:var(--gray-600);margin-bottom:.75rem">Top ${ng} clientes del año reciben canasta de hasta <strong>S/ ${DB_EXT.navidad.valor}</strong></p>
-    <div style="display:flex;gap:.75rem;flex-wrap:wrap">
-      ${top.map((c,i) => `
-        <div class="card" style="text-align:center;min-width:140px;border-top:4px solid ${i===0?'#F59E0B':i===1?'#9CA3AF':'#92400E'}">
-          <div style="font-size:2rem">${crowns[i]}</div>
-          <div style="font-weight:700;font-size:.9rem">${c.alias||c.nombre}</div>
-          <div style="color:var(--primary);font-weight:700">${sol(c.total)}</div>
-          <div class="badge badge-gold" style="margin-top:.3rem">🎄 S/ ${DB_EXT.navidad.valor}</div>
-        </div>`).join('')}
-    </div>`;
   // Ranking completo
   const todos = [...DB.clientes].sort((a, b) => b.total - a.total);
   document.getElementById('ranking-table').innerHTML = `
