@@ -535,7 +535,6 @@ async function guardarGasto() {
   if (_movData) { if (!DB.movimientos) DB.movimientos = []; DB.movimientos.push(_movData); }
 
   fbGuardar();
-  fbGuardarExt();
   cerrarModal('modal-gasto');
   renderGastos();
   try { renderCaja(); } catch(e){}
@@ -583,7 +582,6 @@ async function eliminarGasto(id) {
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
     if (dbModular) deleteDocM(docM(dbModular, 'gastos', String(id))).catch(e => console.warn('No se pudo borrar gastos/'+id, e)); // [SDK modular]
   }
-  fbGuardarExt();
   renderGastos();
   try { renderCaja(); } catch(e){}
   try { renderDashboard(); } catch(e){}
@@ -728,31 +726,55 @@ async function updateCapStats() {
       </div>
     </div>`;
 
-  // Historial con tipos coloreados
+  // Historial con tipos coloreados — ordenado por fecha para calcular el acumulado en vivo
+  // (ya no se guarda un "acum" congelado por registro, se calcula siempre desde la fuente real).
   const tipoConfig = {
     aporte:        { icon:'💰', color:'var(--info)' },
     ganancia:      { icon:'📈', color:'var(--accent)' },
     pago_prestamo: { icon:'🏦', color:'var(--danger)' }
   };
-  document.getElementById('cap-hist-tbody').innerHTML = [...DB_EXT.capital.hist].reverse().map(h => {
+  const _histOrdenado = [...DB.capitalMovimientos].sort((a,b) => (a.fecha||'').localeCompare(b.fecha||'') || a.id - b.id);
+  let _acumRunning = 0;
+  const _histConAcum = _histOrdenado.map(h => {
+    const montoConSigno = h.tipo === 'pago_prestamo' ? -h.monto : h.monto;
+    _acumRunning += montoConSigno;
+    return { ...h, montoConSigno, acum: _acumRunning };
+  });
+  document.getElementById('cap-hist-tbody').innerHTML = [..._histConAcum].reverse().map(h => {
     const tc = tipoConfig[h.tipo] || { icon:'💰', color:'var(--gray-600)' };
     return `<tr>
       <td>${formatDate(h.fecha)}</td>
       <td><span style="color:${tc.color};font-weight:600">${tc.icon} ${h.tipo==='aporte'?'Aporte':h.tipo==='ganancia'?'Ganancia':h.tipo==='pago_prestamo'?'Pago préstamo':'Aporte'}</span></td>
       <td>${h.desc}</td>
-      <td style="color:${h.monto>=0?'var(--accent)':'var(--danger)'};font-weight:700">${h.monto>=0?'+':''}${sol(h.monto)}</td>
+      <td style="color:${h.montoConSigno>=0?'var(--accent)':'var(--danger)'};font-weight:700">${h.montoConSigno>=0?'+':''}${sol(h.montoConSigno)}</td>
       <td>${sol(h.acum)}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="5" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin historial</td></tr>';
 }
 
-function guardarCapital() {
-  DB_EXT.capital.total   = parseFloat(document.getElementById('cap-inp-total').value)   || 0;
+async function guardarCapital() {
+  const totalInicial = parseFloat(document.getElementById('cap-inp-total').value) || 0;
   DB_EXT.capital.prestamo= parseFloat(document.getElementById('cap-inp-prestamo').value) || 0;
   DB_EXT.capital.cuota   = parseFloat(document.getElementById('cap-inp-cuota').value)   || 0;
   DB_EXT.capital.meta    = parseFloat(document.getElementById('cap-inp-meta').value)    || 0;
-  if (!DB_EXT.capital.hist.length && DB_EXT.capital.total > 0) {
-    DB_EXT.capital.hist.push({ tipo:'aporte', fecha: today(), desc: 'Capital inicial', monto: DB_EXT.capital.total, acum: DB_EXT.capital.total });
+
+  // Capital total ya NO es un campo que se pueda "reescribir" — se calcula solo desde los
+  // aportes reales registrados (ver DB_EXT.capital.total, un getter en core.js). Este campo
+  // del formulario solo sirve para registrar el aporte inicial, y solo si todavia no hay
+  // ningun movimiento — despues de eso, se usa "+ Agregar capital" para sumar mas.
+  if (!DB.capitalMovimientos.length && totalInicial > 0) {
+    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+    const _movId = getId();
+    const _data = { id: _movId, tipo: 'aporte', fecha: today(), desc: 'Capital inicial', monto: totalInicial, usuario: currentUser, sedeId: sedeAdminEfectiva() };
+    _sincIniciar('capital_inicial', _movId);
+    try {
+      await setDocM(docM(dbModular, 'capital_movimientos', String(_movId)), _data);
+      _sincTerminar('capital_inicial', _movId);
+      DB.capitalMovimientos.push(_data);
+    } catch (e) {
+      _sincError('capital_inicial', _movId, e, 'el capital inicial — no se aplicó nada');
+      return;
+    }
   }
   fbGuardarExt();
   updateCapStats();
@@ -772,8 +794,9 @@ async function confirmarAddCapital() {
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
   const sede = sedeAdminEfectiva();
-  // Capital vive en db_ext (sin colección propia) — se empaqueta lo que sí tiene colección
-  // dedicada (caja + movimiento) en un lote; fbGuardarExt() sigue guardando el capital como ya lo hacía.
+  // Capital ahora tiene su propia colección real (capital_movimientos) — el aporte viaja
+  // dentro del mismo lote atómico que ya empaquetaba caja + movimiento, nunca depende de
+  // db_ext para persistirse.
   const batch = writeBatchM(dbModular);
   batch.set(docM(dbModular, 'caja', sede), {
     ingresos: incrementM(monto),
@@ -782,6 +805,9 @@ async function confirmarAddCapital() {
   const _movId = getId();
   const _movData = { id:_movId, tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
   batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+  const _capMovId = getId();
+  const _capMovData = { id:_capMovId, tipo:'aporte', fecha: today(), desc, monto, usuario: currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'capital_movimientos', String(_capMovId)), _capMovData);
 
   _sincIniciar('add_capital_lote', _movId);
   try {
@@ -792,15 +818,12 @@ async function confirmarAddCapital() {
     return;
   }
 
-  DB_EXT.capital.total += monto;
-  const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) + monto;
-  DB_EXT.capital.hist.push({ tipo:'aporte', fecha: today(), desc, monto, acum });
+  DB.capitalMovimientos.push(_capMovData);
   DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
   DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
-  fbGuardarExt();
   cerrarModal('modal-add-capital');
   renderCapital();
   try { renderCaja(); } catch(e){}
@@ -834,17 +857,25 @@ async function abrirCerrarMes() {
     `Ventas ${sol(ventasMes)} − Costos ${sol(costoMes)} − Gastos ${sol(gastosMes+gastosRec+sueldosMes)} − Mermas ${sol(mermasMes)}`;
 }
 
-function confirmarCerrarMes() {
+async function confirmarCerrarMes() {
   const mes   = document.getElementById('cm-mes').value;
   const monto = parseFloat(document.getElementById('cm-monto').value) || 0;
   if (!mes) { alert('Selecciona el mes'); return; }
   // Evitar doble cierre del mismo mes
-  const yaExiste = DB_EXT.capital.hist.some(h => h.tipo === 'ganancia' && h.fecha && h.fecha.startsWith(mes));
+  const yaExiste = DB.capitalMovimientos.some(h => h.tipo === 'ganancia' && h.fecha && h.fecha.startsWith(mes));
   if (yaExiste) { alert('⚠️ Este mes ya fue cerrado. Revisa el historial.'); return; }
-  DB_EXT.capital.recuperado += monto;
-  const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) + monto;
-  DB_EXT.capital.hist.push({ tipo:'ganancia', fecha: mes+'-01', desc: 'Ganancia mensual — '+mes, monto, acum });
-  fbGuardarExt();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const _capMovId = getId();
+  const _capMovData = { id:_capMovId, tipo:'ganancia', fecha: mes+'-01', desc: 'Ganancia mensual — '+mes, monto, usuario: currentUser, sedeId: sedeAdminEfectiva() };
+  _sincIniciar('cerrar_mes', _capMovId);
+  try {
+    await setDocM(docM(dbModular, 'capital_movimientos', String(_capMovId)), _capMovData);
+    _sincTerminar('cerrar_mes', _capMovId);
+  } catch (e) {
+    _sincError('cerrar_mes', _capMovId, e, 'el cierre del mes — no se aplicó nada');
+    return;
+  }
+  DB.capitalMovimientos.push(_capMovData);
   cerrarModal('modal-cerrar-mes');
   renderCapital();
   try { renderDashboard(); } catch(e){}
@@ -880,6 +911,11 @@ async function confirmarPagoCuota() {
   const _movId = getId();
   const _movData = { id:_movId, tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
   batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+  // Capital ahora tiene su propia colección real (capital_movimientos) — el pago viaja dentro
+  // del mismo lote atómico que ya empaquetaba caja + movimiento.
+  const _capMovId = getId();
+  const _capMovData = { id:_capMovId, tipo:'pago_prestamo', fecha, desc, monto, usuario: currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'capital_movimientos', String(_capMovId)), _capMovData);
 
   _sincIniciar('pago_cuota_lote', _movId);
   try {
@@ -890,15 +926,12 @@ async function confirmarPagoCuota() {
     return;
   }
 
-  DB_EXT.capital.prestamoPagado = (DB_EXT.capital.prestamoPagado||0) + monto;
-  const acum = DB_EXT.capital.hist.reduce((s,h) => s+h.monto, 0) - monto;
-  DB_EXT.capital.hist.push({ tipo:'pago_prestamo', fecha, desc, monto: -monto, acum });
+  DB.capitalMovimientos.push(_capMovData);
   DB.caja.egresos = (DB.caja.egresos||0) + monto;
   DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
   
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
-  fbGuardarExt();
   cerrarModal('modal-pago-cuota');
   renderCapital();
   try { renderCaja(); } catch(e){}
