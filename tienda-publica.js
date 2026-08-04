@@ -331,7 +331,7 @@ function _renderTienda() {
   font-size:.7rem;font-weight:700;
   display:flex;align-items:center;justify-content:center;
 }
-.tnd-main { max-width:1100px;margin:0 auto;padding:1.25rem; }
+.tnd-main { max-width:1400px;margin:0 auto;padding:1.25rem; }
 .tnd-search-bar {
   display:flex;gap:.5rem;margin-bottom:1rem;
   background:white;border-radius:12px;padding:.6rem 1rem;
@@ -340,6 +340,39 @@ function _renderTienda() {
 .tnd-search-bar input {
   flex:1;border:none;outline:none;font-size:.95rem;background:transparent;
 }
+/* ── Home: secciones con scroll horizontal (promos, categorias, recien agregados) ──
+   Mismo patron en las 3, para que la pagina se sienta consistente y "viva" — con
+   scroll-snap para que se acomode solo al soltar, como cualquier app real, no una lista
+   estatica. touch-action:pan-x evita que el navegador confunda el gesto con scroll vertical. */
+.tnd-section-title { font-weight:800;font-size:1.05rem;color:#1f2937;margin-bottom:.75rem;display:flex;align-items:center;gap:.4rem; }
+.tnd-scroll-row {
+  display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;margin-bottom:1.5rem;
+  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;touch-action:pan-x;
+  scrollbar-width:none;
+}
+.tnd-scroll-row::-webkit-scrollbar { display:none; }
+.tnd-scroll-row > * { scroll-snap-align:start; }
+/* Burbujas de categoria — reemplazan las fotos-collage con texto incrustado por un circulo
+   de color + emoji, mucho mas liviano y consistente entre categorias con o sin foto propia. */
+.tnd-cat-bubble {
+  cursor:pointer;flex-shrink:0;width:78px;display:flex;flex-direction:column;
+  align-items:center;gap:.4rem;text-align:center;
+  transition:transform .12s ease;
+}
+.tnd-cat-bubble:active { transform:scale(.94); }
+.tnd-cat-circle {
+  width:64px;height:64px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:1.7rem;
+  background:linear-gradient(135deg,#5B21B6,#7C3AED);
+  box-shadow:0 3px 10px rgba(124,58,237,.25);
+  overflow:hidden;
+}
+.tnd-cat-circle img { width:100%;height:100%;object-fit:cover; }
+.tnd-cat-bubble .tnd-cat-label { font-size:.7rem;font-weight:700;color:#374151;line-height:1.2; }
+/* Tarjetas de producto en riel (promos / recien agregados) — mismo toque de presion que las
+   burbujas, para que toda la pagina responda igual al tacto. */
+.tnd-rail-card { transition:transform .12s ease; }
+.tnd-rail-card:active { transform:scale(.96); }
 .tnd-cats { display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;margin-bottom:1.25rem;scrollbar-width:none;-webkit-overflow-scrolling:touch; }
 .tnd-cat-tag {
   padding:.25rem .6rem;border-radius:20px;cursor:pointer;
@@ -505,39 +538,66 @@ let _tndVista = 'home'; // 'home' | 'catalogo'
 function _tndRenderHome() {
   const cfg   = DB.config || {};
   const waNum = (cfg.whatsappTienda || '980037284').replace(/\D/g,'');
-const grid  = document.getElementById('tnd-grid');
+  const grid  = document.getElementById('tnd-grid');
   const cats  = document.getElementById('tnd-cats');
   const back  = document.getElementById('tnd-back-home');
   if (!grid) return;
   grid.style.cssText = 'display:block';
   if (cats) cats.style.display = 'none';
   if (back) back.style.display = 'none';
- // ── Banner ──
+  // ── Banner ──
   const _bannerClick = cfg.bannerLink ? 'window.open("'+cfg.bannerLink+'","_blank")' : '';
   const _bannerCursor = cfg.bannerLink ? 'pointer' : 'default';
   const bannerHtml = cfg.bannerVisible !== false && cfg.bannerUrl
- ? '<div onclick="'+_bannerClick+'" style="cursor:'+_bannerCursor+';border-radius:14px;overflow:hidden;margin-bottom:1rem;background:#f5f3ff"><img src="'+cfg.bannerUrl+'" style="width:75%;margin:0 auto;height:auto;object-fit:contain;display:block" alt="Banner"/></div>'
-    : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">🛒 ${cfg.eslogan||'Todo lo que necesitas, cerca de ti'} 📍</div></div>`;
+    ? '<div onclick="'+_bannerClick+'" style="cursor:'+_bannerCursor+';border-radius:14px;overflow:hidden;margin-bottom:1.5rem;background:#f5f3ff"><img src="'+cfg.bannerUrl+'" style="width:75%;margin:0 auto;height:auto;object-fit:contain;display:block" alt="Banner"/></div>'
+    : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1.5rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">🛒 ${cfg.eslogan||'Todo lo que necesitas, cerca de ti'} 📍</div></div>`;
+
+  // Tarjeta de producto para los rieles de scroll (promos / recien agregados) — mismo diseño
+  // en ambas, para que la pagina se sienta de una sola pieza, no secciones inconexas.
+  const _tarjetaProdRail = (p) => `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+p.precio).toFixed(2)}</div></div></div>`;
+
   const hoy = new Date().toISOString().slice(0,10);
   const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
   const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
-  const promosHtml = prodsPromo.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">🔥 Promociones activas</div><div style="display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;-webkit-overflow-scrolling:touch;scrollbar-width:none">${prodsPromo.slice(0,6).map(p => `<div onclick="tndSetCat(${p.cat})" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:90px;object-fit:cover">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+p.precio).toFixed(2)}</div></div></div>`).join('')}</div></div>` : '';
+  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-row">${prodsPromo.slice(0,10).map(_tarjetaProdRail).join('')}</div>` : '';
+
+  // Categorias como riel de burbujas — reemplaza las fotos-collage con texto incrustado (ver
+  // nota mas abajo) por circulos de color + emoji: mas liviano, mas consistente, y con scroll
+  // horizontal real en vez de una grilla vertical estatica.
   const cats2 = (DB.categorias||[]).filter(c => c.nombre);
-  const catsHtml = cats2.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">📦 Nuestras categorías</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem">${cats2.map(c => { const nProds=(DB.productos||[]).filter(p=>p.cat==c.id&&stockTotal(p)>0).length; return `<div onclick="tndSetCat(${c.id})" style="cursor:pointer;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${c.imagen?`<img src="${c.imagen}" style="width:100%;aspect-ratio:1;object-fit:contain;background:#f5f3ff;display:block">`:`<div style="height:110px;background:linear-gradient(135deg,#5B21B6,#7C3AED);display:flex;align-items:center;justify-content:center;font-size:2.5rem">${c.emoji||'📦'}</div>`}<div style="padding:.6rem .75rem"><div style="font-weight:700;font-size:.88rem;color:#1f2937">${c.nombre}</div><div style="font-size:.75rem;color:#6b7280">${nProds} producto${nProds!==1?'s':''} disponible${nProds!==1?'s':''}</div></div></div>`; }).join('')}</div><button onclick="tndSetCat('')" style="width:100%;margin-top:.75rem;padding:.6rem;background:#f3f4f6;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;color:#374151">Ver todos los productos →</button></div>` : '';
-const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
+  const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-row">${cats2.map(c => {
+    // La foto de categoria (si existe) suele traer el nombre ya escrito dentro de la propia
+    // imagen (asi la subio el admin) — en un circulo de 64px ese texto queda ilegible, asi
+    // que el emoji tiene prioridad. La foto solo se usa si no hay emoji cargado.
+    const _catVisual = c.emoji ? c.emoji : (c.imagen ? `<img src="${c.imagen}" alt="${c.nombre}">` : '📦');
+    return `<div class="tnd-cat-bubble" onclick="tndSetCat(${c.id})">
+      <div class="tnd-cat-circle">${_catVisual}</div>
+      <div class="tnd-cat-label">${c.nombre}</div>
+    </div>`;
+  }).join('')}</div>` : '';
+
+  // Recien agregados — dato real (ordenado por id, que ya incluye el momento de creacion),
+  // no una seccion inventada. Le da a la home algo que cambie con el tiempo, ademas de las
+  // categorias fijas — sensacion de tienda con movimiento, no un catalogo estatico.
+  const recientes = (DB.productos||[]).filter(p => stockTotal(p) > 0).slice().sort((a,b) => b.id - a.id).slice(0, 10);
+  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-row">${recientes.map(_tarjetaProdRail).join('')}</div>` : '';
+
+  const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
   const serviciosHtml = cfg.serviciosBannerUrl
-    ? `<div style="margin-bottom:1.25rem">
-        <div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">⚡ Servicios rápidos</div>
+    ? `<div style="margin-bottom:1.5rem">
+        <div class="tnd-section-title">⚡ Servicios rápidos</div>
       <a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera información sobre sus servicios')}" target="_blank" style="display:block;text-decoration:none;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.1)">
    <img src="${cfg.serviciosBannerUrl}" style="width:100%;height:auto;object-fit:contain;display:block">
         </a>
        </div>`
-    : servicios.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.75rem">⚡ Servicios rápidos</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.6rem">${servicios.map(s=>`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera: '+s.nombre)}" target="_blank" style="display:flex;align-items:center;gap:.6rem;background:#fff;border-radius:12px;padding:.75rem;box-shadow:0 2px 6px rgba(0,0,0,.07);text-decoration:none;color:#1f2937"><span style="font-size:1.4rem">${s.emoji}</span><span style="font-size:.82rem;font-weight:700">${s.nombre}</span></a>`).join('')}</div></div>` : '';
+    : servicios.length ? `<div style="margin-bottom:1.5rem"><div class="tnd-section-title">⚡ Servicios rápidos</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.6rem">${servicios.map(s=>`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera: '+s.nombre)}" target="_blank" class="tnd-rail-card" style="display:flex;align-items:center;gap:.6rem;background:#fff;border-radius:12px;padding:.75rem;box-shadow:0 2px 6px rgba(0,0,0,.07);text-decoration:none;color:#1f2937"><span style="font-size:1.4rem">${s.emoji}</span><span style="font-size:.82rem;font-weight:700">${s.nombre}</span></a>`).join('')}</div></div>` : '';
   const tiendas = (cfg.tiendasExternas||[]).filter(t => t.visible && t.url);
-  const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.25rem"><div style="font-weight:800;font-size:1rem;color:#1f2937;margin-bottom:.5rem">🛍️ Electrodomésticos y más</div>
+  const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.5rem"><div class="tnd-section-title" style="margin-bottom:.5rem">🛍️ Electrodomésticos y más</div>
       ${cfg.tiendasTexto?`<div style="font-size:.8rem;color:#6b7280;margin-bottom:.75rem;line-height:1.4">${cfg.tiendasTexto}</div>`:''}
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem">${tiendas.map(t=>`<div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)"><a href="${t.url}" target="_blank" style="display:block;text-decoration:none">${t.imagen?`<img src="${t.imagen}" style="width:100%;height:90px;object-fit:cover;display:block">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:700;color:#374151">${t.nombre}</div>`}</a>${t.waCatalogo?`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera hacer un pedido del catálogo '+t.nombre)}" target="_blank" style="display:block;text-align:center;padding:.5rem;font-size:.78rem;font-weight:700;color:#25D366;text-decoration:none;border-top:1px solid #f3f4f6">📲 Pedir por WhatsApp</a>`:''}</div>`).join('')}</div></div>` : '';
-  grid.innerHTML = bannerHtml + promosHtml + catsHtml + serviciosHtml + tiendasHtml;
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.75rem">${tiendas.map(t=>`<div class="tnd-rail-card" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)"><a href="${t.url}" target="_blank" style="display:block;text-decoration:none">${t.imagen?`<img src="${t.imagen}" style="width:100%;height:90px;object-fit:cover;display:block">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:700;color:#374151">${t.nombre}</div>`}</a>${t.waCatalogo?`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera hacer un pedido del catálogo '+t.nombre)}" target="_blank" style="display:block;text-align:center;padding:.5rem;font-size:.78rem;font-weight:700;color:#25D366;text-decoration:none;border-top:1px solid #f3f4f6">📲 Pedir por WhatsApp</a>`:''}</div>`).join('')}</div></div>` : '';
+
+  grid.innerHTML = bannerHtml + promosHtml + catsHtml + recientesHtml + serviciosHtml + tiendasHtml
+    + `<button onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
 }
 let _tndMetodo = 'Yape';
 let _tndEntrega = 'recojo';
