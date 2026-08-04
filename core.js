@@ -356,13 +356,31 @@ const DB_EXT = {
   // puntos ganados. Elimina a proposito el sistema anterior de "niveles" (por gasto anual) y
   // el catalogo de "premios" configurables — es directo: puntos acumulados = dinero canjeable.
   fidelizacion: { tasaBase: 1, tasaCanje: 300 },
- capital: {total:0, cuota:0, meta:0, recuperado:0, prestamo:0, prestamoPagado:0, hist:[]},
+ // total/recuperado/prestamoPagado ya NO viven acá — se calculan en vivo desde
+ // DB.capitalMovimientos (ver los getters mas abajo), para que nunca puedan desincronizarse
+ // del historial real. Acá solo quedan los valores de configuracion (cambian poco, bajo
+ // riesgo de choque entre dispositivos).
+ capital: { prestamo:0, cuota:0, meta:0 },
   gastos: [],
   gastosRec: [
     {id:1, desc:'Energía eléctrica mensual', tipo:'Energía', monto:80},
     {id:2, desc:'Transporte de mercadería', tipo:'Transporte', monto:50}
   ]
 };
+
+// ── Capital: total/recuperado/prestamoPagado se calculan SIEMPRE desde el historial real
+// (DB.capitalMovimientos), nunca se guardan como numeros aparte que puedan desincronizarse —
+// mismo principio ya aplicado en esta sesion (deudaPorSede, subtotalFinal): preferir calcular
+// desde la fuente de verdad antes que mantener un acumulado que puede quedar mal.
+Object.defineProperty(DB_EXT.capital, 'total', {
+  get() { return (DB.capitalMovimientos||[]).filter(m=>m.tipo==='aporte').reduce((s,m)=>s+m.monto,0); }
+});
+Object.defineProperty(DB_EXT.capital, 'recuperado', {
+  get() { return (DB.capitalMovimientos||[]).filter(m=>m.tipo==='ganancia').reduce((s,m)=>s+m.monto,0); }
+});
+Object.defineProperty(DB_EXT.capital, 'prestamoPagado', {
+  get() { return (DB.capitalMovimientos||[]).filter(m=>m.tipo==='pago_prestamo').reduce((s,m)=>s+m.monto,0); }
+});
 
 let DB = {
   categorias: [
@@ -396,6 +414,7 @@ let DB = {
   mermas: [],
   promociones: [],
   movimientos: [],
+  capitalMovimientos: [],
  config: { nombre: 'Tienda Aleze', direccion: 'Jr. Tigrillo Mz. Ll4 Lt. 5 Asoc. Percin Deza SJL', telefono: '', ticketMsg: '¡Gracias por su compra!', diasVenc: 7, whatsappTienda: '980037284', montoAperturaAuto: 0, eslogan: 'Todo lo que necesitas, cerca de ti', bannerUrl: '', bannerLink: '', bannerVisible: true, usuariosStaff: [], tiendasExternas: [{id:'efe',nombre:'Tienda Efe',imagen:'',url:'',visible:true,waCatalogo:false},{id:'curacao',nombre:'Curacao',imagen:'',url:'',visible:true,waCatalogo:false},{id:'juntoz',nombre:'Juntoz',imagen:'',url:'',visible:true,waCatalogo:false},{id:'bata',nombre:'Bata',imagen:'',url:'',visible:true,waCatalogo:true}], serviciosWa: [{id:'impresiones',nombre:'Impresiones y copias',emoji:'🖨️',visible:true},{id:'recargas',nombre:'Recargas celular',emoji:'📱',visible:true},{id:'pagos',nombre:'Pago de servicios',emoji:'💡',visible:true},{id:'escaneos',nombre:'Escaneos',emoji:'📋',visible:true}], serviciosBannerUrl: '', tiendasTexto: '', alertasIgnoradas: {},
    // Verificacion SMS de telefono en tienda publica: construida como flag apagado a
    // proposito. Hoy el telefono identifica al cliente (tndResolverCliente), pero no lo
