@@ -256,7 +256,12 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           // extra puntual).
           try {
             dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
-              localCache: window.__fbModular.firestore.persistentLocalCache({})
+              localCache: window.__fbModular.firestore.persistentLocalCache({}),
+              // Redes moviles con proxy/firewall restrictivo a veces bloquean o retrasan
+              // WebSockets — sin esto, Firestore espera un timeout completo antes de caer a
+              // HTTP normal. Con esto, detecta el bloqueo de entrada y cambia de inmediato,
+              // sin hacer esperar al usuario por ese timeout.
+              experimentalAutoDetectLongPolling: true
             });
           } catch (persistErr) {
             // Si la persistencia no se puede activar (ej. navegador sin IndexedDB, modo
@@ -582,8 +587,7 @@ function fbEscucharStock() {
   }, err => { console.warn('Firestore listener error (stock):', err.code); });
 }
 
-// ── Ventas y movimientos de HOY, filtrados por sede activa — se reconectan cada vez que
-// cambia la sede (ver _reconectarListenersPorSede). Se acotan a hoy a proposito: es lo que
+// ── Ventas y movimientos de HOY. Se acotan a hoy a proposito: es lo que
 // resuelve "verlo mientras pasa" sin pagar por escuchar años de historial que ya nadie
 // necesita ver en vivo — el historial viejo lo sigue trayendo la reconciliacion de login.
 function fbEscucharVentasHoy() {
@@ -772,26 +776,21 @@ function fbEscucharCapitalMovimientos() {
 // ── Arranca los 10 listeners operativos de una — se llama una vez en el login (PASO 6, junto
 // a los que ya existian) y de vuelta cada vez que el admin cambia de sede activa (los 3 que
 // dependen de sede se reconectan solos, los otros 7 no necesitan tocarse de nuevo).
+// CRITICO: los 10 listeners de acá arrancaban todos de golpe, en el mismo instante — un
+// patron conocido que dispara BloomFilterError en cascada en el SDK de Firestore (el cache
+// local offline necesita re-sincronizar con el servidor, y con muchos listeners abriendose a
+// la vez, varios lo disparan al mismo tiempo). Coincide con la demora real reportada (varios
+// segundos, peor en redes moviles). Escalonarlos con un pequeño delay entre cada uno le da
+// respiro al motor de sincronizacion — no elimina el problema de raiz (es un comportamiento
+// del SDK, no algo que se controle desde acá), pero reduce cuantos listeners lo disparan
+// exactamente al mismo tiempo.
 function _iniciarListenersOperativos() {
   fbEscucharStock();
-  fbEscucharVentasHoy();
-  fbEscucharMovimientosHoy();
-  fbEscucharFiadosPendientes();
   fbEscucharClientes();
-  fbEscucharPromociones();
-  fbEscucharMermasMes();
-  fbEscucharCanjes();
-  fbEscucharGastos();
-  fbEscucharCapitalMovimientos();
-}
-
-// ── Reconecta SOLO los 3 listeners que dependen de la sede activa — se llama cuando el admin
-// cambia de sede (ver cambiarSedeAdmin en core.js). Los otros 5 (stock, clientes, promociones,
-// mermas, canjes) no dependen de sede, no hace falta tocarlos de nuevo.
-function _reconectarListenersPorSede() {
-  fbEscucharVentasHoy();
-  fbEscucharMovimientosHoy();
-  fbEscucharFiadosPendientes();
+  setTimeout(() => { fbEscucharVentasHoy(); fbEscucharMovimientosHoy(); }, 120);
+  setTimeout(() => { fbEscucharFiadosPendientes(); fbEscucharPromociones(); }, 240);
+  setTimeout(() => { fbEscucharMermasMes(); fbEscucharCanjes(); }, 360);
+  setTimeout(() => { fbEscucharGastos(); fbEscucharCapitalMovimientos(); }, 480);
 }
 
 // ── Patch DB: interceptar asignaciones de array para auto-guardar ──
