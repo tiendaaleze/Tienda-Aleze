@@ -360,24 +360,33 @@ function _renderTienda() {
 }
 .tnd-prod-card:hover:not(.agotado) { border-color:#7C3AED;transform:translateY(-2px); }
 .tnd-prod-card.agotado { opacity:.6;cursor:not-allowed; }
-/* La imagen ahora ocupa todo el ancho de la tarjeta, en formato cuadrado — es lo que
-   realmente resalta el producto, en vez de un ícono chico perdido en espacio en blanco.
-   Fondo gris muy suave para que fotos con fondo blanco/transparente no se "pierdan". */
+/* La imagen ocupa la mayor parte de la tarjeta — formato 4:5 (mas alta que ancha, no
+   cuadrada) en vez de 1:1, para que el texto de abajo (nombre + precio) quede genuinamente
+   en el 30% o menos del total, no la mitad. Fondo gris muy suave para que fotos con fondo
+   blanco/transparente no se "pierdan". */
 .tnd-prod-img-wrap {
-  width:100%;aspect-ratio:1/1;background:#F3F4F6;
+  width:100%;aspect-ratio:4/5;background:#F3F4F6;
   display:flex;align-items:center;justify-content:center;
   padding:.85rem;box-sizing:border-box;
 }
 .tnd-prod-img-wrap img { width:100%;height:100%;object-fit:contain; }
 .tnd-prod-icon-emoji { font-size:3.6rem; }
-.tnd-prod-info { padding:.75rem .9rem .9rem;text-align:center; }
-.tnd-prod-name { font-size:.85rem;font-weight:700;color:#1f2937;margin-bottom:.25rem;line-height:1.2; }
-.tnd-prod-price { font-size:1.1rem;font-weight:800;color:#7C3AED; }
-.tnd-prod-price-orig { font-size:.75rem;color:#9ca3af;text-decoration:line-through; }
-.tnd-badges-left { position:absolute;top:8px;left:8px;z-index:2;display:flex;flex-direction:column;gap:4px;align-items:flex-start; }
+.tnd-prod-info { padding:.55rem .75rem .65rem;text-align:center; }
+.tnd-prod-name { font-size:.8rem;font-weight:700;color:#1f2937;margin-bottom:.2rem;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
+.tnd-prod-price { font-size:1.05rem;font-weight:800;color:#7C3AED; }
+.tnd-prod-price-orig { font-size:.72rem;color:#9ca3af;text-decoration:line-through; }
+/* Un solo contenedor coordina los 2 grupos de badges (izquierda: detalle/promo — derecha:
+   stock) — antes eran 2 position:absolute independientes que no se "conocian" entre si, y en
+   tarjetas angostas con texto largo en ambos lados (ej. "Ultimas unidades" + "Detalle"+
+   "OFERTA") terminaban superpuestos. Con flex-wrap, si no caben en la misma fila, el grupo
+   de la derecha se envuelve a una segunda linea debajo, nunca se superponen. */
+.tnd-badges-top {
+  position:absolute;top:8px;left:8px;right:8px;z-index:2;
+  display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:4px;
+}
+.tnd-badges-left { display:flex;flex-direction:column;gap:4px;align-items:flex-start; }
 .tnd-badge-detalle { background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px; }
 .tnd-prod-promo { color:white;font-size:.63rem;font-weight:700;padding:2px 7px;border-radius:4px;background:#EF4444; }
-.tnd-prod-badge { position:absolute;top:8px;right:8px; }
 .tnd-panel-overlay {
   position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;
 }
@@ -618,13 +627,21 @@ function tndFiltrar() {
     const precioCat = p.costo ? Math.ceil(p.costo * (1 + ((DB.categorias||[]).find(c=>c.id===p.cat)?.margen||0)/100) * 10) / 10 : null;
     const sugerido = precioCat && precioCat !== p.precio ? precioCat : null;
 
+    const _hayPromoActiva = !!(p.esCombo || promo);
+    // El badge de stock "Disponible" (verde, el caso generico) se oculta cuando hay promo
+    // activa — la promo ya comunica disponibilidad implicitamente, mostrar ambos era
+    // redundante y competia por el mismo espacio angosto. "Ultimas unidades"/"Agotado" SI se
+    // mantienen siempre — son informacion de urgencia real, nunca redundante con una promo.
+    const _badgeVisible = (_hayPromoActiva && badge.includes('badge-green')) ? '' : badge;
     const accionClic = agotado ? '' : (p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`);
  return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${accionClic}" style="position:relative">
-      <div class="tnd-badges-left">
-        ${p.tieneDetalle ? `<span class="tnd-badge-detalle">🔍 Detalle</span>` : ''}
-        ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">PROMO</span>` : ''}
+      <div class="tnd-badges-top">
+        <div class="tnd-badges-left">
+          ${p.tieneDetalle ? `<span class="tnd-badge-detalle">🔍 Detalle</span>` : ''}
+          ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">PROMO</span>` : ''}
+        </div>
+        <div>${_badgeVisible}</div>
       </div>
-      <div class="tnd-prod-badge">${badge}</div>
       <div class="tnd-prod-img-wrap">${icon}</div>
       <div class="tnd-prod-info">
         <div class="tnd-prod-name">${p.nombre}</div>
@@ -839,8 +856,8 @@ function tndRenderPanel() {
       const mayor = _tndDetalleData?.precioMayor;
       const agotado = stockTotal(p) <= 0;
       body.innerHTML = `
-        <div style="text-align:center;margin-bottom:1rem">
-          ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:160px;height:160px;object-fit:contain;border-radius:12px">` : `<div style="font-size:3rem">${cat?.emoji||'📦'}</div>`}
+        <div style="text-align:center;margin-bottom:1rem;background:#F3F4F6;border-radius:12px;padding:.75rem">
+          ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:100%;max-height:50vh;object-fit:contain;border-radius:8px">` : `<div style="font-size:4rem;padding:2rem 0">${cat?.emoji||'📦'}</div>`}
         </div>
         ${extra.length ? `<div style="display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem">${extra.map(u=>`<img src="${u}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb">`).join('')}</div>` : ''}
         <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${p.precio.toFixed(2)}${p.tipo==='granel'?' <span style="font-size:.6em;font-weight:400">/kg</span>':''}</div>
