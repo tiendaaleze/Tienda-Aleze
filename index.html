@@ -1217,19 +1217,24 @@
       <input type="text" class="form-control" id="cat-emoji" placeholder="Ej: 🥤" maxlength="2" />
     </div>
     <div class="form-group">
-      <label>📷 Imagen de categoría (opcional, 64×64px)</label>
+      <label>📷 Imagen de categoría (opcional)</label>
       <div style="display:flex;gap:.75rem;align-items:flex-start">
         <div id="cat-img-preview" style="width:64px;height:64px;border:2px dashed var(--gray-300);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.8rem;background:var(--gray-50);overflow:hidden;flex-shrink:0">🖼️</div>
         <div style="flex:1">
           <input type="file" id="cat-img-file" accept="image/*" style="display:none" onchange="onCatImgSelect(event)"/>
           <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('cat-img-file').click()" style="width:100%;margin-bottom:.3rem">📁 Seleccionar imagen</button>
           <button type="button" class="btn btn-xs" onclick="limpiarImgCat()" style="background:var(--danger-light);color:var(--danger);width:100%">✕ Quitar imagen</button>
-          <div style="font-size:.7rem;color:var(--gray-400);margin-top:.3rem">Se comprime a 64×64px automáticamente. Se sincroniza en toda la app.</div>
+          <div style="font-size:.7rem;color:var(--gray-400);margin-top:.3rem">Se comprime automáticamente. Se sincroniza en toda la app.</div>
         </div>
       </div>
       <input type="hidden" id="cat-img-data"/>
     </div>
     <div class="form-group"><label>Margen de ganancia % (precio sugerido)</label><input type="number" class="form-control" id="cat-margen" placeholder="Ej: 30" min="0" max="200" /></div>
+    <div class="form-group" style="display:flex;align-items:center;gap:.5rem">
+      <input type="checkbox" id="cat-oculta" style="width:auto" />
+      <label for="cat-oculta" style="margin:0;font-weight:500">🚧 Oculta en tienda pública (en construcción)</label>
+    </div>
+    <div style="font-size:.72rem;color:var(--gray-400);margin:-.5rem 0 .75rem">Se sigue viendo normal en POS e Inventario — solo desaparece de la tienda online, para poder cargar el ícono/productos sin que el cliente la vea a medio terminar.</div>
     <div id="cat-update-prods-wrap" style="display:none;background:var(--warning-light);border-radius:8px;padding:.65rem;margin-bottom:.75rem">
       <div style="font-size:.82rem;font-weight:600;margin-bottom:.4rem">⚙️ Actualizar precios de productos de esta categoría</div>
       <div style="font-size:.78rem;color:var(--gray-600);margin-bottom:.5rem">Recalcula el precio sugerido con el nuevo margen para todos los productos de esta categoría.</div>
