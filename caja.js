@@ -1,15 +1,6 @@
 // ===================== CAJA =====================
 function renderCaja() {
   const _esAdmin = currentRole === 'admin';
-  const _banner = document.getElementById('caja-sede-banner');
-  if (_banner) {
-    if (_esAdmin && _sedeAdminOverride) {
-      _banner.style.display = 'block';
-      _banner.textContent = `⚠️ Estás operando la caja de "${_sedeAdminOverride}" — no la tuya. Tus ventas en POS siguen siendo de tu sede real. Cambia esto arriba, junto a tu nombre.`;
-    } else {
-      _banner.style.display = 'none';
-    }
-  }
   // Vendedor: solo lectura — ve los mismos números que admin, pero sin controles para
   // abrir/cerrar caja, retirar efectivo, ni registrar movimientos manuales.
   const _accionesAdmin = document.getElementById('caja-acciones-admin');
