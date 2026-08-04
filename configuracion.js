@@ -113,8 +113,6 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
   document.getElementById('sueldo-jc').value = DB_EXT.sueldos['Jose Carlos'] || 0;
   document.getElementById('sueldo-sh').value = DB_EXT.sueldos['Shessira']    || 0;
   document.getElementById('sueldo-jl').value = DB_EXT.sueldos['José Luis']   || 0;
-  document.getElementById('cfg-nav-n').value = DB_EXT.navidad.n     || 3;
-  document.getElementById('cfg-nav-v').value = DB_EXT.navidad.valor || 50;
   const _pp = DB.config.pasarelaPago || { activa: false, llavePublica: '' };
   document.getElementById('cfg-pasarela-activa').checked = !!_pp.activa;
   document.getElementById('cfg-pasarela-llave').value = _pp.llavePublica || '';
@@ -185,10 +183,6 @@ function renderUsuariosStaff() {
         <option value="admin" ${u.rol==='admin'?'selected':''}>Admin</option>
         <option value="cajero" ${u.rol==='cajero'?'selected':''}>Cajero</option>
       </select>
-      <select class="form-control" style="width:100px;font-size:.75rem" onchange="cambiarSedeUsuarioStaff(${i}, this.value)" title="Sede">
-        <option value="principal" ${(u.sedeId||'principal')==='principal'?'selected':''}>Sede I</option>
-        <option value="Tienda Aleze II" ${u.sedeId==='Tienda Aleze II'?'selected':''}>Sede II</option>
-      </select>
       <button type="button" class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarUsuarioStaff(${i})">🗑️</button>
     </div>`).join('');
 }
@@ -217,12 +211,6 @@ function cambiarRolUsuarioStaff(i, nuevoRol) {
   fbGuardarProductos(); fbGuardar();
 }
 
-function cambiarSedeUsuarioStaff(i, nuevaSede) {
-  DB.config.usuariosStaff[i].sedeId = nuevaSede.trim() || 'principal';
-  DB.config.usuariosStaff = [...DB.config.usuariosStaff];
-  fbGuardarProductos(); fbGuardar();
-}
-
 function eliminarUsuarioStaff(i) {
   const u = DB.config.usuariosStaff[i];
   if (!confirm(`¿Quitar a ${u.nombre} del sistema? Esto no borra su cuenta de Firebase, solo su acceso desde aquí.`)) return;
@@ -237,13 +225,6 @@ function guardarSueldos() {
   DB_EXT.sueldos['José Luis']   = parseFloat(document.getElementById('sueldo-jl').value) || 0;
   fbGuardarExt();
   alert('✅ Sueldos guardados');
-}
-
-function guardarNavidad() {
-  DB_EXT.navidad.n     = parseInt(document.getElementById('cfg-nav-n').value) || 3;
-  DB_EXT.navidad.valor = parseFloat(document.getElementById('cfg-nav-v').value) || 50;
-  fbGuardarExt();
-  alert('✅ Config. navideña guardada');
 }
 
 async function cambiarPassword() {
@@ -319,12 +300,10 @@ async function _vaciarColeccion(nombreColeccion) {
 }
 // Reinicia caja de TODAS las sedes conocidas, no solo la de la sesión actual — un reset de
 // dashboard es del negocio completo, no de una sola sede.
-function _reiniciarCajaTodasLasSedes() {
+function _reiniciarCaja() {
   const vacia = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
-  ['principal', 'Tienda Aleze II'].forEach(sede => {
-    DB._cajas[sede] = { ...vacia };
-    if (dbModular) setDocM(docM(dbModular, 'caja', sede), vacia).catch(()=>{}); // [SDK modular]
-  });
+  DB._cajas.principal = { ...vacia };
+  if (dbModular) setDocM(docM(dbModular, 'caja', 'principal'), vacia).catch(()=>{}); // [SDK modular]
 }
 
 const RESET_CONFIG = {
@@ -337,15 +316,16 @@ const RESET_CONFIG = {
       DB.mermas = [];
       DB.movimientos = [];
       DB.historialVentas = [];
-      _reiniciarCajaTodasLasSedes();
+      _reiniciarCaja();
       DB.clientes.forEach(c => {
         c.compras = 0; c.total = 0;
-        ['principal', 'Tienda Aleze II'].forEach(s => ajustarDeudaCliente(c, s, -(c.deudaPorSede?.[s] || 0)));
+        ajustarDeudaCliente(c, -(c.deuda||0));
       });
       DB_EXT.gastos = [];
-   DB_EXT.capital = { total: 0, cuota: 0, meta: 0, recuperado: 0, prestamo: 0, prestamoPagado: 0, hist: [] };
+      DB_EXT.capital = { prestamo: 0, cuota: 0, meta: 0 };
       const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); setDocM(docM(dbModular, 'aleze', 'db'), _payload); fbGuardarExt(); // [SDK modular]
-      ['ventas','fiados','mermas','movimientos','gastos'].forEach(_vaciarColeccion);
+      ['ventas','fiados','mermas','movimientos','gastos','capital_movimientos'].forEach(_vaciarColeccion);
+      DB.capitalMovimientos = [];
       try { renderDashboard(); } catch(e) {}
       try { updateAlertCount(); } catch(e) {}
     }
@@ -356,7 +336,7 @@ const RESET_CONFIG = {
     accion: () => {
       DB.fiados = [];
       DB.clientes.forEach(c => {
-        ['principal', 'Tienda Aleze II'].forEach(s => ajustarDeudaCliente(c, s, -(c.deudaPorSede?.[s] || 0)));
+        ajustarDeudaCliente(c, -(c.deuda||0));
       });
       fbGuardar();
       _vaciarColeccion('fiados');
