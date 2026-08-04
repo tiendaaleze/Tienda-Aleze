@@ -468,12 +468,11 @@ function _posClienteBuscar() {
   const q = (document.getElementById('pos-cliente-buscar')?.value || '').trim();
   const sug = document.getElementById('pos-cliente-sugerencias');
   if (!sug) return;
-  const _sedePosBusc = sedeAdminEfectiva();
   const matches = (q ? DB.clientes.filter(c => _norm(c.nombre).includes(_norm(q)) || _norm(c.alias||'').includes(_norm(q)) || (c.tel||'').includes(q)) : DB.clientes).slice(0, 8);
   if (!matches.length) {
     sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
   } else {
-    sug.innerHTML = matches.map(c => { const _deudaC = deudaClienteEnSede(c, _sedePosBusc); return
+    sug.innerHTML = matches.map(c => { const _deudaC = c.deuda||0; return
       `<div onclick="_posClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
         ${c.alias || c.nombre}${_deudaC>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(_deudaC)})</span>` : ''}
        </div>`;
@@ -754,7 +753,7 @@ async function cobrarFiado() {
 
   const _puntosGanados = calcularPuntosGanados(itemsConPrecioReal);
   batch.set(docM(dbModular, 'clientes', String(clienteId)), {
-    deudaPorSede: { [sede]: incrementM(total) },
+    deuda: incrementM(total),
     compras: incrementM(1),
     total: incrementM(total),
     puntos: incrementM(_puntosGanados)
@@ -780,7 +779,7 @@ async function cobrarFiado() {
   if (cli) {
     _clienteProxySkipSync = true;
     try {
-      _aplicarDeudaLocal(cli, sede, total);
+      _aplicarDeudaLocal(cli, total);
       cli.compras = (cli.compras||0) + 1;
       cli.total = (cli.total||0) + total;
       cli.puntos = (cli.puntos||0) + _puntosGanados;
@@ -899,7 +898,7 @@ function guardarCliRapido() {
   if (_existente && !confirm(`Ya existe un cliente con este teléfono: "${_existente.nombre}".\n\n¿Confirmas que es una persona distinta y quieres crear un registro nuevo de todas formas?`)) {
     return;
   }
-  const data = { nombre, alias: nombre, tel, dir: '', cumple: '', compras: 0, total: 0, deudaPorSede: { principal: 0, 'Tienda Aleze II': 0 } };
+  const data = { nombre, alias: nombre, tel, dir: '', cumple: '', compras: 0, total: 0, deuda: 0 };
   const c = _envolverCliente({ id: getId(), ...data });
   DB.clientes.push(c);
   _guardarClienteDirecto(c.id, { id: c.id, ...data, puntos: 0 }, true);
