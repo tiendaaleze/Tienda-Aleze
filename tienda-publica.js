@@ -305,11 +305,20 @@ function _renderTienda() {
 <style>
 #tienda-publica {
   font-family:'Segoe UI',system-ui,sans-serif;
-  background:#f3f4f6;
+  background:#FAF8FF;
   min-height:100vh;
   overflow-y:auto;
   overflow-x:hidden;
+  position:relative;
 }
+/* Fondo con emojis muy sutiles corriendo detras de todo el contenido — para que no se sienta
+   un blanco plano, sin competir nunca con el contenido real (opacity muy bajo, z-index -1,
+   fixed para que se mantenga parejo aunque se haga scroll). */
+.tnd-bg-pattern {
+  position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;
+}
+.tnd-bg-pattern span { position:absolute;font-size:2.4rem;opacity:.045;color:#5B21B6; }
+.tnd-main { position:relative;z-index:1; }
 .tnd-header {
   background:linear-gradient(135deg,#5B21B6,#7C3AED);
   color:white;
@@ -331,6 +340,8 @@ function _renderTienda() {
   font-size:.7rem;font-weight:700;
   display:flex;align-items:center;justify-content:center;
 }
+.tnd-cart-count.tnd-bump { animation:tndCartBump .35s ease; }
+@keyframes tndCartBump { 0%{transform:scale(1);} 40%{transform:scale(1.45);} 100%{transform:scale(1);} }
 .tnd-main { max-width:1400px;margin:0 auto;padding:1.25rem; }
 .tnd-search-bar {
   display:flex;gap:.5rem;margin-bottom:1rem;
@@ -345,8 +356,13 @@ function _renderTienda() {
    scroll-snap para que se acomode solo al soltar, como cualquier app real, no una lista
    estatica. touch-action:pan-x evita que el navegador confunda el gesto con scroll vertical. */
 .tnd-section-title { font-weight:800;font-size:1.05rem;color:#1f2937;margin-bottom:.75rem;display:flex;align-items:center;gap:.4rem; }
+.tnd-scroll-wrap { position:relative;margin-bottom:1.5rem; }
+.tnd-scroll-wrap::after {
+  content:'';position:absolute;top:0;right:0;bottom:.5rem;width:28px;
+  background:linear-gradient(to right, transparent, #FAF8FF);pointer-events:none;
+}
 .tnd-scroll-row {
-  display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;margin-bottom:1.5rem;
+  display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;
   scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;touch-action:pan-x;
   scrollbar-width:none;
 }
@@ -483,6 +499,40 @@ function _renderTienda() {
 }
 </style>
 
+<div class="tnd-bg-pattern" aria-hidden="true">
+  <span style="left:4%;top:3%;transform:rotate(-12deg)">🛒</span>
+  <span style="left:22%;top:9%;transform:rotate(8deg)">🍎</span>
+  <span style="left:42%;top:2%;transform:rotate(-6deg)">🥤</span>
+  <span style="left:63%;top:8%;transform:rotate(14deg)">📦</span>
+  <span style="left:84%;top:4%;transform:rotate(-10deg)">🧃</span>
+  <span style="left:8%;top:18%;transform:rotate(10deg)">🍫</span>
+  <span style="left:32%;top:22%;transform:rotate(-8deg)">🧴</span>
+  <span style="left:53%;top:17%;transform:rotate(6deg)">🥖</span>
+  <span style="left:74%;top:21%;transform:rotate(-14deg)">🛒</span>
+  <span style="left:93%;top:16%;transform:rotate(9deg)">🍎</span>
+  <span style="left:2%;top:33%;transform:rotate(-9deg)">🥤</span>
+  <span style="left:24%;top:37%;transform:rotate(12deg)">📦</span>
+  <span style="left:45%;top:32%;transform:rotate(-6deg)">🧃</span>
+  <span style="left:66%;top:36%;transform:rotate(8deg)">🍫</span>
+  <span style="left:87%;top:31%;transform:rotate(-11deg)">🧴</span>
+  <span style="left:12%;top:48%;transform:rotate(7deg)">🥖</span>
+  <span style="left:34%;top:52%;transform:rotate(-13deg)">🛒</span>
+  <span style="left:56%;top:47%;transform:rotate(10deg)">🍎</span>
+  <span style="left:77%;top:51%;transform:rotate(-7deg)">🥤</span>
+  <span style="left:5%;top:63%;transform:rotate(11deg)">📦</span>
+  <span style="left:27%;top:67%;transform:rotate(-9deg)">🧃</span>
+  <span style="left:49%;top:62%;transform:rotate(13deg)">🍫</span>
+  <span style="left:70%;top:66%;transform:rotate(-6deg)">🧴</span>
+  <span style="left:91%;top:61%;transform:rotate(8deg)">🥖</span>
+  <span style="left:16%;top:78%;transform:rotate(-12deg)">🛒</span>
+  <span style="left:38%;top:82%;transform:rotate(9deg)">🍎</span>
+  <span style="left:59%;top:77%;transform:rotate(-8deg)">🥤</span>
+  <span style="left:80%;top:81%;transform:rotate(14deg)">📦</span>
+  <span style="left:9%;top:93%;transform:rotate(-10deg)">🧃</span>
+  <span style="left:44%;top:95%;transform:rotate(7deg)">🍫</span>
+  <span style="left:68%;top:92%;transform:rotate(-13deg)">🧴</span>
+  <span style="left:95%;top:94%;transform:rotate(6deg)">🥖</span>
+</div>
 <div id="tnd-recaptcha-container"></div>
 <div class="tnd-header">
   <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
@@ -535,6 +585,31 @@ function _renderTienda() {
 }
 let _tndCatActiva = '';
 let _tndVista = 'home'; // 'home' | 'catalogo'
+// ── Iconos ilustrados a medida por categoria, con su propio color — reemplazan el emoji
+// generico. Se empareja por palabra clave normalizada (sin tildes, minuscula) contra el
+// nombre real de la categoria, no por coincidencia exacta — asi resiste variaciones menores
+// de tipeo sin romper el emparejamiento. Si ninguna palabra clave coincide (categoria nueva
+// que todavia no está en esta lista), cae de vuelta al emoji/imagen normal, nunca se rompe.
+const _TND_CAT_ICONOS = [
+  { kw: ['confiteria','snack'], color: '#EC4899', svg: '<rect x="5" y="7" width="14" height="10" rx="1.5"/><line x1="9" y1="7.5" x2="9" y2="16.5" stroke="#EC4899" stroke-width="1.2"/><line x1="12" y1="7.5" x2="12" y2="16.5" stroke="#EC4899" stroke-width="1.2"/><line x1="15" y1="7.5" x2="15" y2="16.5" stroke="#EC4899" stroke-width="1.2"/><line x1="5.5" y1="12" x2="18.5" y2="12" stroke="#EC4899" stroke-width="1"/>' },
+  { kw: ['gaseosa','bebida'], color: '#3B82F6', svg: '<path d="M11 2h2v3.2c1.6.7 2.5 1.8 2.5 3.3 0 1.2-.6 1.7-.6 2.9 0 1.6 1.6 2.3 1.6 5.1 0 2.5-1.7 3.5-4.5 3.5s-4.5-1-4.5-3.5c0-2.8 1.6-3.5 1.6-5.1 0-1.2-.6-1.7-.6-2.9 0-1.5.9-2.6 2.5-3.3z"/>' },
+  { kw: ['alcoholica','cigarro','licor'], color: '#831843', svg: '<path d="M7 2h10l-1.2 9.5A4 4 0 0 1 12 15a4 4 0 0 1-3.8-3.5z"/><rect x="11" y="15" width="2" height="6"/><rect x="8" y="21" width="8" height="1.5" rx="0.7"/>' },
+  { kw: ['abarrote'], color: '#D97706', svg: '<rect x="5" y="7" width="14" height="13" rx="1"/><rect x="4.5" y="5" width="15" height="2.6" rx="1"/>' },
+  { kw: ['lacteo','embutido','huevo'], color: '#EAB308', svg: '<path d="M10.5 2h3v3l1.8 1.8V21a1 1 0 0 1-1 1h-3.6a1 1 0 0 1-1-1V6.8L10.5 5z"/>' },
+  { kw: ['cuidado personal'], color: '#14B8A6', svg: '<rect x="9" y="6" width="6" height="15" rx="2"/><rect x="10" y="2" width="4" height="4" rx="1"/>' },
+  { kw: ['limpieza'], color: '#06B6D4', svg: '<rect x="7" y="9" width="7" height="13" rx="1.5"/><rect x="9" y="4" width="3" height="5"/><path d="M12 5h6a1 1 0 0 1 1 1v2h-7z"/><rect x="18" y="6.5" width="3" height="1.4" rx="0.7"/>' },
+  { kw: ['fruta','verdura'], color: '#22C55E', svg: '<path d="M12 8c-4 0-7 3-7 7a7 7 0 0 0 14 0c0-4-3-7-7-7z"/><path d="M12 8V4" stroke="white" stroke-width="1.6"/><path d="M12 4c1.5-1.5 3-1.5 4-1" fill="none" stroke="white" stroke-width="1.6"/>' },
+  { kw: ['mascota'], color: '#F97316', svg: '<ellipse cx="12" cy="16" rx="5.5" ry="4.5"/><circle cx="7" cy="8" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="17" cy="8" r="2"/><circle cx="19.5" cy="12" r="1.6"/>' },
+  { kw: ['vestuario','calzado','ropa'], color: '#6366F1', svg: '<path d="M8 3L3 6l2 3 2-1v13h10V8l2 1 2-3-5-3-2 2h-4z"/>' },
+  { kw: ['medicamento','medicina'], color: '#EF4444', svg: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="7.5" cy="10" r="1.3" fill="#EF4444"/><circle cx="12" cy="10" r="1.3" fill="#EF4444"/><circle cx="16.5" cy="10" r="1.3" fill="#EF4444"/><circle cx="7.5" cy="14" r="1.3" fill="#EF4444"/><circle cx="12" cy="14" r="1.3" fill="#EF4444"/><circle cx="16.5" cy="14" r="1.3" fill="#EF4444"/>' },
+  { kw: ['libreria','bazar'], color: '#8B5CF6', svg: '<path d="M16 2l5 4.5-11.5 12.5-5 1 1-5z"/><path d="M4.5 15l4.5 4-5 1z" fill="#8B5CF6"/><rect x="15.5" y="1.2" width="2.2" height="4.5" rx="1" transform="rotate(48 16.6 3.4)"/>' },
+  { kw: ['novedad','campana','campaña'], color: '#DB2777', svg: '<rect x="4" y="10" width="16" height="11" rx="1"/><rect x="4" y="7" width="16" height="4" rx="1"/><rect x="11" y="7" width="2" height="14" fill="#DB2777"/><path d="M12 7c-2-3-6-2-5 0s5 0 5 0zM12 7c2-3 6-2 5 0s-5 0-5 0z"/>' }
+];
+function _tndCatIcono(nombre) {
+  const n = _norm(nombre||'');
+  return _TND_CAT_ICONOS.find(x => x.kw.some(k => n.includes(k))) || null;
+}
+
 function _tndRenderHome() {
   const cfg   = DB.config || {};
   const waNum = (cfg.whatsappTienda || '980037284').replace(/\D/g,'');
@@ -554,33 +629,41 @@ function _tndRenderHome() {
 
   // Tarjeta de producto para los rieles de scroll (promos / recien agregados) — mismo diseño
   // en ambas, para que la pagina se sienta de una sola pieza, no secciones inconexas.
-  const _tarjetaProdRail = (p) => `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+p.precio).toFixed(2)}</div></div></div>`;
+  const _tarjetaProdRail = (p) => {
+    const _promoRail = _getPromoTienda(p);
+    const _pctDesc = _promoRail && _promoRail.precioPromo && _promoRail.precioPromo < p.precio
+      ? Math.round((1 - _promoRail.precioPromo / p.precio) * 100) : 0;
+    const _precioMostrar = _pctDesc > 0 ? _promoRail.precioPromo : p.precio;
+    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative">${_pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.68rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">-${_pctDesc}%</div>` : ''}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
+  };
 
   const hoy = new Date().toISOString().slice(0,10);
   const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
   const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
-  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-row">${prodsPromo.slice(0,10).map(_tarjetaProdRail).join('')}</div>` : '';
+  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${prodsPromo.slice(0,10).map(_tarjetaProdRail).join('')}</div></div>` : '';
 
   // Categorias como riel de burbujas — reemplaza las fotos-collage con texto incrustado (ver
   // nota mas abajo) por circulos de color + emoji: mas liviano, mas consistente, y con scroll
   // horizontal real en vez de una grilla vertical estatica.
   const cats2 = (DB.categorias||[]).filter(c => c.nombre && !c.oculta);
-  const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-row">${cats2.map(c => {
-    // La foto de categoria (si existe) suele traer el nombre ya escrito dentro de la propia
-    // imagen (asi la subio el admin) — en un circulo de 64px ese texto queda ilegible, asi
-    // que el emoji tiene prioridad. La foto solo se usa si no hay emoji cargado.
-    const _catVisual = c.emoji ? c.emoji : (c.imagen ? `<img src="${c.imagen}" alt="${c.nombre}">` : '📦');
+  const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${cats2.map(c => {
+    // Icono ilustrado a medida (con su propio color) si la categoria esta en la tabla — si no,
+    // cae a emoji (la foto trae el nombre incrustado, ilegible en un circulo chico, asi que
+    // solo es el ultimo recurso si no hay ni icono a medida ni emoji cargado).
+    const _catIco = _tndCatIcono(c.nombre);
+    const _catBg = _catIco ? _catIco.color : 'linear-gradient(135deg,#5B21B6,#7C3AED)';
+    const _catVisual = _catIco ? `<svg width="30" height="30" viewBox="0 0 24 24" fill="white">${_catIco.svg}</svg>` : (c.emoji ? c.emoji : (c.imagen ? `<img src="${c.imagen}" alt="${c.nombre}">` : '📦'));
     return `<div class="tnd-cat-bubble" onclick="tndSetCat(${c.id})">
-      <div class="tnd-cat-circle">${_catVisual}</div>
+      <div class="tnd-cat-circle" style="background:${_catBg}">${_catVisual}</div>
       <div class="tnd-cat-label">${c.nombre}</div>
     </div>`;
-  }).join('')}</div>` : '';
+  }).join('')}</div></div>` : '';
 
   // Recien agregados — dato real (ordenado por id, que ya incluye el momento de creacion),
   // no una seccion inventada. Le da a la home algo que cambie con el tiempo, ademas de las
   // categorias fijas — sensacion de tienda con movimiento, no un catalogo estatico.
   const recientes = (DB.productos||[]).filter(p => stockTotal(p) > 0).slice().sort((a,b) => b.id - a.id).slice(0, 10);
-  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-row">${recientes.map(_tarjetaProdRail).join('')}</div>` : '';
+  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${recientes.map(_tarjetaProdRail).join('')}</div></div>` : '';
 
   const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
   const serviciosHtml = cfg.serviciosBannerUrl
@@ -746,7 +829,14 @@ function tndAgregarCarrito(prodId) {
 function tndUpdateCartBadge() {
   const total = _tiendaCart.reduce((s,i) => s+i.cant, 0);
   const el = document.getElementById('tnd-cart-count');
-  if (el) el.textContent = total;
+  if (el) {
+    el.textContent = total;
+    // Pequeño "salto" cada vez que el carrito cambia — reinicia la animacion sacando y
+    // volviendo a poner la clase, para que se dispare de nuevo aunque ya estuviera puesta.
+    el.classList.remove('tnd-bump');
+    void el.offsetWidth;
+    el.classList.add('tnd-bump');
+  }
 }
 
 function tndAbrirCarrito() {
