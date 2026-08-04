@@ -584,11 +584,12 @@ function guardarCategoria() {
   const emoji  = document.getElementById('cat-emoji').value.trim() || '📦';
   const margen = parseFloat(document.getElementById('cat-margen').value) || 0;
   const imagen = document.getElementById('cat-img-data').value || '';
+  const oculta = document.getElementById('cat-oculta')?.checked || false;
   if (editingCatId) {
     const c = DB.categorias.find(x => x.id === editingCatId);
-    if (c) { c.nombre = nombre; c.emoji = emoji; c.margen = margen; c.imagen = imagen; }
+    if (c) { c.nombre = nombre; c.emoji = emoji; c.margen = margen; c.imagen = imagen; c.oculta = oculta; }
   } else {
-    DB.categorias.push({ id: getId(), nombre, emoji, margen, imagen });
+    DB.categorias.push({ id: getId(), nombre, emoji, margen, imagen, oculta });
   }
   fbGuardarProductos();
   cerrarModal('modal-categoria');
@@ -752,7 +753,8 @@ function _setCatImgPreview(img) {
 
 function renderCategorias() {
   document.getElementById('cats-grid').innerHTML = DB.categorias.map(c => `
-    <div class="card" style="text-align:center">
+    <div class="card" style="text-align:center;position:relative">
+      ${c.oculta ? `<div class="badge badge-orange" style="position:absolute;top:.6rem;right:.6rem">🚧 Oculta</div>` : ''}
       <div style="width:56px;height:56px;margin:0 auto .5rem;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--gray-100);font-size:2rem">
         ${c.imagen ? `<img src="${c.imagen}" style="width:100%;height:100%;object-fit:cover"/>` : (c.emoji || '📦')}
       </div>
@@ -774,6 +776,7 @@ function abrirModalCategoria() {
   document.getElementById('cat-margen').value = '';
   document.getElementById('cat-img-data').value = '';
   document.getElementById('cat-img-file').value = '';
+  const _catOcultaChk2 = document.getElementById('cat-oculta'); if (_catOcultaChk2) _catOcultaChk2.checked = false;
   _setCatImgPreview(null);
   document.getElementById('cat-update-prods-wrap').style.display = 'none';
   abrirModal('modal-categoria');
@@ -788,6 +791,7 @@ function editarCategoria(id) {
   document.getElementById('cat-margen').value = c.margen || 0;
   document.getElementById('cat-img-data').value = c.imagen || '';
   document.getElementById('cat-img-file').value = '';
+  const _catOcultaChk = document.getElementById('cat-oculta'); if (_catOcultaChk) _catOcultaChk.checked = !!c.oculta;
   _setCatImgPreview(c.imagen || null);
   const nProds = DB.productos.filter(p => p.cat == id).length;
   document.getElementById('cat-update-prods-wrap').style.display = nProds > 0 ? 'block' : 'none';
