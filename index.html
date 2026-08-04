@@ -878,10 +878,10 @@
               <input type="text" class="form-control" id="cfg-eslogan" placeholder="Todo lo que necesitas, cerca de ti" />
             </div>
             <div style="border-top:1px solid var(--gray-200);margin:1rem 0;padding-top:1rem">
-              <div style="font-weight:700;font-size:.85rem;margin-bottom:.75rem">🖼️ Banner principal</div>
-             <div class="form-group"><label>URL imagen banner principal (800×300px recomendado)</label><div style="display:flex;gap:.5rem;align-items:center"><input type="text" class="form-control" id="cfg-banner-url" placeholder="https://firebasestorage..." style="flex:1"/><input type="file" id="_banner-url-file" accept="image/*" style="display:none" onchange="_uploadConfigImg(this,'cfg-banner-url','tienda/banner-principal.webp')"><button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('_banner-url-file').click()">📁 Subir</button></div></div>
-              <div class="form-group"><label>Link destino al hacer clic</label><input type="text" class="form-control" id="cfg-banner-link" placeholder="https://..." /></div>
-              <div class="form-group"><label style="display:flex;align-items:center;gap:.5rem"><input type="checkbox" id="cfg-banner-visible"> Mostrar banner</label></div>
+              <div style="font-weight:700;font-size:.85rem;margin-bottom:.75rem">🖼️ Banners (carrusel)</div>
+              <div id="cfg-banners-lista"></div>
+              <button type="button" class="btn btn-outline btn-sm" style="width:100%;margin-bottom:.5rem" onclick="agregarBanner()">➕ Agregar banner</button>
+              <div class="form-group" style="margin-bottom:0"><label style="display:flex;align-items:center;gap:.5rem"><input type="checkbox" id="cfg-banner-visible"> Mostrar banners</label></div>
             </div>
             <div style="border-top:1px solid var(--gray-200);margin:1rem 0;padding-top:1rem">
              <div style="font-weight:700;font-size:.85rem;margin-bottom:.75rem">🏪 Tiendas externas</div>
