@@ -195,14 +195,15 @@ async function _completarSesion(name, role) {
         getDocsM(collectionM(dbModular, 'promociones')),                                             // 10
         getDocsM(collectionM(dbModular, 'proveedores')),                                             // 11
         getDocsM(collectionM(dbModular, 'boletas')),                                                 // 12
-        getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia)))  // 13
+        getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia))),  // 13
+        getDocsM(collectionM(dbModular, 'capital_movimientos')) // capital: todo, nunca deberia faltar — bajo volumen (aportes/pagos no son frecuentes), mismo criterio que fiados/clientes/mermas — 14
       ]);
-      // CRITICO: antes, si una de estas 14 lecturas fallaba, solo se veia un aviso generico
+      // CRITICO: antes, si una de estas 15 lecturas fallaba, solo se veia un aviso generico
       // ("no se pudo reconciliar X") sin la razon real del error (permission-denied? red
       // caida? App Check bloqueado?) — imposible diagnosticar con certeza cuando pasaba. Ahora
       // se registra el codigo y mensaje real de CADA fallo, identificado por nombre.
       const _nombresLectura = ['db_productos','db_ext','config','caja','stock','ventas','fiados',
-        'clientes','mermas','movimientos','promociones','proveedores','boletas','gastos'];
+        'clientes','mermas','movimientos','promociones','proveedores','boletas','gastos','capital_movimientos'];
       const _ok = i => {
         if (_resultados[i].status === 'fulfilled') return _resultados[i].value;
         const _razon = _resultados[i].reason;
@@ -212,7 +213,7 @@ async function _completarSesion(name, role) {
       const snapProd = _ok(0), snapExt = _ok(1), snapConfig = _ok(2), cajaSnap = _ok(3), stockSnap = _ok(4),
             ventasSnap = _ok(5), fiadosSnap = _ok(6), clientesSnap = _ok(7), mermasSnap = _ok(8),
             movimientosSnap = _ok(9), promocionesSnap = _ok(10), proveedoresSnap = _ok(11),
-            boletasSnap = _ok(12), gastosSnap = _ok(13);
+            boletasSnap = _ok(12), gastosSnap = _ok(13), capitalMovSnap = _ok(14);
 
       // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
       if (snapConfig && snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
@@ -298,7 +299,25 @@ async function _completarSesion(name, role) {
 
       if (snapExt && snapExt.exists()) { // en modular, exists es un METODO, no una propiedad
         const ext = snapExt.data();
-        Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
+        // Mismo criterio que el listener en tiempo real de db_ext (ver firebase-sync.js):
+        // 'gastos' y 'capital' se excluyen del reemplazo ciego — gastos tiene su propia
+        // colección real, y capital.total/recuperado/prestamoPagado son getters calculados,
+        // reemplazar el objeto entero los borraría.
+        Object.keys(ext).forEach(k => {
+          if (k === 'gastos') return;
+          if (k === 'capital') {
+            if (ext.capital) ['prestamo','cuota','meta'].forEach(campo => {
+              if (ext.capital[campo] != null) DB_EXT.capital[campo] = ext.capital[campo];
+            });
+            return;
+          }
+          if (k in DB_EXT) DB_EXT[k] = ext[k];
+        });
+        // Migración defensiva, una sola vez: historial viejo de capital que todavía viva
+        // dentro de db_ext (de antes de esta separación) se migra a su colección real.
+        if (ext.capital && Array.isArray(ext.capital.hist) && ext.capital.hist.length && !DB.capitalMovimientos.length) {
+          try { if (typeof _migrarCapitalHistSiHaceFalta === 'function') _migrarCapitalHistSiHaceFalta(ext.capital.hist); } catch(e){}
+        }
       }
       // Mismo criterio que ventas/fiados/clientes/mermas/movimientos — gastos vive en un
       // documento separado (db_ext) pero tiene exactamente el mismo riesgo de quedar viejo.
@@ -309,6 +328,14 @@ async function _completarSesion(name, role) {
         gastosSnap.forEach(doc => { if (!_idsGastos.has(doc.id)) { DB_EXT.gastos.push(doc.data()); _rGastos++; } });
         if (_rGastos) console.warn(`[Reconciliación] Recuperados ${_rGastos} gasto(s) que faltaban en el documento combinado.`);
       } else { console.warn('[Offline] No se pudo reconciliar gastos frescos'); }
+      // capital: todo, nunca deberia faltar — bajo volumen, mismo criterio que fiados/clientes.
+      if (capitalMovSnap) {
+        if (!DB.capitalMovimientos) DB.capitalMovimientos = [];
+        const _idsCapMov = new Set(DB.capitalMovimientos.map(m => String(m.id)));
+        let _rCapMov = 0;
+        capitalMovSnap.forEach(doc => { if (!_idsCapMov.has(doc.id)) { DB.capitalMovimientos.push(doc.data()); _rCapMov++; } });
+        if (_rCapMov) console.warn(`[Reconciliación] Recuperados ${_rCapMov} movimiento(s) de capital que faltaban.`);
+      } else { console.warn('[Offline] No se pudo reconciliar movimientos de capital frescos'); }
     } catch(e) {
       console.warn('Error cargando datos en login, continuando con caché local:', e.message);
     }
