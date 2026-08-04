@@ -264,15 +264,24 @@ function onProdImgSelect(e) {
   reader.onload = function(ev) {
     const img = new Image();
     img.onload = function() {
+      // CRITICO: antes forzaba 128x128 con recorte centrado — suficiente para la tarjeta
+      // chica de antes, pero al mostrar esta misma imagen ampliada en el detalle de tienda
+      // publica (hasta 430px de ancho), se veia pixeleada — una imagen de 128px estirada mas
+      // de 3 veces su tamaño real. Ademas, el recorte cuadrado forzado perdia permanentemente
+      // los bordes de fotos que no eran cuadradas en origen, sin forma de recuperarlos despues.
+      // Ahora: 700px maximo (nitido en el detalle ampliado, sigue viendose perfecto reducido
+      // en la tarjeta chica), preservando la proporcion original — sin recortar nada. Como
+      // sube a Storage (no a Firestore), esto no cuesta nada en el limite de 1MB por
+      // documento ni en cuota de lecturas — solo un archivo WebP de unos 40-70KB en Storage.
+      const MAX_DIM = 700;
+      const ratioProd = Math.min(MAX_DIM / img.width, MAX_DIM / img.height, 1);
       const canvas = document.createElement('canvas');
-      canvas.width = 128; canvas.height = 128;
+      canvas.width = Math.round(img.width * ratioProd);
+      canvas.height = Math.round(img.height * ratioProd);
       const ctx = canvas.getContext('2d');
-      const scale = Math.max(128/img.width, 128/img.height);
-      const sw = 128/scale, sh = 128/scale;
-      const sx = (img.width - sw)/2, sy = (img.height - sh)/2;
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 128, 128);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       // Mostrar preview inmediato con base64 mientras sube
-      const previewData = canvas.toDataURL('image/webp', 0.78);
+      const previewData = canvas.toDataURL('image/webp', 0.82);
       const preview = document.getElementById('prod-img-preview');
       if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:8px"/>`;
       // Subir a Firebase Storage en lugar de guardar base64
@@ -296,7 +305,7 @@ function onProdImgSelect(e) {
           const lbl = document.getElementById('_img-upload-lbl');
           if (lbl) lbl.textContent = '⚠️ Error Storage — imagen guardada local';
         }
-      }, 'image/webp', 0.78);
+      }, 'image/webp', 0.82);
     };
     img.src = ev.target.result;
   };
@@ -318,13 +327,14 @@ function onProdImgExtraSelect(e, slot) {
   reader.onload = function(ev) {
     const img = new Image();
     img.onload = function() {
+      // Sin recorte forzado (antes perdia permanentemente los bordes de fotos no cuadradas) —
+      // preserva proporcion original, 200px sigue siendo de sobra para la miniatura de 56px.
+      const ratioExtra = Math.min(200 / img.width, 200 / img.height, 1);
       const canvas = document.createElement('canvas');
-      canvas.width = 200; canvas.height = 200;
+      canvas.width = Math.round(img.width * ratioExtra);
+      canvas.height = Math.round(img.height * ratioExtra);
       const ctx = canvas.getContext('2d');
-      const scale = Math.max(200/img.width, 200/img.height);
-      const sw = 200/scale, sh = 200/scale;
-      const sx = (img.width - sw)/2, sy = (img.height - sh)/2;
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 200, 200);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       const previewData = canvas.toDataURL('image/webp', 0.78);
       const preview = document.getElementById(`prod-img-extra-${slot}-preview`);
       if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:6px"/>`;
