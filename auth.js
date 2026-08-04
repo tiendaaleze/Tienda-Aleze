@@ -251,34 +251,41 @@ async function _completarSesion(name, role) {
       // Esto es lo que causo el incidente real de clientes desaparecidos (ventas quedando
       // "Anónimo" porque el cliente referenciado ya no estaba en la lista). Nunca borra nada,
       // solo agrega lo que el documento combinado no tenga.
-      if (ventasSnap && fiadosSnap && clientesSnap && mermasSnap && movimientosSnap && promocionesSnap && proveedoresSnap && boletasSnap) {
-        if (!DB.historialVentas) DB.historialVentas = [];
-        if (!DB.fiados) DB.fiados = [];
-        if (!DB.clientes) DB.clientes = [];
-        if (!DB.mermas) DB.mermas = [];
-        if (!DB.movimientos) DB.movimientos = [];
-        if (!DB.promociones) DB.promociones = [];
-        if (!DB.proveedores) DB.proveedores = [];
+      // CRITICO: antes, TODAS las 8 colecciones (ventas/fiados/clientes/mermas/movimientos/
+      // promociones/proveedores/boletas) tenian que leerse con exito para que CUALQUIERA se
+      // reconciliara — si una sola fallaba (proveedores, boletas, cualquiera), NINGUNA se
+      // reconciliaba, ni siquiera clientes, aunque su propia lectura hubiera sido exitosa.
+      // Esto podia dejar clientes creados en otro dispositivo invisibles en este, sin ningun
+      // error visible que lo explicara. Ahora cada coleccion se reconcilia de forma
+      // independiente segun su propio resultado, sin depender de las demas.
+      if (!DB.historialVentas) DB.historialVentas = [];
+      if (!DB.fiados) DB.fiados = [];
+      if (!DB.clientes) DB.clientes = [];
+      if (!DB.mermas) DB.mermas = [];
+      if (!DB.movimientos) DB.movimientos = [];
+      if (!DB.promociones) DB.promociones = [];
+      if (!DB.proveedores) DB.proveedores = [];
 
-        const _reconciliar = (snap, arr, idKey) => {
-          const ids = new Set(arr.map(x => String(x[idKey])));
-          let n = 0;
-          snap.forEach(doc => { if (!ids.has(doc.id)) { arr.push(doc.data()); n++; } });
-          return n;
-        };
-        const _rVentas    = _reconciliar(ventasSnap, DB.historialVentas, 'id');
-        const _rFiados    = _reconciliar(fiadosSnap, DB.fiados, 'id');
-        const _rClientes  = _reconciliar(clientesSnap, DB.clientes, 'id');
-        const _rMermas    = _reconciliar(mermasSnap, DB.mermas, 'id');
-        const _rMovs      = _reconciliar(movimientosSnap, DB.movimientos, 'id');
-        const _rPromos    = _reconciliar(promocionesSnap, DB.promociones, 'id');
-        const _rProvs     = _reconciliar(proveedoresSnap, DB.proveedores, 'id');
-        _envolverTodosClientes(); // los clientes recien agregados tambien necesitan su Proxy
+      const _reconciliar = (snap, arr, idKey) => {
+        if (!snap) return 0;
+        const ids = new Set(arr.map(x => String(x[idKey])));
+        let n = 0;
+        snap.forEach(doc => { if (!ids.has(doc.id)) { arr.push(doc.data()); n++; } });
+        return n;
+      };
+      const _rVentas    = _reconciliar(ventasSnap, DB.historialVentas, 'id');
+      const _rFiados    = _reconciliar(fiadosSnap, DB.fiados, 'id');
+      const _rClientes  = _reconciliar(clientesSnap, DB.clientes, 'id');
+      const _rMermas    = _reconciliar(mermasSnap, DB.mermas, 'id');
+      const _rMovs      = _reconciliar(movimientosSnap, DB.movimientos, 'id');
+      const _rPromos    = _reconciliar(promocionesSnap, DB.promociones, 'id');
+      const _rProvs     = _reconciliar(proveedoresSnap, DB.proveedores, 'id');
+      _envolverTodosClientes(); // los clientes recien agregados tambien necesitan su Proxy
 
-        // boletas: NUNCA se persiste anidado dentro del proveedor (esa era la duplicidad real
-        // con la coleccion boletas/{id}) — acá se reconstruye prov.boletas en memoria,
-        // agrupando la coleccion real por proveedorId, para no tener que tocar toda la lectura
-        // existente que asume ese array anidado.
+      // boletas: reconstruye la relacion boleta->proveedor en memoria, asi que necesita AMBAS
+      // lecturas (no es un "todo o nada" con las otras 6 — es un caso legitimo de dependencia
+      // real entre 2 colecciones especificas, no una dependencia accidental como la de antes).
+      if (boletasSnap && proveedoresSnap) {
         const _boletasPorProveedor = {};
         boletasSnap.forEach(doc => {
           const b = doc.data();
@@ -288,12 +295,17 @@ async function _completarSesion(name, role) {
           _boletasPorProveedor[pid].push(b);
         });
         DB.proveedores.forEach(p => { p.boletas = _boletasPorProveedor[p.id] || []; });
+      } else {
+        console.warn('[Offline] No se pudo reconciliar boletas (falta la lectura de boletas o de proveedores)');
+      }
 
-        const _totalReconciliado = _rVentas + _rFiados + _rClientes + _rMermas + _rMovs + _rPromos + _rProvs;
-        if (_totalReconciliado) {
-          console.warn(`[Reconciliación] Recuperados: ${_rVentas} venta(s), ${_rFiados} fiado(s), ${_rClientes} cliente(s), ${_rMermas} merma(s), ${_rMovs} movimiento(s), ${_rPromos} promocion(es), ${_rProvs} proveedor(es) que faltaban en el documento combinado.`);
-        }
-      } else { console.warn('[Offline] No se pudo reconciliar datos frescos (una o mas colecciones)'); }
+      const _totalReconciliado = _rVentas + _rFiados + _rClientes + _rMermas + _rMovs + _rPromos + _rProvs;
+      if (_totalReconciliado) {
+        console.warn(`[Reconciliación] Recuperados: ${_rVentas} venta(s), ${_rFiados} fiado(s), ${_rClientes} cliente(s), ${_rMermas} merma(s), ${_rMovs} movimiento(s), ${_rPromos} promocion(es), ${_rProvs} proveedor(es) que faltaban en el documento combinado.`);
+      }
+      [['ventas',ventasSnap],['fiados',fiadosSnap],['clientes',clientesSnap],['mermas',mermasSnap],
+       ['movimientos',movimientosSnap],['promociones',promocionesSnap],['proveedores',proveedoresSnap]]
+        .filter(([,snap]) => !snap).forEach(([nombre]) => console.warn(`[Offline] No se pudo reconciliar ${nombre} frescos`));
 
       aplicarNombreNegocio();
 
