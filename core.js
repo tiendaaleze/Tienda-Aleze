@@ -282,8 +282,8 @@ const DB_EXT = {
 
 // ── Capital: total/recuperado/prestamoPagado se calculan SIEMPRE desde el historial real
 // (DB.capitalMovimientos), nunca se guardan como numeros aparte que puedan desincronizarse —
-// mismo principio ya aplicado en esta sesion (deudaPorSede, subtotalFinal): preferir calcular
-// desde la fuente de verdad antes que mantener un acumulado que puede quedar mal.
+// mismo principio ya aplicado en esta sesion (subtotalFinal): preferir calcular desde la
+// fuente de verdad antes que mantener un acumulado que puede quedar mal.
 Object.defineProperty(DB_EXT.capital, 'total', {
   get() { return (DB.capitalMovimientos||[]).filter(m=>m.tipo==='aporte').reduce((s,m)=>s+m.monto,0); }
 });
