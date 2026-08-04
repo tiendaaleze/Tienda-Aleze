@@ -118,27 +118,40 @@ function irAVencimientos() {
 
 function renderChartVentas() {
   const labels = [];
-  const data = [];
+  const dataVenta = [];
+  const dataGanancia = [];
   // CRITICO — bug real confirmado: usaba DB.historialVentas sin filtrar por sede, mezclando
   // ambas sedes en el mismo grafico. Ademas, para que el grafico sea consistente con la cifra
   // de "hoy" que ya se muestra arriba (ventas al contado + pagos de fiado cobrados ese dia),
-  // se cuenta lo mismo por dia: ventas al contado + pagos de fiado, mermas de que se creo el
-  // fiado (todavia no es dinero en mano) esta correctamente excluida.
+  // se cuenta lo mismo por dia: ventas al contado + pagos de fiado, la creacion del fiado en
+  // si (todavia no es dinero en mano) esta correctamente excluida.
   const _sedeChart = sedeAdminEfectiva();
   const hvAll = (DB.historialVentas || []).filter(v => (v.sedeId||'principal') === _sedeChart);
+  const mermasChart = (DB.mermas||[]).filter(m => (m.sedeId||'principal') === _sedeChart);
+  const gastosChart = (DB_EXT.gastos||[]).filter(g => (g.sedeId||'principal') === _sedeChart);
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const ds = d.toISOString().split('T')[0];
     labels.push(d.toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric' }));
     const _delDia = hvAll.filter(v => v.fecha === ds && v.estado !== 'anulado' && v.estado !== 'fiado');
-    data.push(_delDia.reduce((s, v) => s + (v.total||0), 0));
+    const _ventaDia = _delDia.reduce((s, v) => s + (v.total||0), 0);
+    dataVenta.push(_ventaDia);
+    // Ganancia real del dia — mismo criterio completo que "Rentabilidad hoy" arriba: venta
+    // menos costo real de lo vendido, menos gastos y mermas de ESE dia especifico. No es solo
+    // margen bruto, es la ganancia real despues de los costos operativos del dia.
+    const _costoDia   = _delDia.reduce((s, v) => s + costoVenta(v), 0);
+    const _gastosDia  = gastosChart.filter(g => g.fecha === ds).reduce((s,g) => s + g.monto, 0);
+    const _mermasDia  = mermasChart.filter(m => m.fecha === ds).reduce((s,m) => s + costoMerma(m), 0);
+    dataGanancia.push(Math.round((_ventaDia - _costoDia - _gastosDia - _mermasDia) * 100) / 100);
   }
   if (chartVentas) chartVentas.destroy();
   const ctx = document.getElementById('chart-ventas').getContext('2d');
   chartVentas = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ label: 'Ventas (S/)', data, backgroundColor: '#7C3AED', borderRadius: 6 }] },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, responsive: true }
+    data: { labels, datasets: [
+      { type: 'bar', label: 'Venta (S/)', data: dataVenta, backgroundColor: '#C4B5FD', borderRadius: 6, order: 2 },
+      { type: 'line', label: 'Ganancia real (S/)', data: dataGanancia, borderColor: '#10B981', backgroundColor: '#10B981', tension: 0.3, order: 1, pointRadius: 4, pointBackgroundColor: '#10B981' }
+    ]},
+    options: { plugins: { legend: { display: true, position: 'bottom' } }, scales: { y: { beginAtZero: true } }, responsive: true }
   });
 }
 
