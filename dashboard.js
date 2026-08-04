@@ -119,12 +119,19 @@ function irAVencimientos() {
 function renderChartVentas() {
   const labels = [];
   const data = [];
-  const hvAll = DB.historialVentas || [];
+  // CRITICO — bug real confirmado: usaba DB.historialVentas sin filtrar por sede, mezclando
+  // ambas sedes en el mismo grafico. Ademas, para que el grafico sea consistente con la cifra
+  // de "hoy" que ya se muestra arriba (ventas al contado + pagos de fiado cobrados ese dia),
+  // se cuenta lo mismo por dia: ventas al contado + pagos de fiado, mermas de que se creo el
+  // fiado (todavia no es dinero en mano) esta correctamente excluida.
+  const _sedeChart = sedeAdminEfectiva();
+  const hvAll = (DB.historialVentas || []).filter(v => (v.sedeId||'principal') === _sedeChart);
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const ds = d.toISOString().split('T')[0];
     labels.push(d.toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric' }));
-    data.push(hvAll.filter(v => v.fecha === ds && v.estado !== 'anulado').reduce((s, v) => s + (v.total||0), 0));
+    const _delDia = hvAll.filter(v => v.fecha === ds && v.estado !== 'anulado' && v.estado !== 'fiado');
+    data.push(_delDia.reduce((s, v) => s + (v.total||0), 0));
   }
   if (chartVentas) chartVentas.destroy();
   const ctx = document.getElementById('chart-ventas').getContext('2d');
