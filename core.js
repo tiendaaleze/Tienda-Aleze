@@ -15,9 +15,8 @@
 // el servidor — la fuente real, editable, sigue siendo Configuración → Usuarios.
 const FIREBASE_USERS = {
   'Aleze':     'tiendaaleze@gmail.com',    // admin (antes "Jose Carlos")
-  'Aleze I':   'sharote1212@gmail.com',    // vendedor 1, Sede I (antes "Shessira")
-  'Aleze II':  'joselezama.rom@gmail.com', // vendedor 2, Sede I (antes "José Luis")
-  'Aleze III': 'sccp.jlezama@gmail.com'    // vendedor 3, Sede II (antes "Betty")
+  'Aleze I':   'sharote1212@gmail.com',    // vendedor 1 (antes "Shessira")
+  'Aleze II':  'joselezama.rom@gmail.com'  // vendedor 2 (antes "José Luis")
 };
 // Las contraseñas guardadas en Firestore se cargan en fbEscuchar/onload y sobreescriben estas
 let currentUser = null;
