@@ -815,10 +815,9 @@ function fbPatchDB() {
   // desde Configuración) — se dispara tambien si el array llega vacio desde el servidor por
   // cualquier motivo, no solo la primera vez, asi el login nunca queda sin nadie para elegir.
   if (!DB.config.usuariosStaff || DB.config.usuariosStaff.length === 0) {
-    const _rolesLegado = { 'Aleze': 'admin', 'Aleze I': 'cajero', 'Aleze II': 'cajero', 'Aleze III': 'cajero' };
-    const _sedesLegado = { 'Aleze III': 'Tienda Aleze II' }; // el resto cae en 'principal' por defecto
+    const _rolesLegado = { 'Aleze': 'admin', 'Aleze I': 'cajero', 'Aleze II': 'cajero' };
     DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
-      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: _sedesLegado[nombre] || 'principal'
+      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: 'principal'
     }));
   } else {
     // CRITICO: migracion real de los NOMBRES YA GUARDADOS en Firestore — el respaldo de arriba
@@ -838,8 +837,14 @@ function fbPatchDB() {
         _huboMigracion = true;
       }
     });
+    // Elimina activamente cualquier registro de "Aleze III"/Betty que ya estuviera guardado en
+    // Firestore desde antes — el negocio pasa a operar con una sola sede, esa cuenta no existe
+    // más. Sin esto, ya no se vuelve a crear, pero la que ya estaba guardada seguiria ahi.
+    const _cantAntesLimpieza = DB.config.usuariosStaff.length;
+    DB.config.usuariosStaff = DB.config.usuariosStaff.filter(u => u.nombre !== 'Aleze III' && u.email !== 'sccp.jlezama@gmail.com');
+    if (DB.config.usuariosStaff.length !== _cantAntesLimpieza) _huboMigracion = true;
     if (_huboMigracion) {
-      console.warn('[Migración] Nombres de usuariosStaff actualizados al esquema enmascarado — guardando de vuelta.');
+      console.warn('[Migración] usuariosStaff actualizado (nombres/eliminación de sede 2) — guardando de vuelta.');
       try { fbGuardarConfig(); } catch(e) {}
       try { fbGuardarProductos(); } catch(e) {}
     }
