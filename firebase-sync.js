@@ -178,6 +178,8 @@ let _fbFiadosPendUnsub = null;     // depende de sede
 let _fbClientesUnsub = null;
 let _fbPromocionesUnsub = null;
 let _fbMermasMesUnsub = null;
+let _fbGastosUnsub = null;
+let _fbCapitalUnsub = null;
 let _fbCanjesUnsub = null;
 
 // ── Inicializar Firestore ──
@@ -293,9 +295,16 @@ function fbGuardarExt() {
   window._fbExtTimer = setTimeout(() => {
     _fbEscribiendo = true;
     _sincIniciar('db_ext', 'db_ext');
-    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(JSON.stringify(DB_EXT)))
+    // 'gastos' se excluye — ya tiene su propia colección real como fuente de verdad
+    // (gastos/{id}), escribirlo también acá sería una copia redundante que además arriesga
+    // pisar, con un reemplazo completo del documento, un gasto recién creado desde otro
+    // dispositivo. 'capital' se reduce a solo prestamo/cuota/meta — total/recuperado/
+    // prestamoPagado son getters calculados desde DB.capitalMovimientos, no datos propios.
+    const { gastos, ...extSinGastos } = DB_EXT;
+    const payload = { ...extSinGastos, capital: { prestamo: DB_EXT.capital.prestamo, cuota: DB_EXT.capital.cuota, meta: DB_EXT.capital.meta } };
+    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(JSON.stringify(payload)))
       .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
-      .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'gastos/capital/configuración extendida'); });
+      .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'capital/configuración extendida'); });
   }, 1200);
 }
 
@@ -428,6 +437,26 @@ function fbEscuchar() {
     } catch(e){}
   }, err => { console.warn('Firestore db_productos listener error:', err.code); });
 
+  // Migra el historial viejo de capital (antes vivia como capital.hist dentro de db_ext) a
+  // su propia colección real, una entrada por documento. ID determinístico (no getId()) a
+  // propósito: si 2 dispositivos ven el mismo db_ext viejo y migran "al mismo tiempo", generan
+  // el mismo ID para la misma entrada — la segunda escritura sobrescribe la primera con el
+  // mismo valor, en vez de crear un duplicado. Nunca se pierde ni se repite una entrada.
+  function _migrarCapitalHistSiHaceFalta(histViejo) {
+    if (!dbModular) return;
+    const batch = writeBatchM(dbModular);
+    const nuevos = [];
+    histViejo.forEach((h, idx) => {
+      const idDeterministico = 'migrado_' + idx + '_' + (h.fecha||'').replace(/\D/g,'');
+      const data = { id: idDeterministico, tipo: h.tipo, fecha: h.fecha, desc: h.desc, monto: Math.abs(h.monto||0), usuario: 'Migración automática', sedeId: 'principal' };
+      batch.set(docM(dbModular, 'capital_movimientos', idDeterministico), data);
+      nuevos.push(data);
+    });
+    batch.commit()
+      .then(() => { nuevos.forEach(n => { if (!DB.capitalMovimientos.find(m=>m.id===n.id)) DB.capitalMovimientos.push(n); }); try { renderCapital(); } catch(e){} })
+      .catch(e => console.warn('No se pudo migrar el historial viejo de capital', e));
+  }
+
   // Listener para DB_EXT (sueldos, gastos, capital, niveles, navidad)
   onSnapshotM(docM(dbModular, 'aleze', 'db_ext'), snapshot => { // [SDK modular]
     if (_fbEscribiendo) return;
@@ -436,7 +465,31 @@ function fbEscuchar() {
     if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
     const ext = snapshot.data();
     if (!ext) return;
-    Object.keys(ext).forEach(k => { if (k in DB_EXT) DB_EXT[k] = ext[k]; });
+    // 'gastos' se excluye a propósito — tiene su propio listener dedicado sobre su colección
+    // real (fbEscucharGastos), que fusiona cambios en vez de reemplazar todo el documento. Si
+    // este listener también lo tocara, un reemplazo completo de db_ext entre 2 dispositivos
+    // podría pisar un gasto recién creado en el otro, incluso con el listener dedicado activo.
+    // 'capital' TAMBIÉN se excluye del reemplazo — total/recuperado/prestamoPagado ahora son
+    // getters calculados desde DB.capitalMovimientos (ver core.js), no valores planos.
+    // Reemplazar el objeto entero borraría esos getters. Solo se fusionan los 3 campos de
+    // configuración reales (prestamo/cuota/meta), que sí siguen viviendo acá.
+    Object.keys(ext).forEach(k => {
+      if (k === 'gastos') return;
+      if (k === 'capital') {
+        if (ext.capital) ['prestamo','cuota','meta'].forEach(campo => {
+          if (ext.capital[campo] != null) DB_EXT.capital[campo] = ext.capital[campo];
+        });
+        return;
+      }
+      if (k in DB_EXT) DB_EXT[k] = ext[k];
+    });
+    // Migración defensiva, una sola vez: si el documento viejo todavía trae un historial de
+    // capital (capital.hist, de antes de esta separación) y la colección nueva sigue vacía,
+    // se migra automático — sin esto, el historial completo de aportes/pagos/ganancias
+    // quedaría invisible para siempre, aunque el numero seguia estando ahi.
+    if (ext.capital && Array.isArray(ext.capital.hist) && ext.capital.hist.length && !DB.capitalMovimientos.length) {
+      _migrarCapitalHistSiHaceFalta(ext.capital.hist);
+    }
     try { renderDashboard(); } catch(e){}
     const activePage = document.querySelector('.page.active');
     const pageId = activePage ? activePage.id.replace('page-','') : '';
@@ -674,9 +727,51 @@ function fbEscucharCanjes() {
   }, err => { console.warn('Firestore listener error (canjes):', err.code); });
 }
 
-// ── Arranca los 8 listeners operativos nuevos de una — se llama una vez en el login (PASO 6,
-// junto a los que ya existian) y de vuelta cada vez que el admin cambia de sede activa (los 3
-// que dependen de sede se reconectan solos, los otros 5 no necesitan tocarse de nuevo).
+// ── Gastos: colección propia dedicada (gastos/{id}), sin filtro — bajo volumen, mismo
+// criterio que clientes/promociones/mermas. CRITICO: antes, la única vía de sincronización de
+// gastos era el documento compartido db_ext (ver listener de db_ext más abajo, que YA NO
+// toca 'gastos' a propósito) — un reemplazo completo de ese documento entre 2 dispositivos
+// podía pisar un gasto recién creado en el otro. Cada gasto individual ya vivía seguro en su
+// propia colección desde antes — solo faltaba que algo lo escuchara en vivo desde ahí.
+function fbEscucharGastos() {
+  if (!dbModular) return;
+  if (_fbGastosUnsub) { _fbGastosUnsub(); _fbGastosUnsub = null; }
+  if (!DB_EXT.gastos) DB_EXT.gastos = [];
+  _fbGastosUnsub = onSnapshotM(collectionM(dbModular, 'gastos'), snapshot => {
+    if (!_aplicarCambiosSnapshot(snapshot, DB_EXT.gastos)) return;
+    try { renderDashboard(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try {
+      if (pageId === 'gastos') renderGastos();
+      if (pageId === 'capital') renderCapital();
+      if (pageId === 'reportes') generarReporte();
+    } catch(e){}
+  }, err => { console.warn('Firestore listener error (gastos):', err.code); });
+}
+
+// ── Capital: colección propia dedicada (capital_movimientos/{id}), sin filtro — bajo
+// volumen (aportes/pagos de préstamo/cierres de mes no son frecuentes). CRITICO: antes, la
+// única vía era el documento compartido db_ext, sin ninguna colección propia de respaldo —
+// a diferencia de gastos, un reemplazo completo de db_ext podía perder un aporte de capital
+// para siempre, sin forma de recuperarlo. Ahora cada movimiento vive seguro, atómico, en su
+// propio documento.
+function fbEscucharCapitalMovimientos() {
+  if (!dbModular) return;
+  if (_fbCapitalUnsub) { _fbCapitalUnsub(); _fbCapitalUnsub = null; }
+  if (!DB.capitalMovimientos) DB.capitalMovimientos = [];
+  _fbCapitalUnsub = onSnapshotM(collectionM(dbModular, 'capital_movimientos'), snapshot => {
+    if (!_aplicarCambiosSnapshot(snapshot, DB.capitalMovimientos)) return;
+    try { renderDashboard(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try { if (pageId === 'capital') renderCapital(); } catch(e){}
+  }, err => { console.warn('Firestore listener error (capital_movimientos):', err.code); });
+}
+
+// ── Arranca los 10 listeners operativos de una — se llama una vez en el login (PASO 6, junto
+// a los que ya existian) y de vuelta cada vez que el admin cambia de sede activa (los 3 que
+// dependen de sede se reconectan solos, los otros 7 no necesitan tocarse de nuevo).
 function _iniciarListenersOperativos() {
   fbEscucharStock();
   fbEscucharVentasHoy();
@@ -686,6 +781,8 @@ function _iniciarListenersOperativos() {
   fbEscucharPromociones();
   fbEscucharMermasMes();
   fbEscucharCanjes();
+  fbEscucharGastos();
+  fbEscucharCapitalMovimientos();
 }
 
 // ── Reconecta SOLO los 3 listeners que dependen de la sede activa — se llama cuando el admin
