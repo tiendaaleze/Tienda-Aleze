@@ -356,6 +356,17 @@ function _renderTienda() {
    scroll-snap para que se acomode solo al soltar, como cualquier app real, no una lista
    estatica. touch-action:pan-x evita que el navegador confunda el gesto con scroll vertical. */
 .tnd-section-title { font-weight:800;font-size:1.05rem;color:#1f2937;margin-bottom:.75rem;display:flex;align-items:center;gap:.4rem; }
+.tnd-banner-carousel { position:relative;margin-bottom:1.5rem; }
+.tnd-banner-track {
+  display:flex;overflow-x:auto;scroll-snap-type:x mandatory;
+  scrollbar-width:none;border-radius:14px;-webkit-overflow-scrolling:touch;
+}
+.tnd-banner-track::-webkit-scrollbar { display:none; }
+.tnd-banner-slide { flex:0 0 100%;scroll-snap-align:start; }
+.tnd-banner-slide img { width:100%;height:auto;display:block; }
+.tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
+.tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
+.tnd-banner-dot.active { width:18px;border-radius:3px;background:#7C3AED; }
 .tnd-scroll-wrap { position:relative;margin-bottom:1.5rem; }
 .tnd-scroll-wrap::after {
   content:'';position:absolute;top:0;right:0;bottom:.5rem;width:28px;
@@ -620,27 +631,41 @@ function _tndRenderHome() {
   grid.style.cssText = 'display:block';
   if (cats) cats.style.display = 'none';
   if (back) back.style.display = 'none';
-  // ── Banner ──
-  const _bannerClick = cfg.bannerLink ? 'window.open("'+cfg.bannerLink+'","_blank")' : '';
-  const _bannerCursor = cfg.bannerLink ? 'pointer' : 'default';
-  const bannerHtml = cfg.bannerVisible !== false && cfg.bannerUrl
-    ? '<div onclick="'+_bannerClick+'" style="cursor:'+_bannerCursor+';border-radius:14px;overflow:hidden;margin-bottom:1.5rem;background:#f5f3ff"><img src="'+cfg.bannerUrl+'" style="width:75%;margin:0 auto;height:auto;object-fit:contain;display:block" alt="Banner"/></div>'
-    : `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1.5rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">🛒 ${cfg.eslogan||'Todo lo que necesitas, cerca de ti'} 📍</div></div>`;
+  // ── Banner (carrusel real si hay 2+, uno solo si hay 1, gradiente de marca si no hay ninguno) ──
+  // Migracion defensiva: si el admin todavia no abrio Configuracion desde que se paso a
+  // carrusel, cfg.banners puede no existir aunque cfg.bannerUrl (el banner unico viejo) si —
+  // sin esto, ese banner desaparecia de tienda publica hasta que alguien entrara a guardar la
+  // configuracion una vez.
+  const _banners = (cfg.banners && cfg.banners.length) ? cfg.banners
+    : (cfg.bannerUrl ? [{ id: 'legacy', url: cfg.bannerUrl, link: cfg.bannerLink || '' }] : []);
+  let bannerHtml;
+  if (cfg.bannerVisible !== false && _banners.length) {
+    bannerHtml = `<div class="tnd-banner-carousel">
+      <div class="tnd-banner-track" id="tnd-banner-track">
+        ${_banners.map(b => `<div class="tnd-banner-slide" ${b.link ? `onclick="window.open('${b.link}','_blank')" style="cursor:pointer"` : ''}><img src="${b.url}" alt="Banner"></div>`).join('')}
+      </div>
+      ${_banners.length > 1 ? `<div class="tnd-banner-dots" id="tnd-banner-dots">${_banners.map((_,i) => `<span class="tnd-banner-dot${i===0?' active':''}"></span>`).join('')}</div>` : ''}
+    </div>`;
+  } else {
+    bannerHtml = `<div style="background:linear-gradient(135deg,#5B21B6,#7C3AED);border-radius:14px;padding:1.5rem 1.25rem;margin-bottom:1.5rem;text-align:center"><div style="font-size:1.4rem;font-weight:900;color:#fff;margin-bottom:.3rem">${cfg.nombre||'Tienda Aleze'}</div><div style="font-size:.95rem;color:rgba(255,255,255,.85)">🛒 ${cfg.eslogan||'Todo lo que necesitas, cerca de ti'} 📍</div></div>`;
+  }
 
   // Tarjeta de producto para los rieles de scroll (promos / recien agregados) — mismo diseño
   // en ambas, para que la pagina se sienta de una sola pieza, no secciones inconexas.
-  const _tarjetaProdRail = (p) => {
+  const _tarjetaProdRail = (p, _esNuevo) => {
     const _promoRail = _getPromoTienda(p);
     const _pctDesc = _promoRail && _promoRail.precioPromo && _promoRail.precioPromo < p.precio
       ? Math.round((1 - _promoRail.precioPromo / p.precio) * 100) : 0;
     const _precioMostrar = _pctDesc > 0 ? _promoRail.precioPromo : p.precio;
-    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative">${_pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.68rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">-${_pctDesc}%</div>` : ''}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
+    const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.68rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">-${_pctDesc}%</div>`
+      : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : '');
+    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
 
   const hoy = new Date().toISOString().slice(0,10);
   const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
   const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
-  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${prodsPromo.slice(0,10).map(_tarjetaProdRail).join('')}</div></div>` : '';
+  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${prodsPromo.slice(0,10).map(p => _tarjetaProdRail(p, false)).join('')}</div></div>` : '';
 
   // Categorias como riel de burbujas — reemplaza las fotos-collage con texto incrustado (ver
   // nota mas abajo) por circulos de color + emoji: mas liviano, mas consistente, y con scroll
@@ -663,7 +688,7 @@ function _tndRenderHome() {
   // no una seccion inventada. Le da a la home algo que cambie con el tiempo, ademas de las
   // categorias fijas — sensacion de tienda con movimiento, no un catalogo estatico.
   const recientes = (DB.productos||[]).filter(p => stockTotal(p) > 0).slice().sort((a,b) => b.id - a.id).slice(0, 10);
-  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${recientes.map(_tarjetaProdRail).join('')}</div></div>` : '';
+  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${recientes.map(p => _tarjetaProdRail(p, true)).join('')}</div></div>` : '';
 
   const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
   const serviciosHtml = cfg.serviciosBannerUrl
@@ -681,6 +706,27 @@ function _tndRenderHome() {
 
   grid.innerHTML = bannerHtml + promosHtml + catsHtml + recientesHtml + serviciosHtml + tiendasHtml
     + `<button onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
+  _tndIniciarCarruselBanner(_banners.length);
+}
+// Auto-avance del carrusel de banners — se pausa solo (no reinicia el timer) si el usuario
+// desliza a mano, el proximo avance automatico sigue el ritmo normal desde ahi. Los puntos se
+// actualizan tanto por el auto-avance como por el deslizado manual, mismo mecanismo.
+function _tndIniciarCarruselBanner(cantidad) {
+  clearInterval(window._tndBannerInterval);
+  if (cantidad <= 1) return;
+  let idx = 0;
+  const track = document.getElementById('tnd-banner-track');
+  if (!track) return;
+  window._tndBannerInterval = setInterval(() => {
+    const t = document.getElementById('tnd-banner-track');
+    if (!t) { clearInterval(window._tndBannerInterval); return; }
+    idx = (idx + 1) % cantidad;
+    t.scrollTo({ left: t.clientWidth * idx, behavior: 'smooth' });
+  }, 4500);
+  track.onscroll = () => {
+    idx = Math.round(track.scrollLeft / track.clientWidth);
+    document.querySelectorAll('.tnd-banner-dot').forEach((d,i) => d.classList.toggle('active', i===idx));
+  };
 }
 let _tndMetodo = 'Yape';
 let _tndEntrega = 'recojo';
