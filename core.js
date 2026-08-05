@@ -557,6 +557,21 @@ function fiadoPendiente(f) {
   return fiadoMontoPendiente(f) > 0;
 }
 
+// ── Deuda del cliente: mismo motivo y patron que fiadoPendiente/fiadoMontoPendiente de arriba
+// — cli.deuda se acumula con incrementM() a traves de muchas transacciones separadas en el
+// tiempo (pagos parciales, pagos globales, nuevos fiados), el mismo tipo de operacion donde el
+// residuo de punto flotante se acumula. Un cliente que salda toda su deuda podia quedar con
+// cli.deuda en algo como 0.0000000000018 — se ve y redondea como "S/ 0.00" en cualquier
+// pantalla, pero la comparacion directa contra 0 seguia dando true, mostrando el numero en vez
+// de "Al dia". Estas son las UNICAS funciones que deben usarse para decidir si un cliente
+// sigue debiendo algo — nunca comparar cli.deuda directo contra 0 en ningun otro lugar.
+function clienteDeudaMonto(cli) {
+  return Math.max(0, Math.round((cli.deuda||0) * 100) / 100);
+}
+function clienteTieneDeuda(cli) {
+  return clienteDeudaMonto(cli) > 0;
+}
+
 // ── Costo real de una venta/fiado/pago — CRITICO, corrige 2 problemas reales confirmados:
 // 1) Ventas normales (procesarVenta) nunca guardaban costoUnitario en sus items — solo
 //    fiados lo hacían. Sin eso, cualquier reporte que recalculara el costo tenía que volver a
