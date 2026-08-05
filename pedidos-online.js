@@ -476,27 +476,20 @@ function confirmarEntregaPedido(id) {
 
   // Si se marca como entregado: verificar stock y confirmar
   if (nuevoEstado === 'entregado' && p.estado !== 'entregado') {
-    // Sede que despacha: automática según el perfil de quien confirma; el admin puede anularla
-    let _sedeDespacho = currentUserSedeId || 'principal';
-    if (currentRole === 'admin') {
-      const _idxSede = prompt(`¿Desde qué sede se despacha este pedido?\n1. Principal${_sedeDespacho==='principal'?' (tu sede)':''}\n2. Tienda Aleze II${_sedeDespacho==='Tienda Aleze II'?' (tu sede)':''}`, _sedeDespacho === 'principal' ? '1' : '2');
-      if (_idxSede === '1') _sedeDespacho = 'principal';
-      else if (_idxSede === '2') _sedeDespacho = 'Tienda Aleze II';
-      // Cancelar o valor inválido → se queda con su propia sede por defecto
-    }
-    // Revisar stock suficiente en la sede que va a despachar
+    const _sedeDespacho = 'principal';
+    // Revisar stock suficiente antes de descontar
     const sinStock = (p.items||[]).filter(i => i.cant > 0 && !i.eliminado).filter(item => {
       const prod = DB.productos.find(x => x.id === item.prodId);
       return prod && stockEnSede(prod, _sedeDespacho) < item.cant;
     });
 
-    let confirmMsg = `¿Confirmar entrega del pedido de ${p.clienteNombre||'cliente'}?\n\nSe despacha desde: ${_sedeDespacho}\n\nProductos a descontar del inventario:\n`;
+    let confirmMsg = `¿Confirmar entrega del pedido de ${p.clienteNombre||'cliente'}?\n\nProductos a descontar del inventario:\n`;
     (p.items||[]).filter(i=>i.cant>0&&!i.eliminado).forEach(i => {
       confirmMsg += `• ${i.nombre} x${i.cant} — ${sol(subtotalItemCarrito(i))}\n`;
     });
     confirmMsg += `\nTotal: ${sol(p.total)}\nMétodo: ${p.metodo}`;
     if (sinStock.length > 0) {
-      confirmMsg += `\n\n⚠️ ALERTA: Los siguientes productos tienen stock insuficiente en ${_sedeDespacho}:\n`;
+      confirmMsg += `\n\n⚠️ ALERTA: Los siguientes productos tienen stock insuficiente:\n`;
       sinStock.forEach(item => {
         const prod = DB.productos.find(x => x.id === item.prodId);
         confirmMsg += `• ${item.nombre}: necesitas ${item.cant}, disponible ${prod?stockEnSede(prod,_sedeDespacho):0}\n`;
