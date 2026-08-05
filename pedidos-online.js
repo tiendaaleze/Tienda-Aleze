@@ -553,7 +553,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         _deltasStock.push({ prod, delta });
       });
 
-      let _ventaOnline = null, _fiadoOnline = null;
+      let _ventaOnline = null, _fiadoOnline = null, _puntosGanadosPedido = 0;
       if (_esPagado) {
         const _itemsConCosto = itemsFinales.map(i => {
           const prod = DB.productos.find(x => x.id === i.prodId);
@@ -571,10 +571,14 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         };
         batch.set(docM(dbModular, 'ventas', String(_ventaOnline.id)), _ventaOnline);
         if (cli) {
+          // CRITICO: los pedidos online nunca otorgaban puntos — a diferencia de una venta
+          // normal en POS (ver pos.js), que si calcula y suma puntos al cliente en el mismo
+          // paquete atomico. Mismo criterio aplicado aca, usando la misma funcion.
+          _puntosGanadosPedido = calcularPuntosGanados(_itemsConCosto);
           batch.set(docM(dbModular, 'clientes', String(cli.id)),
             _esClienteNuevo
-              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: 0, puntos: 0 }
-              : { compras: incrementM(1), total: incrementM(p.total) },
+              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: 0, puntos: _puntosGanadosPedido }
+              : { compras: incrementM(1), total: incrementM(p.total), puntos: incrementM(_puntosGanadosPedido) },
             { merge: true });
         }
       } else {
@@ -590,10 +594,13 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             origenOnline: true, sedeId: _sedeDespacho, estado: 'pendiente'
           };
           batch.set(docM(dbModular, 'fiados', String(_fiadoOnline.id)), _fiadoOnline);
+          // Mismo criterio que la rama pagada de arriba, y que la venta fiada normal de POS —
+          // los puntos se ganan al momento de la venta, sea fiada o pagada, no al cobrar.
+          _puntosGanadosPedido = calcularPuntosGanados(itemsFinales);
           batch.set(docM(dbModular, 'clientes', String(cli.id)),
             _esClienteNuevo
-              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: p.total, puntos: 0 }
-              : { compras: incrementM(1), total: incrementM(p.total), deuda: incrementM(p.total) },
+              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: p.total, puntos: _puntosGanadosPedido }
+              : { compras: incrementM(1), total: incrementM(p.total), deuda: incrementM(p.total), puntos: incrementM(_puntosGanadosPedido) },
             { merge: true });
         }
         const _ventaOnlineFiado = {
@@ -653,7 +660,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       _clienteProxySkipSync = true;
       try {
         if (_esPagado) {
-          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; }
+          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; cli.puntos = (cli.puntos||0) + _puntosGanadosPedido; }
         } else {
           if (_fiadoOnline) {
             if (!DB.fiados) DB.fiados = [];
@@ -663,6 +670,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             _aplicarDeudaLocal(cli, p.total);
             cli.compras = (cli.compras||0) + 1;
             cli.total   = (cli.total||0)   + p.total;
+            cli.puntos  = (cli.puntos||0)  + _puntosGanadosPedido;
           }
         }
       } finally { _clienteProxySkipSync = false; }
