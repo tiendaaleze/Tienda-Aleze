@@ -393,7 +393,6 @@ function editarPromocion(id) {
   document.getElementById('promo-desde').value = pr.desde;
   document.getElementById('promo-hasta').value = pr.hasta;
   document.getElementById('promo-limite').value = pr.limite || 100;
-  document.getElementById('promo-sede').value = pr.sedeId || '';
   const margen = pr.precioOrig > 0 ? Math.round((pr.precioPromo/pr.precioOrig-1)*100) : 20;
   document.getElementById('promo-margen-num').value = Math.max(0, margen);
   document.getElementById('promo-margen-slider').value = Math.max(0, margen);
@@ -433,7 +432,6 @@ function abrirModalPromocion() {
   document.getElementById('promo-calc-detalle').textContent = 'Selecciona al menos un producto';
   document.getElementById('promo-aviso').textContent = '';
   document.getElementById('promo-limite').value = 100;
-  document.getElementById('promo-sede').value = '';
   document.getElementById('promo-img-data').value = '';
   document.getElementById('promo-img-file').value = '';
   const preview = document.getElementById('promo-img-preview');
@@ -516,8 +514,7 @@ function guardarPromocion() {
     desde: document.getElementById('promo-desde').value,
     hasta: document.getElementById('promo-hasta').value,
     activa: true, limite, vendidos: 0,
-    imagen, packProdId, packCodigo,
-    sedeId: document.getElementById('promo-sede')?.value || ''
+    imagen, packProdId, packCodigo
   };
   // CRITICO: promociones ahora tiene su propia coleccion (mismo criterio que ventas,
   // clientes, etc.) — ya no depende de guardarse como parte de aleze/db via fbGuardar().
