@@ -212,6 +212,18 @@ async function iniciarFirebase() {
 appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       console.log('[AppCheck] activado correctamente');
       _tlog('[AppCheck] activate() retorno (no espera token, solo dispara)');
+      // DIAGNOSTICO TEMPORAL — mide CUANTO TARDA REALMENTE generar el primer token de App
+      // Check (reCAPTCHA v3), en paralelo, sin bloquear nada del flujo normal (no lleva
+      // await). Hipotesis a confirmar: el login (signInWithEmailAndPassword) podria estar
+      // esperando por dentro este mismo token si App Check esta configurado como obligatorio
+      // para el Authentication API en la consola de Firebase — este log aisla exactamente
+      // cuanto tarda ese token por si solo, sin mezclarlo con el resto del login.
+      const _tAppCheckStart = performance.now();
+      appCheckInstance.getToken().then(() => {
+        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check generado — tardo ${(performance.now()-_tAppCheckStart).toFixed(0)}ms`);
+      }).catch(acTokenErr => {
+        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check FALLO tras ${(performance.now()-_tAppCheckStart).toFixed(0)}ms: ${acTokenErr.message}`);
+      });
       // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
       // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
       // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
