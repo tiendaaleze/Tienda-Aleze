@@ -932,7 +932,14 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   }
   .ticket-center { text-align: center; }
   .ticket-line { border-top: 1px dashed var(--gray-300); margin: 0.5rem 0; }
-  .ticket-row { display: flex; justify-content: space-between; }
+  /* Con nombres de producto largos, sin estas 3 propiedades el "S/" y el numero del precio
+     podian partirse en 2 lineas distintas (el navegador cortaba justo en el espacio entre
+     ambos, al no quedar suficiente ancho) — gap+flex-shrink:0 en el precio evita que eso
+     pase nunca, y el nombre cede espacio/envuelve a una segunda linea en vez de empujar el
+     precio fuera de la vista. */
+  .ticket-row { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem; }
+  .ticket-row > span:first-child { flex: 1; min-width: 0; }
+  .ticket-row > span:last-child { flex-shrink: 0; white-space: nowrap; }
 
   /* FIADO */
   .fiado-card {
