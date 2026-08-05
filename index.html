@@ -2,6 +2,16 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<script>
+// DIAGNOSTICO TEMPORAL — captura el rastro completo de cualquier error no manejado, apenas
+// ocurre, como texto plano en consola (sin necesitar flechita para expandir, que en algunos
+// navegadores moviles no aparece). Se puede quitar una vez encontrada la causa real del
+// TypeError intermitente reportado.
+window.addEventListener('error', function(e) {
+  var detalle = (e.error && e.error.stack) ? e.error.stack : '(sin stack disponible — probablemente error de un script externo sin CORS)';
+  console.error('🔴🔴🔴 RASTRO COMPLETO — ' + e.message + ' — en ' + e.filename + ':' + e.lineno + ':' + e.colno + '\n' + detalle);
+}, true);
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Tienda Aleze</title>
 <meta name="description" content="Sistema de ventas e inventario — Tienda Aleze, San Juan de Lurigancho">
