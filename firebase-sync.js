@@ -194,8 +194,15 @@ const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
 const VAPID_KEY = 'BBWLZJaIhkWmkeYT9B2GG9D0lK1uljNgCA7Jkelm8I06o6269EO-uywu-FoH4iicBksg5i1vSgeWhrL9l87bNng';
 
 async function iniciarFirebase() {
+  // DIAGNOSTICO TEMPORAL — cronometro real en cada etapa, para encontrar exactamente donde
+  // se va el tiempo en las cargas lentas, en vez de seguir adivinando por orden de aparicion
+  // en consola. Se puede quitar una vez encontrada la causa real de la demora intermitente.
+  const _t0 = performance.now();
+  const _tlog = (msg) => console.log(`⏱️ [T+${(performance.now()-_t0).toFixed(0)}ms] ${msg}`);
+  _tlog('iniciarFirebase() arranca');
   try {
     fbApp = firebase.initializeApp(FIREBASE_CONFIG);
+    _tlog('firebase.initializeApp() listo');
 
     // ── App Check (reCAPTCHA v3) — SDK Compat syntax ────────────────────────
     // firebase-app-check-compat.js expone firebase.appCheck() directamente
@@ -204,6 +211,7 @@ async function iniciarFirebase() {
      const appCheckInstance = firebase.appCheck(fbApp);
 appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       console.log('[AppCheck] activado correctamente');
+      _tlog('[AppCheck] activate() retorno (no espera token, solo dispara)');
       // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
       // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
       // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
@@ -215,16 +223,19 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       // ya construido (Promise.allSettled en el login) lo absorbe sin romper nada.
     } catch(acErr) {
       console.warn('[AppCheck] no activado — la app sigue funcionando:', acErr.message);
+      _tlog('[AppCheck] fallo activate(): ' + acErr.message);
     }
     // ────────────────────────────────────────────────────────────────────────
 
    fbFS  = firebase.firestore();
+      _tlog('firebase.firestore() (Compat) listo');
       // fbFS ya no hace ninguna operación real de Firestore — la migración completa al SDK
       // modular movió todo (las 157 referencias originales) a dbModular. Por eso ya no tiene
       // enablePersistence() acá — tenerlo generaba una segunda coordinación multi-pestaña vía
       // IndexedDB compitiendo con la de dbModular, causando permission-denied y demoras de
       // varios minutos (ya corregido, quitando esa llamada).
       fbAuth = firebase.auth();
+      _tlog('firebase.auth() (Compat) listo');
       // CRITICO: sin esto, el SDK de Auth "adivina" el mejor metodo de persistencia segun el
       // navegador — en ciertos navegadores moviles con proteccion de privacidad fuerte, esa
       // auto-deteccion intenta requestStorageAccess() (pensado para contextos de iframe de
@@ -234,7 +245,9 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       // Fijando el metodo explicito (localStorage simple, mismo origen, sin necesidad de
       // ningun permiso de terceros) se evita que el SDK intente esa deteccion en absoluto.
       try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch(persErr) { console.warn('[Auth] No se pudo fijar persistencia explicita (Compat):', persErr.message); }
+      _tlog('setPersistence (Compat) listo');
       fbStorage = firebase.storage();
+      _tlog('firebase.storage() (Compat) listo');
       // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
       // Y las Cloud Functions ya fueron desplegadas manualmente. Si no se desplegaron,
       // la llamada falla con un error claro (manejado en tndPagarEnLinea), no en silencio.
@@ -250,8 +263,11 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       // la misma fuente de verdad, no 2 proyectos distintos. Si esto falla, el sistema entero
       // sigue funcionando igual por Compat — esto es un agregado, nunca un reemplazo.
       try {
+        _tlog('a punto de chequear window.__fbModular');
         if (window.__fbModular) {
+          _tlog('window.__fbModular SI esta disponible — arrancando rama modular');
           const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
+          _tlog('initializeAppModular() listo');
           // CRITICO: persistentMultipleTabManager() (coordinación entre pestañas vía
           // IndexedDB) tiene problemas conocidos y documentados en navegadores móviles —
           // especialmente Safari iOS y los WebView de apps instaladas — donde la negociación
@@ -272,18 +288,22 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
               // sin hacer esperar al usuario por ese timeout.
               experimentalAutoDetectLongPolling: true
             });
+            _tlog('dbModular = initializeFirestore() CON persistencia offline, listo');
           } catch (persistErr) {
             // Si la persistencia no se puede activar (ej. navegador sin IndexedDB, modo
             // incognito en algunos navegadores, u otra pestaña ya tiene la persistencia
             // tomada), se sigue igual con la conexión simple — sin offline en esta pestaña
             // puntual, pero sin romper el resto del sistema.
             console.warn('[SDK modular] No se pudo activar persistencia offline, sigue sin ella:', persistErr.message);
+            _tlog('dbModular = getFirestore() SIN persistencia (fallo la de arriba): ' + persistErr.message);
             dbModular = window.__fbModular.firestore.getFirestore(appModular);
           }
           authModular = window.__fbModular.auth.getAuth(appModular);
+          _tlog('authModular = getAuth() listo');
           try {
             await window.__fbModular.auth.setPersistence(authModular, window.__fbModular.auth.browserLocalPersistence);
-          } catch (persErrMod) { console.warn('[Auth] No se pudo fijar persistencia explicita (Modular):', persErrMod.message); }
+            _tlog('setPersistence (Modular) listo');
+          } catch (persErrMod) { console.warn('[Auth] No se pudo fijar persistencia explicita (Modular):', persErrMod.message); _tlog('setPersistence (Modular) fallo: ' + persErrMod.message); }
           storageModular = window.__fbModular.storage.getStorage(appModular);
           ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
              updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
@@ -291,16 +311,21 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
              runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
              deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
           console.log('[SDK modular] Conexión propia inicializada con persistencia offline — listo para empezar a migrar funciones.');
+          _tlog('[SDK modular] TODO listo — docM y el resto de funciones ya asignadas');
         } else {
           console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
+          _tlog('window.__fbModular NO disponible');
         }
       } catch(modErr) {
         console.warn('[SDK modular] No se pudo inicializar (el sistema sigue por Compat sin problema):', modErr.message);
+        _tlog('rama modular completa fallo con excepcion: ' + modErr.message);
       }
 
+      _tlog('iniciarFirebase() a punto de RETORNAR true');
       return true;
   } catch(e) {
     console.error('Firebase init error:', e);
+    _tlog('iniciarFirebase() a punto de RETORNAR false — error: ' + e.message);
     return false;
   }
 }
