@@ -1365,26 +1365,71 @@ async function sincronizarMermasInventario() {
   renderInvMensualTable();
 }
 
-function guardarInventarioMensual() {
+// CRITICO: antes esta funcion solo guardaba un resumen historico del conteo, sin tocar el
+// stock real para nada — el usuario esperaba que "Guardar" corrigiera el stock y no pasaba
+// nada visible. La otra funcion que si tocaba stock (sincronizarMermasInventario) registraba
+// TODA diferencia como una merma (perdida) y encima ignoraba por completo los sobrantes
+// (diff > 0, como una carga inicial o un producto nuevo agregado sin pasar por boleta) — mal
+// ajuste conceptual para casos que no son una perdida real: carga inicial del sistema,
+// productos armados en casa sin compra a proveedor, correcciones puntuales de conteo. Ahora
+// "Guardar inventario" ajusta el stock real directamente a la cantidad fisica contada (en
+// cualquier direccion), SIN crear ninguna merma y SIN tocar caja/movimientos — el costo del
+// producto (asignado al crearlo) sigue siendo lo que se descuenta al vender, asi que la
+// rentabilidad real no se ve afectada por como llego el stock. sincronizarMermasInventario()
+// sigue disponible aparte, intacta, para cuando si se quiera registrar una perdida real con
+// motivo.
+async function guardarInventarioMensual() {
+  const sede = sedeAdminEfectiva();
   const fecha = document.getElementById('inv-mens-fecha').value || today();
-  const resumen = {
-    id: getId(),
-    fecha,
-    usuario: currentUser,
-    sedeId: currentUserSedeId || 'principal',
-    items: invMensualData.map((d, i) => ({
-      prodId: DB.productos[i].id,
-      nombre: DB.productos[i].nombre,
-      stockSistema: stockEnSede(DB.productos[i]),
-      contado: d.contado,
-      diff: d.contado !== null ? d.contado - stockEnSede(DB.productos[i]) : null,
-      motivo: d.motivo,
-      verificado: d.verificado
-    }))
-  };
+
+  const _itemsResumen = [];
+  const _pendientes = []; // {prod, delta}
+  invMensualData.forEach((d, i) => {
+    const p = DB.productos.find(prod => prod.id === d.prodId) || DB.productos[i];
+    if (!p) return;
+    const _stockAqui = stockEnSede(p);
+    const _diff = d.contado !== null && d.contado !== '' ? Math.round((d.contado - _stockAqui) * 1000) / 1000 : null;
+    _itemsResumen.push({
+      prodId: p.id, nombre: p.nombre, stockSistema: _stockAqui,
+      contado: d.contado, diff: _diff, motivo: d.motivo, verificado: d.verificado
+    });
+    if (_diff !== null && _diff !== 0 && d.verificado) _pendientes.push({ prod: p, delta: _diff });
+  });
+
+  if (_pendientes.length > 0) {
+    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+    const _CHUNK = 200;
+    for (let i = 0; i < _pendientes.length; i += _CHUNK) {
+      const trozo = _pendientes.slice(i, i + _CHUNK);
+      const batch = writeBatchM(dbModular);
+      trozo.forEach(({prod, delta}) => {
+        batch.set(docM(dbModular, 'stock', String(prod.id)),
+          { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
+      });
+      _sincIniciar('inv_mensual_stock_lote', fecha + '_' + i);
+      try {
+        await batch.commit();
+        _sincTerminar('inv_mensual_stock_lote', fecha + '_' + i);
+      } catch (e) {
+        _sincError('inv_mensual_stock_lote', fecha + '_' + i, e,
+          'la corrección de stock del inventario mensual — se aplicaron ' + i + ' de ' + _pendientes.length + ' correcciones antes del error');
+        return;
+      }
+    }
+    _pendientes.forEach(({prod, delta}) => {
+      if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
+      prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
+      prod.stock = stockTotal(prod);
+    });
+    fbGuardarProductos();
+  }
+
+  const resumen = { id: getId(), fecha, usuario: currentUser, sedeId: currentUserSedeId || 'principal', items: _itemsResumen };
   DB_EXT.inventariosMensuales.push(resumen);
   fbGuardarExt();
-  alert('✅ Inventario guardado. Total ítems verificados: ' + invMensualData.filter(d=>d.verificado).length);
+  alert('✅ Inventario guardado. ' + (_pendientes.length > 0 ? _pendientes.length + ' producto(s) con stock corregido. ' : '') + 'Total ítems verificados: ' + invMensualData.filter(d=>d.verificado).length);
+  updateAlertCount();
+  renderInvMensualTable();
 }
 
 // Valorizacion completa: stock, costo y precio de venta actuales — responde "cuanto tengo
