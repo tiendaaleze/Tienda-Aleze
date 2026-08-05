@@ -158,9 +158,31 @@ async function _doLoginInterno() {
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Verificando...'; }
 
   try {
-    _tlogL('arrancando signInWithEmailAndPassword');
-    await fbAuth.signInWithEmailAndPassword(email, pass);
-    _tlogL('signInWithEmailAndPassword TERMINO');
+    _tlogL('arrancando signInWithEmailAndPassword (Compat + Modular en paralelo)');
+    // CRITICO: causa real encontrada — confirmada por el propio usuario notando que un
+    // segundo login (sin cerrar la app del todo) sí carga rapido. Compat y Modular son 2
+    // conexiones de Firebase completamente separadas (2 registros de app distintos en
+    // memoria, ver comentario en firebase-sync.js) — dbModular (usada para TODAS las
+    // lecturas/escrituras/listeners reales del sistema) depende del contexto de autenticacion
+    // de authModular para que las reglas de seguridad la reconozcan como usuario valido. Pero
+    // solo se autenticaba fbAuth (Compat) — authModular se creaba (getAuth) pero NUNCA se le
+    // avisaba quien inicio sesion. El resultado: justo despues del login, TODOS los listeners
+    // y lecturas via dbModular fallaban con permission-denied — recien se resolvia solos tras
+    // varios segundos, cuando algun mecanismo interno indirecto terminaba de propagar el
+    // estado. En un login posterior dentro de la MISMA sesion de app, esa propagacion ya
+    // habia ocurrido, por eso cargaba rapido — exactamente lo que se observo. Ahora se
+    // autentican ambas conexiones EXPLICITAMENTE, con las mismas credenciales, al mismo
+    // tiempo — sin depender de ninguna propagacion indirecta.
+    const _authPromises = [fbAuth.signInWithEmailAndPassword(email, pass)];
+    if (authModular && window.__fbModular) {
+      _authPromises.push(window.__fbModular.auth.signInWithEmailAndPassword(authModular, email, pass));
+    }
+    const _authResults = await Promise.allSettled(_authPromises);
+    if (_authResults[0].status === 'rejected') throw _authResults[0].reason;
+    if (_authResults[1] && _authResults[1].status === 'rejected') {
+      console.warn('[Login] Compat autenticado OK, pero Modular fallo — dbModular podria tardar en reconocer la sesion:', _authResults[1].reason.message);
+    }
+    _tlogL('signInWithEmailAndPassword TERMINO (Compat' + (authModular ? ' + Modular' : '') + ')');
     _limpiarBloqueo();
   } catch(fbErr) {
     _tlogL('signInWithEmailAndPassword FALLO: ' + fbErr.message);
@@ -518,8 +540,11 @@ function doLogout() {
   if (_pedidosOnlineUnsub) { _pedidosOnlineUnsub(); _pedidosOnlineUnsub = null; }
   if (_fbSnapshotUnsub)    { _fbSnapshotUnsub();    _fbSnapshotUnsub    = null; }
 
-  // Cerrar sesión Firebase en segundo plano
+  // Cerrar sesión Firebase en segundo plano — ambas conexiones (Compat y Modular), ya que
+  // ahora ambas se autentican al entrar. Sin esto, authModular quedaria con la sesion vieja
+  // si otro usuario inicia sesion despues en el mismo dispositivo.
   if (fbAuth) fbAuth.signOut().catch(() => {});
+  if (authModular && window.__fbModular) window.__fbModular.auth.signOut(authModular).catch(() => {});
 
   // Volver a pantalla de login
   document.getElementById('login-screen').classList.add('visible');
