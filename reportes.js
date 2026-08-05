@@ -189,7 +189,14 @@ function reporteRentabilidad(datos, desde, hasta) {
   const gastosRec = DB_EXT.gastosRec.reduce((s,g)=>s+g.monto,0);
   const sueldos = Object.values(DB_EXT.sueldos).reduce((s,v)=>s+v,0);
   const mermasCosto = DB.mermas.filter(m=>m.fecha>=desde&&m.fecha<=hasta).reduce((s,m)=>s+costoMerma(m),0);
-  const rentReal = totalGan - gastosMes - gastosRec - sueldos - mermasCosto;
+  // CRITICO: descuentos manuales y por canje de puntos (venta.descuento, ya combina ambos —
+  // ver descuentoManual/descuentoCombo en pos.js) nunca se restaban de ningun lado en este
+  // reporte. Los "ingresos" por producto de arriba usan el precio LISTA de cada item — el
+  // dinero que realmente entro a caja es menor cuando hubo descuento, pero el costo del
+  // producto es el mismo, asi que esa diferencia es perdida real que no se veia reflejada,
+  // inflando la ganancia mostrada cada vez que hubo un descuento en el periodo.
+  const totalDescuentos = vendido.reduce((s,v) => s + (v.descuento || 0), 0);
+  const rentReal = totalGan - gastosMes - gastosRec - sueldos - mermasCosto - totalDescuentos;
   const totalCobrado = cobrado.reduce((s,v)=>s+v.total,0);
 
   if (chartReporte) chartReporte.destroy();
@@ -208,6 +215,7 @@ function reporteRentabilidad(datos, desde, hasta) {
     <div class="stat-card red"><div class="stat-label">Total gastos S/</div><div class="stat-value">${sol(gastosMes+gastosRec+sueldos+mermasCosto)}</div></div>
     <div class="stat-card ${rentReal>=0?'':'red'}"><div class="stat-label">Rentabilidad real S/</div><div class="stat-value" style="color:${rentReal>=0?'var(--accent)':'var(--danger)'}">${sol(rentReal)}</div></div>
     <div class="stat-card orange"><div class="stat-label">Pérdida mermas S/</div><div class="stat-value">${sol(mermasCosto)}</div></div>
+    <div class="stat-card orange"><div class="stat-label">Descuentos aplicados S/ <span style="font-weight:400;font-size:.68rem">(manuales + canjes)</span></div><div class="stat-value">${sol(totalDescuentos)}</div></div>
     <div class="stat-card blue" style="border-left-color:var(--info)"><div class="stat-label">Cobrado en efectivo S/</div><div class="stat-value">${sol(totalCobrado)}</div></div>`;
 
   document.getElementById('rep-tabla-titulo').textContent = 'Rentabilidad por producto (vendido)';
