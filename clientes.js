@@ -18,7 +18,7 @@ function renderClientes() {
 _norm(c.alias||'').includes(_norm(buscar)) ||
 _norm(c.tel||'').includes(_norm(buscar))
   ) : DB.clientes;
-  document.getElementById('cli-tbody').innerHTML = lista.map(c => { const _deudaSede = c.deuda||0; return `<tr>
+  document.getElementById('cli-tbody').innerHTML = lista.map(c => { const _deudaSede = clienteDeudaMonto(c); return `<tr>
     <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
     <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
     <td>${c.tel||'-'}</td>
@@ -85,8 +85,8 @@ function guardarCliente() {
 function eliminarCliente(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar clientes.'); return; }
   const c = DB.clientes.find(x => x.id === id);
-  const _deudaTotal = c ? (c.deuda||0) : 0;
-  if (c && _deudaTotal > 0) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(_deudaTotal) + '. Salda los fiados antes de eliminarlo.'); return; }
+  const _deudaTotal = c ? clienteDeudaMonto(c) : 0;
+  if (c && clienteTieneDeuda(c)) { alert('Este cliente tiene deuda pendiente de S/ ' + sol(_deudaTotal) + '. Salda los fiados antes de eliminarlo.'); return; }
   if (!confirm('¿Eliminar cliente?')) return;
   DB.clientes = DB.clientes.filter(c => c.id !== id);
   if (dbModular) deleteDocM(docM(dbModular, 'clientes', String(id))).catch(e => console.warn('No se pudo borrar clientes/'+id, e)); // [SDK modular]
