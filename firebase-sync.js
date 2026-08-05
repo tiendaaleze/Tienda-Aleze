@@ -348,12 +348,15 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
 }
 
 // ── Referencia al documento DB_EXT (sueldos, gastos, capital, niveles, etc.) ──
+// CRITICO: mismo problema real ya encontrado y corregido en fbGuardarConfig() (ver esa
+// funcion mas abajo) — sin esto, escribia el documento completo cada vez que CUALQUIER
+// funcion llamaba fbGuardarExt(), aunque nada de lo que realmente vive aca (sueldos, capital,
+// gastosRec) hubiera cambiado. Misma proteccion aplicada por consistencia.
+let _ultimoExtGuardadoJSON = null;
 function fbGuardarExt() {
   if (!dbModular) return; // [SDK modular]
   clearTimeout(window._fbExtTimer);
   window._fbExtTimer = setTimeout(() => {
-    _fbEscribiendo = true;
-    _sincIniciar('db_ext', 'db_ext');
     // 'gastos' se excluye — ya tiene su propia colección real como fuente de verdad
     // (gastos/{id}), escribirlo también acá sería una copia redundante que además arriesga
     // pisar, con un reemplazo completo del documento, un gasto recién creado desde otro
@@ -361,8 +364,12 @@ function fbGuardarExt() {
     // prestamoPagado son getters calculados desde DB.capitalMovimientos, no datos propios.
     const { gastos, ...extSinGastos } = DB_EXT;
     const payload = { ...extSinGastos, capital: { prestamo: DB_EXT.capital.prestamo, cuota: DB_EXT.capital.cuota, meta: DB_EXT.capital.meta } };
-    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(JSON.stringify(payload)))
-      .then(() => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
+    const _extActualJSON = JSON.stringify(payload);
+    if (_extActualJSON === _ultimoExtGuardadoJSON) return; // sin cambios reales, no escribir nada
+    _fbEscribiendo = true;
+    _sincIniciar('db_ext', 'db_ext');
+    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(_extActualJSON))
+      .then(() => { _ultimoExtGuardadoJSON = _extActualJSON; setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
       .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'capital/configuración extendida'); });
   }, 1200);
 }
@@ -372,13 +379,25 @@ function fbGuardarExt() {
 // ventas/clientes/etc — misma duplicidad que ya se corrigió para esos 6 campos. config es un
 // objeto único (no una lista de registros), así que le alcanza con su propio documento, no
 // necesita una colección con un documento por registro como ventas o clientes.
+// CRITICO: sin esto, fbGuardarConfig() escribia el documento COMPLETO (sin merge) cada vez
+// que se llamaba fbGuardar() desde CUALQUIER funcion — incluidas confirmarPagoFiado() y
+// ejecutarPagoGlobal(), que nunca tocan config para nada. Confirmado con evidencia real de
+// consola: un pago de fiado disparaba una escritura de "config/config" innecesaria, justo
+// en el momento en que se reporto perdida de sincronizacion entre sesiones abiertas — 2
+// sesiones escribiendo el mismo documento compartido sin necesidad real, compitiendo entre
+// si por la ultima escritura, es exactamente el tipo de condicion de carrera que puede dejar
+// una sesion con datos viejos. Ahora se compara contra el ultimo estado ya guardado antes de
+// escribir — si config no cambio de verdad, no se dispara ninguna escritura.
+let _ultimoConfigGuardadoJSON = null;
 function fbGuardarConfig() {
   if (!dbModular) return; // [SDK modular]
   clearTimeout(window._fbConfigTimer);
   window._fbConfigTimer = setTimeout(() => {
+    const _configActualJSON = JSON.stringify(DB.config || {});
+    if (_configActualJSON === _ultimoConfigGuardadoJSON) return; // sin cambios reales, no escribir nada
     _sincIniciar('config', 'config');
-    setDocM(docM(dbModular, 'aleze', 'config'), JSON.parse(JSON.stringify(DB.config || {})))
-      .then(() => _sincTerminar('config', 'config'))
+    setDocM(docM(dbModular, 'aleze', 'config'), JSON.parse(_configActualJSON))
+      .then(() => { _ultimoConfigGuardadoJSON = _configActualJSON; _sincTerminar('config', 'config'); })
       .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
   }, 1200);
 }
