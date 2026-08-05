@@ -454,7 +454,7 @@ function _renderTienda() {
 }
 .tnd-badges-left { display:flex;flex-direction:column;gap:4px;align-items:flex-start; }
 .tnd-badge-detalle { background:#7C3AED;color:#fff;font-size:.62rem;font-weight:700;padding:.15rem .4rem;border-radius:5px; }
-.tnd-prod-promo { color:white;font-size:.63rem;font-weight:700;padding:2px 7px;border-radius:4px;background:#EF4444; }
+.tnd-prod-promo { color:white;font-size:.74rem;font-weight:800;padding:.2rem .5rem;border-radius:5px;background:#EF4444;box-shadow:0 1px 4px rgba(239,68,68,.4);letter-spacing:.2px; }
 .tnd-panel-overlay {
   position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;
 }
@@ -671,7 +671,7 @@ function _tndRenderHome() {
     const _pctDesc = _promoRail && _promoRail.precioPromo && _promoRail.precioPromo < p.precio
       ? Math.round((1 - _promoRail.precioPromo / p.precio) * 100) : 0;
     const _precioMostrar = _pctDesc > 0 ? _promoRail.precioPromo : p.precio;
-    const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.68rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">-${_pctDesc}%</div>`
+    const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
       : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : '');
     return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
@@ -827,6 +827,7 @@ function tndFiltrar() {
     const promo = _getPromoTienda(p);
     const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
     const precioOrig = (promo && promo.precioPromo && promo.precioPromo < p.precio) ? p.precio : null;
+    const pctDescCat = precioOrig ? Math.round((1 - precio / precioOrig) * 100) : 0;
     const precioCat = p.costo ? Math.ceil(p.costo * (1 + ((DB.categorias||[]).find(c=>c.id===p.cat)?.margen||0)/100) * 10) / 10 : null;
     const sugerido = precioCat && precioCat !== p.precio ? precioCat : null;
 
@@ -841,7 +842,7 @@ function tndFiltrar() {
       <div class="tnd-badges-top">
         <div class="tnd-badges-left">
           ${p.tieneDetalle ? `<span class="tnd-badge-detalle">🔍 Detalle</span>` : ''}
-          ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">PROMO</span>` : ''}
+          ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">${pctDescCat > 0 ? `-${pctDescCat}%` : 'PROMO'}</span>` : ''}
         </div>
         <div>${_badgeVisible}</div>
       </div>
@@ -1065,12 +1066,23 @@ function tndRenderPanel() {
       const desc = _tndDetalleData?.descripcion || '';
       const mayor = _tndDetalleData?.precioMayor;
       const agotado = stockTotal(p) <= 0;
+      // CRITICO: esta vista mostraba p.precio directo, sin chequear nunca si el producto tenia
+      // una promo individual activa — el carrito SI aplicaba el descuento correctamente al
+      // agregar (tndDetalleAgregarCarrito ya usa _getPromoTienda), pero el precio que se veia
+      // ANTES de agregar seguia siendo el regular, mismo patron ya usado en la grilla del
+      // catalogo (precio tachado + precio con descuento + etiqueta PROMO).
+      const promo = _getPromoTienda(p);
+      const precioMostrar = promo && promo.precioPromo ? promo.precioPromo : p.precio;
+      const precioOrigDetalle = (promo && promo.precioPromo && promo.precioPromo < p.precio) ? p.precio : null;
+      const pctDescDet = precioOrigDetalle ? Math.round((1 - precioMostrar / precioOrigDetalle) * 100) : 0;
       body.innerHTML = `
         <div style="text-align:center;margin-bottom:1rem;background:#F3F4F6;border-radius:12px;padding:.75rem">
           ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:100%;max-height:50vh;object-fit:contain;border-radius:8px">` : `<div style="font-size:4rem;padding:2rem 0">${cat?.emoji||'📦'}</div>`}
         </div>
         ${extra.length ? `<div style="display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem">${extra.map(u=>`<img src="${u}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb">`).join('')}</div>` : ''}
-        <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${p.precio.toFixed(2)}${p.tipo==='granel'?' <span style="font-size:.6em;font-weight:400">/kg</span>':''}</div>
+        ${promo ? `<div style="text-align:center;margin-bottom:.35rem"><span class="tnd-prod-promo">${pctDescDet > 0 ? `-${pctDescDet}%` : 'PROMO'}</span></div>` : ''}
+        ${precioOrigDetalle ? `<div style="text-align:center;font-size:.95rem;color:#9ca3af;text-decoration:line-through">S/ ${precioOrigDetalle.toFixed(2)}</div>` : ''}
+        <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${precioMostrar.toFixed(2)}${p.tipo==='granel'?' <span style="font-size:.6em;font-weight:400">/kg</span>':''}</div>
         ${cargando ? '<p style="text-align:center;color:#9ca3af;font-size:.82rem">⏳ Cargando detalle...</p>' : ''}
         ${desc ? `<p style="font-size:.85rem;color:#4b5563;line-height:1.5;margin-bottom:1rem">${desc}</p>` : ''}
         ${mayor && mayor.cantidadMin > 0 ? `<div style="background:#EDE9FE;border-radius:8px;padding:.6rem;font-size:.8rem;color:#5B21B6;margin-bottom:1rem">💰 Desde ${mayor.cantidadMin} unidades: <strong>S/ ${mayor.precio.toFixed(2)} c/u</strong></div>` : ''}
