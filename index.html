@@ -1579,11 +1579,15 @@ window.addEventListener('error', function(e) {
 <!-- Modal Inventario Mensual -->
 <div class="modal-overlay" id="modal-inv-mensual">
   <div class="modal" style="max-width:900px"><div class="modal-header"><h3>📋 Inventario Mensual</h3><button type="button" class="modal-close" onclick="cerrarModal('modal-inv-mensual')">✕</button></div>
-    <div style="display:flex;gap:.75rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap">
+    <div style="display:flex;gap:.75rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap">
       <div class="form-group" style="margin:0"><label style="font-size:.78rem;font-weight:600">Fecha de inventario</label><input type="date" class="form-control" id="inv-mens-fecha" style="width:160px" /></div>
       <button type="button" class="btn btn-accent btn-sm" style="margin-top:1.2rem" onclick="sincronizarMermasInventario()">🔄 Sincronizar mermas</button>
       <button type="button" class="btn btn-outline btn-sm" style="margin-top:1.2rem" onclick="exportarInventarioMensual()">📥 Exportar conteo</button>
       <button type="button" class="btn btn-outline btn-sm" style="margin-top:1.2rem" onclick="exportarValorizacionInventario()">💰 Exportar valorización</button>
+    </div>
+    <div style="font-size:.72rem;color:var(--gray-500);margin-bottom:1rem;line-height:1.5">
+      <strong>Guardar inventario</strong> (abajo) corrige el stock real a la cantidad contada, en cualquier dirección — no afecta caja ni registra mermas, úsalo para carga inicial o correcciones puntuales.
+      <strong>🔄 Sincronizar mermas</strong> es aparte — úsalo solo si querés registrar una pérdida real confirmada (rotura, vencido, robo) con motivo.
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Producto</th><th>Cat.</th><th>Stock sistema</th><th>Cantidad contada</th><th>Diferencia</th><th>Motivo faltante</th><th>✅ Verificado</th></tr></thead>
