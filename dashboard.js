@@ -104,14 +104,14 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   renderChartVentas();
 }
 
-function irAStockBajo() {
-  navigate('inventario');
+async function irAStockBajo() {
+  await navigate('inventario');
   document.getElementById('inv-estado').value = 'bajo';
   filterInventario();
 }
 
-function irAVencimientos() {
-  navigate('inventario');
+async function irAVencimientos() {
+  await navigate('inventario');
   document.getElementById('inv-estado').value = 'vence';
   filterInventario();
 }
