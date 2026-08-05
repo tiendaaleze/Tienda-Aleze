@@ -354,11 +354,11 @@ function _renderTienda() {
 /* ── Home: secciones con scroll horizontal (promos, categorias, recien agregados) ──
    Mismo patron en las 3, para que la pagina se sienta consistente y "viva" — con
    scroll-snap para que se acomode solo al soltar, como cualquier app real, no una lista
-   estatica. touch-action:pan-x evita que el navegador confunda el gesto con scroll vertical. */
+   estatica. */
 .tnd-section-title { font-weight:800;font-size:1.05rem;color:#1f2937;margin-bottom:.75rem;display:flex;align-items:center;gap:.4rem; }
 .tnd-banner-carousel { position:relative;margin-bottom:1.5rem; }
 .tnd-banner-track {
-  display:flex;overflow-x:auto;scroll-snap-type:x mandatory;
+  display:flex;overflow-x:auto;scroll-snap-type:x proximity;
   scrollbar-width:none;border-radius:14px;-webkit-overflow-scrolling:touch;
 }
 .tnd-banner-track::-webkit-scrollbar { display:none; }
@@ -374,7 +374,14 @@ function _renderTienda() {
 }
 .tnd-scroll-row {
   display:flex;gap:.75rem;overflow-x:auto;padding-bottom:.5rem;
-  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;touch-action:pan-x;
+  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;
+  /* CRITICO: pan-x SOLO (sin pan-y) le decia al navegador "unicamente permitido el gesto
+     horizontal aca" — si el dedo arrancaba el scroll VERTICAL de la pagina justo encima de
+     un riel (categorias, promos, recien agregados), ese componente vertical del gesto se
+     bloqueaba en ese punto exacto, y la pagina "no respondia" ahi — aunque funcionara bien
+     en cualquier otro lugar de la pantalla. Con pan-x pan-y, el navegador deja pasar ambos
+     ejes y decide solo cual predomina segun la direccion real del gesto, como es normal. */
+  touch-action:pan-x pan-y;
   scrollbar-width:none;
 }
 .tnd-scroll-row::-webkit-scrollbar { display:none; }
