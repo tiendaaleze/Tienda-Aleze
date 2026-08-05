@@ -277,7 +277,12 @@ const DB_EXT = {
   gastosRec: [
     {id:1, desc:'Energía eléctrica mensual', tipo:'Energía', monto:80},
     {id:2, desc:'Transporte de mercadería', tipo:'Transporte', monto:50}
-  ]
+  ],
+  // CRITICO: faltaba por completo — guardarInventarioMensual() en inventario.js hace
+  // DB_EXT.inventariosMensuales.push(...), y sin este campo definido aca, esa linea siempre
+  // fallaba con "Cannot read properties of undefined (reading 'push')" — el boton "Guardar
+  // inventario" nunca guardaba nada, desde que existe esa funcion.
+  inventariosMensuales: []
 };
 
 // ── Capital: total/recuperado/prestamoPagado se calculan SIEMPRE desde el historial real
