@@ -83,6 +83,12 @@ function volverWelcome() {
 // señal para volver a entrar. Esa limitación se acepta a cambio de la seguridad.
 
 async function doLogin() {
+  // DIAGNOSTICO TEMPORAL — cronometro real desde el clic del boton, para encontrar donde se
+  // va el tiempo despues de iniciarFirebase() (ya confirmado rapido). Variable global porque
+  // el cronometro sigue en _completarSesion(), otra funcion.
+  window._tLoginStart = performance.now();
+  const _tlogL = (msg) => console.log(`⏱️🔑 [T+${(performance.now()-window._tLoginStart).toFixed(0)}ms] ${msg}`);
+  _tlogL('doLogin() arranca (clic en Ingresar)');
   // ── PASO 0: Reset total de estado anterior (sesión previa, cambio de usuario) ──
   resetAppState();
 
@@ -110,8 +116,10 @@ async function doLogin() {
   }
 
   // ── PASO 1.5: Verificar versión ──
+  _tlogL('arrancando chequeo de version');
   try {
     const verSnap = await getDocM(docM(dbModular, 'aleze', 'version')); // [SDK modular]
+    _tlogL('chequeo de version TERMINO');
     if (verSnap.exists()) { // en modular, exists es un METODO, no una propiedad
       const requerida = verSnap.data().minVersion || '1.0.0';
       if (APP_VERSION < requerida) {
@@ -120,14 +128,17 @@ async function doLogin() {
         return;
       }
     }
-  } catch(e) {}
+  } catch(e) { _tlogL('chequeo de version FALLO: ' + e.message); }
   // ── PASO 2: Firebase Auth — única fuente de verdad ──
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Verificando...'; }
 
   try {
+    _tlogL('arrancando signInWithEmailAndPassword');
     await fbAuth.signInWithEmailAndPassword(email, pass);
+    _tlogL('signInWithEmailAndPassword TERMINO');
     _limpiarBloqueo();
   } catch(fbErr) {
+    _tlogL('signInWithEmailAndPassword FALLO: ' + fbErr.message);
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Ingresar'; }
     document.getElementById('login-pass').value = '';
 
@@ -152,13 +163,17 @@ async function doLogin() {
     return;
   }
 
+  _tlogL('arrancando _completarSesion()');
   await _completarSesion(name, role);
+  _tlogL('_completarSesion() TERMINO POR COMPLETO — doLogin() termina');
 }
 
 // ── Todo lo que pasa DESPUES de una autenticacion valida (signInWithEmailAndPassword, arriba)
 // — separado de doLogin() para mantener el codigo mas ordenado: aca vive la carga de datos, el
 // render de la app y el arranque de los listeners.
 async function _completarSesion(name, role) {
+  const _tlogC = (msg) => console.log(`⏱️🔑 [T+${(performance.now()-window._tLoginStart).toFixed(0)}ms] ${msg}`);
+  _tlogC('_completarSesion() arranca');
   const btnEl = document.querySelector('.btn-login');
   const errEl = document.getElementById('login-error');
   const sel = `${name}|${role}`;
@@ -181,6 +196,7 @@ async function _completarSesion(name, role) {
       // productos -> stock -> reconciliacion -> ext -> gastos) — aplicar en memoria no tiene
       // costo de red, solo el PEDIDO lo tenia.
       const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
+      _tlogC('arrancando Promise.allSettled de 15 lecturas');
       const _resultados = await Promise.allSettled([
         getDocM(docM(dbModular, 'aleze', 'db_productos')),                                          // 0
         getDocM(docM(dbModular, 'aleze', 'db_ext')),                                                 // 1
@@ -198,6 +214,7 @@ async function _completarSesion(name, role) {
         getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia))),  // 13
         getDocsM(collectionM(dbModular, 'capital_movimientos')) // capital: todo, nunca deberia faltar — bajo volumen (aportes/pagos no son frecuentes), mismo criterio que fiados/clientes/mermas — 14
       ]);
+      _tlogC('Promise.allSettled de 15 lecturas TERMINO');
       // CRITICO: antes, si una de estas 15 lecturas fallaba, solo se veia un aviso generico
       // ("no se pudo reconciliar X") sin la razon real del error (permission-denied? red
       // caida? App Check bloqueado?) — imposible diagnosticar con certeza cuando pasaba. Ahora
@@ -410,6 +427,7 @@ currentRole = role;
     }
   }
   updateAlertCount();
+  _tlogC('render inicial (dashboard/pos) TERMINO, arrancando listeners en tiempo real');
 
   // ── PASO 6: Listener en tiempo real (DESPUÉS del render inicial) ──
   fbEscuchar();
@@ -419,6 +437,7 @@ currentRole = role;
   _programarChequeoMedianoche();
   if (currentRole === 'admin') iniciarBackupAutomatico();
   _registrarNotificacionesPush();
+  _tlogC('_completarSesion() TERMINA (todos los listeners ya arrancaron)');
 }
 
 // ── Notificaciones push reales (FCM) — avisa aunque la app este cerrada o el celular
