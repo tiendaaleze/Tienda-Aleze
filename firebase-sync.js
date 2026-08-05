@@ -209,16 +209,18 @@ async function iniciarFirebase() {
     // El provider se pasa como objeto {siteKey} — NO como clase constructora
     try {
      const appCheckInstance = firebase.appCheck(fbApp);
-      // PRUEBA TEMPORAL — App Check desactivado por completo para esta prueba puntual.
-      // Seguro: confirmado en la consola de Firebase que NINGUNA API esta en modo "Aplicado"
-      // (todas en "Supervision"), asi que nada del lado del servidor exige un token todavia.
-      // Objetivo: descartar de una vez si App Check (en cualquiera de sus formas, incluida su
-      // integracion preliminar con Authentication) es la causa real de la demora de ~20s en
-      // signInWithEmailAndPassword, o si el problema esta en otro lado. Se revierte apenas
-      // se tenga la respuesta.
-      // appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
-      console.log('[AppCheck] DESACTIVADO TEMPORALMENTE PARA PRUEBA — no se llamo a activate()');
-      _tlog('[AppCheck] DESACTIVADO PARA PRUEBA (no se llamo a activate())');
+appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
+      console.log('[AppCheck] activado correctamente');
+      _tlog('[AppCheck] activate() retorno (no espera token, solo dispara)');
+      // DIAGNOSTICO TEMPORAL — mide CUANTO TARDA REALMENTE generar el primer token de App
+      // Check (reCAPTCHA v3), en paralelo, sin bloquear nada del flujo normal (no lleva
+      // await).
+      const _tAppCheckStart = performance.now();
+      appCheckInstance.getToken().then(() => {
+        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check generado — tardo ${(performance.now()-_tAppCheckStart).toFixed(0)}ms`);
+      }).catch(acTokenErr => {
+        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check FALLO tras ${(performance.now()-_tAppCheckStart).toFixed(0)}ms: ${acTokenErr.message}`);
+      });
       // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
       // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
       // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
