@@ -300,10 +300,18 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           }
           authModular = window.__fbModular.auth.getAuth(appModular);
           _tlog('authModular = getAuth() listo');
-          try {
-            await window.__fbModular.auth.setPersistence(authModular, window.__fbModular.auth.browserLocalPersistence);
-            _tlog('setPersistence (Modular) listo');
-          } catch (persErrMod) { console.warn('[Auth] No se pudo fijar persistencia explicita (Modular):', persErrMod.message); _tlog('setPersistence (Modular) fallo: ' + persErrMod.message); }
+          // CRITICO: encontrada la causa real de la demora intermitente de 20-30+ segundos,
+          // confirmada con cronometros reales — setPersistence(authModular, ...) en el SDK
+          // MODULAR podia colgarse mas de 30 SEGUNDOS en un intento y solo ~550ms en el
+          // siguiente, misma linea exacta. browserLocalPersistence en el SDK modular usa
+          // IndexedDB por dentro (a diferencia de la version Compat, que usa localStorage
+          // simple y por eso siempre es instantanea) — el mismo tipo de bloqueo de
+          // coordinacion entre pestañas/IndexedDB ya diagnosticado antes para Firestore
+          // (persistentMultipleTabManager). El login real usa fbAuth (Compat,
+          // signInWithEmailAndPassword en auth.js) — authModular no se usa para ningun login
+          // real todavia, asi que fijarle persistencia no cumplia ningun proposito funcional,
+          // solo el riesgo del cuelgue. Se elimina la llamada por completo — authModular
+          // sigue disponible para cuando se migre el login real al SDK modular.
           storageModular = window.__fbModular.storage.getStorage(appModular);
           ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
              updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
