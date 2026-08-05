@@ -262,7 +262,7 @@ function reporteMermas(desde, hasta, sede) {
 
 function reporteFiados(sede) {
  const data = DB.clientes.map(c => {
-    const deudaReal = DB.fiados.filter(f => f.clienteId === c.id && (!sede || (f.sedeId||'principal') === sede)).reduce((s,f) => s + fiadoMontoPendiente(f), 0);
+    const deudaReal = Math.round(DB.fiados.filter(f => f.clienteId === c.id && (!sede || (f.sedeId||'principal') === sede)).reduce((s,f) => s + fiadoMontoPendiente(f), 0) * 100) / 100;
     return { nombre: c.alias||c.nombre, deuda: deudaReal };
   }).filter(d => d.deuda > 0).sort((a,b) => b.deuda - a.deuda);
   const total = data.reduce((s,d)=>s+d.deuda,0);
