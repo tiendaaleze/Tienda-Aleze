@@ -95,7 +95,11 @@ async function doLogin() {
   if (window._loginEnCurso) { console.warn('[Login] Ya hay un login en curso, se ignora el toque adicional'); return; }
   window._loginEnCurso = true;
   const _btnElWrap = document.querySelector('.btn-login');
-  if (_btnElWrap) _btnElWrap.disabled = true;
+  // CRITICO: el texto del boton recien cambiaba en el "Paso 2" (despues del chequeo de
+  // version) — un solo toque podia sentirse "como que no paso nada" durante ese primer tramo,
+  // aunque ya estuviera trabajando por dentro. Ahora reacciona en el instante mismo del
+  // toque, antes de cualquier otra cosa.
+  if (_btnElWrap) { _btnElWrap.disabled = true; _btnElWrap.textContent = '⏳ Verificando...'; }
   try {
     await _doLoginInterno();
   } finally {
