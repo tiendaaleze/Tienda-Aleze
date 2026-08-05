@@ -531,12 +531,3 @@ function ejecutarReset() {
 
 // ===================== FIN RESET =====================
 
-function _initLocal(hoy) {
-  _semillaDemo(hoy || today());
-  checkRoute();
-  if (!window.location.pathname.includes('/tienda') && !window.location.hash.includes('/tienda')) {
-    renderDashboard();
-    mobUpdateBar();
-  }
-}
-
