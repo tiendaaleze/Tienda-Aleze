@@ -124,7 +124,7 @@
     </select>
     <input type="password" id="login-pass" autocomplete="current-password" class="form-control" placeholder="Contraseña" onkeydown="if(event.key==='Enter')doLogin()" />
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
-    <button type="button" class="btn-login" onclick="doLogin()">Ingresar</button>
+    <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
   </div>
 
