@@ -720,6 +720,17 @@ window.addEventListener('beforeunload', function(e) {
 document.addEventListener('DOMContentLoaded', async function() {
   const hoy = today();
   const fbOk = await iniciarFirebase();
+  // CRITICO: el boton empieza deshabilitado (ver index.html) — sin esto, un click antes de
+  // que iniciarFirebase() termine su rama modular disparaba "docM is not a function" dentro
+  // del login (docM/dbModular todavia no existian), silenciosamente saltandose toda la
+  // reconciliacion de datos frescos y cayendo a cache local vieja. Se habilita aca, recien
+  // cuando iniciarFirebase() realmente termino — tanto si tuvo exito como si fallo, para no
+  // dejar al usuario con un boton eternamente en "Cargando..." sin explicacion.
+  const _btnLogin = document.getElementById('btn-login');
+  if (_btnLogin) {
+    _btnLogin.disabled = false;
+    _btnLogin.textContent = fbOk ? 'Ingresar' : '⚠️ Ingresar (sin conexión)';
+  }
 
   if (fbOk) {
     try {
