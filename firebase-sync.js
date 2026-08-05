@@ -651,6 +651,7 @@ function fbEscucharStock() {
       }
     });
     if (!huboCambioReal) return;
+    try { renderDashboard(); } catch(e){}
     const activePage = document.querySelector('.page.active');
     const pageId = activePage ? activePage.id.replace('page-','') : '';
     try {
@@ -710,6 +711,14 @@ function fbEscucharFiadosPendientes() {
     queryM(collectionM(dbModular, 'fiados'), whereM('estado', '==', 'pendiente'), whereM('sedeId', '==', sede)),
     snapshot => {
       if (!_aplicarCambiosSnapshot(snapshot, DB.fiados)) return;
+      // CRITICO: causa real de la perdida de sincronizacion del dashboard reportada y
+      // confirmada por el usuario (con evidencia de consola + comparacion visual entre 2
+      // sesiones abiertas). Los datos siempre llegaban bien a DB.fiados — el problema era que
+      // este listener nunca volvia a dibujar el dashboard, a diferencia de fbEscucharVentasHoy
+      // (que si lo hace siempre). Por eso "Ventas Hoy" se actualizaba solo y "Deuda en fiados"
+      // se quedaba vieja hasta navegar a otra pantalla y volver — no era un problema de datos,
+      // era que nada disparaba el repintado mientras se estaba mirando el dashboard.
+      try { renderDashboard(); } catch(e){}
       const activePage = document.querySelector('.page.active');
       const pageId = activePage ? activePage.id.replace('page-','') : '';
       try { if (pageId === 'fiados') renderFiados(); } catch(e){}
@@ -784,6 +793,7 @@ function fbEscucharMermasMes() {
     queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _inicioMes)),
     snapshot => {
       if (!_aplicarCambiosSnapshot(snapshot, DB.mermas)) return;
+      try { renderDashboard(); } catch(e){}
       const activePage = document.querySelector('.page.active');
       const pageId = activePage ? activePage.id.replace('page-','') : '';
       try { if (pageId === 'mermas') renderMermas(); } catch(e){}
