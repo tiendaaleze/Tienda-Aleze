@@ -83,6 +83,27 @@ function volverWelcome() {
 // señal para volver a entrar. Esa limitación se acepta a cambio de la seguridad.
 
 async function doLogin() {
+  // CRITICO: cerrojo de reentrada real. Encontrado con evidencia directa (captura mostrando
+  // "doLogin() arranca" 6 VECES SEGUIDAS de una sola sesion de login): sin esto, varios
+  // toques rapidos del boton — que recien se deshabilitaba en el Paso 2, DESPUES del chequeo
+  // de version — disparaban 6 logins completos EN PARALELO, cada uno con su propia
+  // autenticacion y sus propias 15 lecturas de datos, compitiendo entre si por la misma
+  // conexion. Esa competencia, no una sola causa lenta, era la demora real reportada. Ahora
+  // se deshabilita el boton y se activa el cerrojo ANTES de cualquier otra cosa, de forma
+  // sincrona, sin esperar nada — cualquier toque adicional mientras ya hay un login en curso
+  // se ignora de inmediato, sin disparar una segunda cadena completa.
+  if (window._loginEnCurso) { console.warn('[Login] Ya hay un login en curso, se ignora el toque adicional'); return; }
+  window._loginEnCurso = true;
+  const _btnElWrap = document.querySelector('.btn-login');
+  if (_btnElWrap) _btnElWrap.disabled = true;
+  try {
+    await _doLoginInterno();
+  } finally {
+    window._loginEnCurso = false;
+  }
+}
+
+async function _doLoginInterno() {
   // DIAGNOSTICO TEMPORAL — cronometro real desde el clic del boton, para encontrar donde se
   // va el tiempo despues de iniciarFirebase() (ya confirmado rapido). Variable global porque
   // el cronometro sigue en _completarSesion(), otra funcion.
