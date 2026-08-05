@@ -1140,7 +1140,6 @@ function exportarExcelInventario() {
 
   if (filtCat)   prods = prods.filter(p => String(p.cat) === String(filtCat));
   if (filtEst === 'con-stock')  prods = prods.filter(p => p.stock > 0);
-  if (filtEst === 'sin-stock')  prods = prods.filter(p => p.stock === 0);
   if (filtEst === 'bajo')       prods = prods.filter(p => p.stock <= p.stockMin);
   if (filtEst === 'ok')         prods = prods.filter(p => p.stock > p.stockMin && (!p.venc || diasHasta(p.venc) > 7));
   if (filtVenc === 'vence-7')   prods = prods.filter(p => p.venc && diasHasta(p.venc) >= 0 && diasHasta(p.venc) <= 7);
