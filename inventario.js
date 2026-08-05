@@ -30,9 +30,6 @@ function renderInvTable(prods) {
     if (p.venc && dias < 0) estado = '<span class="badge badge-red">❌ Vencido</span>';
     const margenPct = p.costo > 0 ? ((p.precio - p.costo) / p.costo * 100).toFixed(1) + '%' : '-';
     const margenSol = sol(p.precio - p.costo);
-    const _desglose = (p.stockPorSede && Object.keys(p.stockPorSede).length > 1)
-      ? Object.entries(p.stockPorSede).map(([s,v]) => `${s}: ${v}`).join(' · ')
-      : '';
     return `<tr>
       <td style="font-family:monospace;font-size:0.75rem">${p.codigo}</td>
       <td><strong>${p.nombre}</strong></td>
@@ -42,7 +39,6 @@ function renderInvTable(prods) {
   <strong style="color:${_stockAqui<=p.stockMin?'var(--danger)':'inherit'}">
     ${p.unidad === 'kg' ? parseFloat(Number(_stockAqui || 0).toFixed(3)) : parseFloat(Number(_stockAqui || 0).toFixed(2))} ${p.unidad}
   </strong>
-  ${_desglose ? `<div style="font-size:.68rem;color:var(--gray-500)">Todas las sedes: ${_desglose}</div>` : ''}
 </td>
       <td>${p.stockMin}</td>
       <td>${sol(p.costo)}</td>
@@ -144,7 +140,7 @@ function abrirModalProducto() {
   // Revertir lo que el modo edicion deja (campo deshabilitado, etiqueta cambiada) — el modal
   // se reutiliza entre crear y editar, sin esto un producto nuevo heredaria el estado de edicion.
   document.getElementById('prod-stock').disabled = false;
-  document.querySelector('#prod-stock-wrap label').textContent = 'Stock inicial (en tu sede) *';
+  document.querySelector('#prod-stock-wrap label').textContent = 'Stock inicial *';
   document.getElementById('prod-stock-nota').style.display = 'none';
   // Solo inputs/selects — NO incluir divs como prod-margen-cat-label
   ['prod-nombre','prod-costo','prod-precio','prod-stock','prod-venc','prod-codigo','prod-precio-sugerido'].forEach(id => {
@@ -194,7 +190,7 @@ function editarProducto(id) {
   document.getElementById('prod-stock-wrap').style.display = 'block';
   document.getElementById('prod-stock').value = stockEnSede(p, sedeAdminEfectiva());
   document.getElementById('prod-stock').disabled = true;
-  document.querySelector('#prod-stock-wrap label').textContent = 'Stock actual (' + (sedeAdminEfectiva()==='principal'?'Sede I':'Sede II') + ')';
+  document.querySelector('#prod-stock-wrap label').textContent = 'Stock actual';
   document.getElementById('prod-stock-nota').style.display = 'block';
   document.getElementById('prod-stock-min').value = p.stockMin;
   document.getElementById('prod-venc').value = p.venc || '';
@@ -1363,6 +1359,10 @@ async function sincronizarMermasInventario() {
   fbGuardar(); fbGuardarProductos();
   alert('✅ ' + _pendientes.length + ' diferencia(s) sincronizadas con mermas y stock actualizado.');
   updateAlertCount();
+  // CRITICO: sin esto, el stock se actualizaba correctamente por dentro (memoria + Firestore)
+  // pero la tabla en pantalla seguia mostrando los valores viejos — parecia que "no habia
+  // pasado nada" hasta cerrar y reabrir la app, que es cuando recien se veia el cambio real.
+  renderInvMensualTable();
 }
 
 function guardarInventarioMensual() {
@@ -1387,25 +1387,22 @@ function guardarInventarioMensual() {
   alert('✅ Inventario guardado. Total ítems verificados: ' + invMensualData.filter(d=>d.verificado).length);
 }
 
-// Valorizacion completa: ambas sedes en columnas separadas + total, con costo y precio de
-// venta actuales — responde "cuanto tengo invertido" sin tener que cambiar de sede y exportar
-// dos veces por separado.
+// Valorizacion completa: stock, costo y precio de venta actuales — responde "cuanto tengo
+// invertido" en un solo vistazo.
 function exportarValorizacionInventario() {
   const fecha = today();
-  let csv = 'Producto;Categoria;Stock Sede I;Stock Sede II;Stock Total;Costo Unitario;Precio Venta Unitario;Valor Invertido (costo);Valor Venta Potencial\n';
-  let totInvertido = 0, totVenta = 0, totStockI = 0, totStockII = 0;
+  let csv = 'Producto;Categoria;Stock;Costo Unitario;Precio Venta Unitario;Valor Invertido (costo);Valor Venta Potencial\n';
+  let totInvertido = 0, totVenta = 0, totStock = 0;
   DB.productos.forEach(p => {
-    const sI = stockEnSede(p, 'principal');
-    const sII = stockEnSede(p, 'Tienda Aleze II');
-    const total = sI + sII;
+    const total = stockTotal(p);
     const _cat = DB.categorias.find(c => c.id == p.cat);
     const _catNombre = _cat ? _cat.nombre : 'Sin cat.';
     const valInvertido = Math.round(total * p.costo * 100) / 100;
     const valVenta = Math.round(total * p.precio * 100) / 100;
-    totInvertido += valInvertido; totVenta += valVenta; totStockI += sI; totStockII += sII;
-    csv += '"' + p.nombre + '";"' + _catNombre + '";' + sI + ';' + sII + ';' + total + ';' + p.costo + ';' + p.precio + ';' + valInvertido + ';' + valVenta + '\n';
+    totInvertido += valInvertido; totVenta += valVenta; totStock += total;
+    csv += '"' + p.nombre + '";"' + _catNombre + '";' + total + ';' + p.costo + ';' + p.precio + ';' + valInvertido + ';' + valVenta + '\n';
   });
-  csv += '\n"TOTAL";"";' + totStockI + ';' + totStockII + ';' + (totStockI+totStockII) + ';;;' + (Math.round(totInvertido*100)/100) + ';' + (Math.round(totVenta*100)/100) + '\n';
+  csv += '\n"TOTAL";"";' + totStock + ';;;' + (Math.round(totInvertido*100)/100) + ';' + (Math.round(totVenta*100)/100) + '\n';
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
