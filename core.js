@@ -719,7 +719,10 @@ window.addEventListener('beforeunload', function(e) {
 // despues de que todo lo demas ya termino.
 document.addEventListener('DOMContentLoaded', async function() {
   const hoy = today();
+  const _t0b = performance.now();
+  console.log(`⏱️ [T+0ms] DOMContentLoaded disparado, arrancando await iniciarFirebase()`);
   const fbOk = await iniciarFirebase();
+  console.log(`⏱️ [T+${(performance.now()-_t0b).toFixed(0)}ms] await iniciarFirebase() TERMINO, fbOk=${fbOk}`);
   // CRITICO: el boton empieza deshabilitado (ver index.html) — sin esto, un click antes de
   // que iniciarFirebase() termine su rama modular disparaba "docM is not a function" dentro
   // del login (docM/dbModular todavia no existian), silenciosamente saltandose toda la
@@ -736,7 +739,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     try {
       // Carga inicial pre-login: solo el catálogo público (db_productos).
       // 'db' y 'db_ext' ahora requieren sesión — se cargan en PASO 3 del login.
+      console.log(`⏱️ [T+${(performance.now()-_t0b).toFixed(0)}ms] arrancando getDocM(db_productos)`);
       const snapProd = await getDocM(docM(dbModular, 'aleze', 'db_productos')); // [SDK modular]
+      console.log(`⏱️ [T+${(performance.now()-_t0b).toFixed(0)}ms] getDocM(db_productos) TERMINO`);
 
       if (snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snapProd.data();
