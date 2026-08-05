@@ -780,13 +780,35 @@ document.addEventListener('DOMContentLoaded', async function() {
         mobUpdateBar();
       }
     } catch(e) {
-      console.warn('Firestore no disponible, modo local:', e.message);
-      _initLocal(hoy);
+      console.warn('Firestore no disponible:', e.message);
+      _mostrarErrorConexionInicial();
     }
   } else {
-    _initLocal(hoy);
+    _mostrarErrorConexionInicial();
   }
 });
+
+// CRITICO: reemplaza a _initLocal()/_semillaDemo() — esas funciones, pensadas originalmente
+// para desarrollo sin Firebase configurado, seguian vivas en produccion y se disparaban cada
+// vez que la carga inicial fallaba por cualquier motivo (incluida la misma condicion de
+// carrera de docM que ya se corrigio en otro punto, pero que podia repetirse aca). El
+// resultado: la app se rellenaba en silencio con ventas y clientes 100% inventados —
+// usando incluso los nombres reales del personal como "cajeros" de esas ventas falsas — sin
+// ningun aviso de que no eran datos reales. Ahora, en vez de inventar datos del negocio,
+// se avisa claro y se ofrece reintentar. Funciona sin importar que vista este activa debajo
+// (admin o tienda publica), ya que se dibuja encima de todo con position:fixed.
+function _mostrarErrorConexionInicial() {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(17,24,39,.92);display:flex;align-items:center;justify-content:center;padding:1.5rem;font-family:system-ui,sans-serif';
+  el.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:1.75rem 1.5rem;max-width:340px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+      <div style="font-size:2.5rem;margin-bottom:.5rem">📡</div>
+      <div style="font-weight:800;font-size:1.05rem;color:#1f2937;margin-bottom:.5rem">No se pudo conectar</div>
+      <div style="font-size:.85rem;color:#6b7280;margin-bottom:1.25rem;line-height:1.4">No se pudo cargar la información de la tienda. Revisa tu conexión a internet e intenta de nuevo.</div>
+      <button onclick="location.reload()" style="width:100%;padding:.7rem;background:#7C3AED;color:#fff;border:none;border-radius:10px;font-weight:700;font-size:.9rem;cursor:pointer">🔄 Reintentar</button>
+    </div>`;
+  document.body.appendChild(el);
+}
 
 
 // ===================== ROUTING /tienda vs /admin =====================
@@ -813,17 +835,6 @@ function checkRoute() {
   if (bloqueoTs > Date.now()) {
     _mostrarBloqueo(bloqueoTs);
   }
-}
-
-function _semillaDemo(hoy) {
-  DB.ventas = [
-    { id:1, fecha:hoy, hora:'09:15', cajero:'Jose Carlos', items:[{prodId:1,nombre:'Inca Kola 500ml',cant:3,precio:2.00,tipo:'unidad'},{prodId:3,nombre:"Papas Lay's",cant:2,precio:1.50,tipo:'unidad'}], subtotal:9.00, descuento:0, total:9.00, metodo:'Efectivo', clienteId:1 },
-    { id:2, fecha:hoy, hora:'10:30', cajero:'Shessira', items:[{prodId:4,nombre:'Leche Gloria 1L',cant:2,precio:4.50,tipo:'unidad'}], subtotal:9.00, descuento:0, total:9.00, metodo:'Yape', clienteId:2 },
-    { id:3, fecha:hoy, hora:'11:45', cajero:'José Luis', items:[{prodId:5,nombre:'Arroz Costeño',cant:2,precio:4.00,tipo:'granel'}], subtotal:8.00, descuento:0.50, total:7.50, metodo:'Efectivo', clienteId:3 },
-  ];
-  DB.clientes[0].total=145.50; DB.clientes[0].alias='Doña Ana'; DB.clientes[0].cumple='1985-03-15';
-  DB.clientes[1].total=87.00;  DB.clientes[1].alias='Carlos';   DB.clientes[1].cumple='1990-07-22';
-  DB.clientes[2].total=230.00; DB.clientes[2].alias='Doña Rosa';DB.clientes[2].cumple='1978-12-01';
 }
 
 
