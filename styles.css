@@ -917,6 +917,26 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
      los tags se compriman/deformen al no caber, dejando que simplemente desborden y se
      deslicen, mismo criterio visual que el riel movil equivalente. */
   #pos-categorias .tag { flex-shrink: 0; }
+  /* Flechas de navegacion para rieles con scroll horizontal (categorias de POS, y las de
+     tienda publica que comparten la misma clase mas abajo) — sin esto, en escritorio (mouse,
+     sin gesto tactil de deslizar) no habia ninguna forma de llegar a lo que quedaba escondido
+     fuera de la vista, ya que la barra de scroll nativa esta oculta a proposito (se ve mas
+     limpio en celular, donde si se desliza con el dedo sin problema). display:none por
+     defecto — solo aparecen si hay mouse real disponible. */
+  .pos-cat-arrow, .tnd-scroll-wrap .tnd-arrow, .tnd-banner-carousel .tnd-arrow {
+    display: none;
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 30px; height: 30px; border-radius: 50%; border: none;
+    background: white; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    align-items: center; justify-content: center;
+    cursor: pointer; z-index: 5; font-size: 1.2rem; font-weight: 700;
+    color: var(--primary, #7C3AED); line-height: 1; padding: 0;
+  }
+  .pos-cat-arrow-left, .tnd-arrow-left { left: -6px; }
+  .pos-cat-arrow-right, .tnd-arrow-right { right: -6px; }
+  @media (hover: hover) and (pointer: fine) {
+    .pos-cat-arrow, .tnd-scroll-wrap .tnd-arrow, .tnd-banner-carousel .tnd-arrow { display: flex; }
+  }
   .tag.active { background: var(--primary); color: white; border-color: var(--primary); }
 
   /* TICKET */
