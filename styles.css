@@ -913,6 +913,10 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     margin: 2px;
     transition: all 0.15s;
   }
+  /* Riel de categorias de POS (escritorio) con scroll horizontal — flex-shrink:0 evita que
+     los tags se compriman/deformen al no caber, dejando que simplemente desborden y se
+     deslicen, mismo criterio visual que el riel movil equivalente. */
+  #pos-categorias .tag { flex-shrink: 0; }
   .tag.active { background: var(--primary); color: white; border-color: var(--primary); }
 
   /* TICKET */
