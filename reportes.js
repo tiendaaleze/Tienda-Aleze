@@ -1164,9 +1164,7 @@ function exportarExcelInventario() {
       'ID_Categoria':   p.cat || '',
       'Tipo':           p.tipo || 'unidad',
       'Unidad':         p.unidad || 'und',
-      'Stock_Principal':      stockEnSede(p, 'principal'),
-      'Stock_TiendaAlezeII':  stockEnSede(p, 'Tienda Aleze II'),
-      'Stock_Total':    stockTotal(p),
+      'Stock':          stockTotal(p),
       'Stock_Minimo':   p.stockMin,
       'Precio_Costo':   p.costo,
       'Precio_Venta':   p.precio,
@@ -1182,7 +1180,7 @@ function exportarExcelInventario() {
   // Ancho de columnas
   ws['!cols'] = [
     {wch:14},{wch:16},{wch:28},{wch:22},{wch:12},{wch:10},{wch:8},
-    {wch:14},{wch:18},{wch:11},{wch:12},{wch:13},{wch:12},{wch:13},{wch:12},{wch:22}
+    {wch:11},{wch:12},{wch:13},{wch:12},{wch:13},{wch:12},{wch:22}
   ];
 
   const wb = XLSX.utils.book_new();
@@ -1193,8 +1191,7 @@ function exportarExcelInventario() {
     ['INSTRUCCIONES PARA MODIFICAR Y REIMPORTAR'],
     [''],
     ['1. NO borrar ni modificar la columna ID_SISTEMA (es la clave de identificacion)'],
-    ['2. Puede modificar: Nombre, Tipo, Unidad, Stock_Principal, Stock_TiendaAlezeII, Stock_Minimo, Precio_Costo, Precio_Venta, Vencimiento, ID_Categoria, ID_Proveedor, Codigo_Barras'],
-    ['2b. Stock_Principal y Stock_TiendaAlezeII se ajustan por separado, una sede no afecta a la otra. Stock_Total es solo referencia (no se importa).'],
+    ['2. Puede modificar: Nombre, Tipo, Unidad, Stock, Stock_Minimo, Precio_Costo, Precio_Venta, Vencimiento, ID_Categoria, ID_Proveedor, Codigo_Barras'],
     ['3. Para AGREGAR un producto nuevo: deje ID_SISTEMA en BLANCO y complete todos los demas campos'],
     ['4. La columna Categoria y Proveedor son solo referencia visual, el sistema usa ID_Categoria e ID_Proveedor'],
     ['5. El formato de Vencimiento debe ser: AAAA-MM-DD (ej: 2026-12-31). Dejar en blanco si no aplica'],
@@ -1285,6 +1282,19 @@ function parseIdSistema(val) {
   return val.toString().trim();
 }
 
+// CRITICO: codigos de barras largos (EAN-13, 13 digitos) guardados en una celda sin formato
+// de texto explicito en Excel a veces quedan en notacion cientifica ("7.78211E+12") — Number()
+// SI puede interpretar ese string correctamente, toFixed(0) lo vuelve a un entero normal.
+function parseCodigoBarras(val) {
+  if (!val && val !== 0) return '';
+  const str = val.toString().trim();
+  if (/e\+?\d+/i.test(str)) {
+    const num = Number(str);
+    if (!isNaN(num)) return num.toFixed(0);
+  }
+  return str;
+}
+
 function procesarArchivoExcel(file) {
   if (!window.XLSX) { _loadXLSX(function(){ procesarArchivoExcel(file); }); return; }
   if (currentRole !== 'admin') { alert('Solo el administrador puede importar.'); return; }
@@ -1351,7 +1361,7 @@ function procesarArchivoExcel(file) {
           { key: 'venc',     col: 'Vencimiento',     fmt: v => excelSerialToDate(v) },
           { key: 'cat',      col: 'ID_Categoria',    fmt: v => parseInt(v) || prodExistente.cat },
           { key: 'prov',     col: 'ID_Proveedor',    fmt: v => parseInt(v) || null },
-          { key: 'codigo',   col: 'Codigo_Barras',   fmt: v => v.toString().trim() },
+          { key: 'codigo',   col: 'Codigo_Barras',   fmt: v => parseCodigoBarras(v) },
         ];
 
         mapCampos.forEach(({ key, col, fmt }) => {
@@ -1362,19 +1372,14 @@ function procesarArchivoExcel(file) {
             diffs.push({ campo: key, etiqueta: col.replace(/_/g,' '), viejo: viejoVal, nuevo: nuevoVal });
           }
         });
-        // Stock por sede: cada columna se compara contra SU sede especifica, no el total —
-        // asi la carga inicial puede traer cantidades distintas por local en un solo archivo.
-        [
-          { key: 'stockPrincipal',     col: 'Stock_Principal',     sede: 'principal' },
-          { key: 'stockTiendaAlezeII', col: 'Stock_TiendaAlezeII', sede: 'Tienda Aleze II' },
-        ].forEach(({ key, col, sede }) => {
-          if (!(col in fila)) return;
-          const nuevoVal = parseFloat(fila[col]) || 0;
-          const viejoVal = stockEnSede(prodExistente, sede);
+        // Stock: se compara contra el total actual del sistema.
+        if ('Stock' in fila) {
+          const nuevoVal = parseFloat(fila['Stock']) || 0;
+          const viejoVal = stockTotal(prodExistente);
           if (nuevoVal !== viejoVal) {
-            diffs.push({ campo: key, etiqueta: col.replace(/_/g,' '), viejo: viejoVal, nuevo: nuevoVal, sede });
+            diffs.push({ campo: 'stock', etiqueta: 'Stock', viejo: viejoVal, nuevo: nuevoVal });
           }
-        });
+        }
 
         if (diffs.length > 0) {
           cambios.push({ tipo: 'mod', prodId: idSistema, nombre: prodExistente.nombre, diffs });
@@ -1427,8 +1432,7 @@ function renderExcelReviewModal() {
       cambiosHtml = `
         <div class="excel-review-changes">
           <span class="excel-change-pill">Categoría: <span class="new">${cat ? cat.emoji + ' ' + cat.nombre : c.fila['ID_Categoria'] || 'Sin cat.'}</span></span>
-          <span class="excel-change-pill">Stock Principal: <span class="new">${c.fila['Stock_Principal']||0}</span></span>
-          <span class="excel-change-pill">Stock Tienda Aleze II: <span class="new">${c.fila['Stock_TiendaAlezeII']||0}</span></span>
+          <span class="excel-change-pill">Stock: <span class="new">${c.fila['Stock']||0}</span></span>
           <span class="excel-change-pill">Costo: <span class="new">S/ ${parseFloat(c.fila['Precio_Costo']||0).toFixed(2)}</span></span>
           <span class="excel-change-pill">Venta: <span class="new">S/ ${parseFloat(c.fila['Precio_Venta']||0).toFixed(2)}</span></span>
           <span class="excel-change-pill">Tipo: <span class="new">${c.fila['Tipo'] || 'unidad'}</span></span>
@@ -1502,17 +1506,15 @@ function aplicarCambiosExcel() {
     return id;
   };
 
-  // Stock_Principal y Stock_TiendaAlezeII se ajustan cada una a SU sede — pensado para la
-  // carga inicial real, donde cada local tiene su propia cantidad, en un solo archivo.
   aceptados.forEach(c => {
     if (c.tipo === 'mod') {
       const idx = DB.productos.findIndex(p => String(p.id) === String(c.prodId));
       if (idx === -1) return;
       const prod = DB.productos[idx];
       c.diffs.forEach(d => {
-        if (d.campo === 'stockPrincipal' || d.campo === 'stockTiendaAlezeII') {
+        if (d.campo === 'stock') {
           const delta = Math.round((d.nuevo - d.viejo) * 1000) / 1000;
-          if (delta !== 0) ajustarStockSede(prod, delta, d.sede);
+          if (delta !== 0) ajustarStockSede(prod, delta, 'principal');
         } else {
           prod[d.campo] = d.nuevo;
         }
@@ -1520,11 +1522,10 @@ function aplicarCambiosExcel() {
       modCount++;
     } else if (c.tipo === 'nuevo') {
       const f = c.fila;
-      const codigoIngresado = f['Codigo_Barras'] ? f['Codigo_Barras'].toString().trim() : '';
+      const codigoIngresado = f['Codigo_Barras'] ? parseCodigoBarras(f['Codigo_Barras']) : '';
   const codigoFinal = codigoIngresado || ('7' + _getUniqueId().toString().slice(-12));
       const autoGenerado = !codigoIngresado;
-      const stockPrincipalInicial = parseFloat(f['Stock_Principal']) || 0;
-      const stockTiendaIIInicial = parseFloat(f['Stock_TiendaAlezeII']) || 0;
+      const stockInicial = parseFloat(f['Stock']) || 0;
       const nuevoProd = {
        id: _getUniqueId(),
         nombre:   f['Nombre'].toString().trim(),
@@ -1547,8 +1548,7 @@ function aplicarCambiosExcel() {
         }
       }
       DB.productos.push(nuevoProd);
-      if (stockPrincipalInicial > 0) ajustarStockSede(nuevoProd, stockPrincipalInicial, 'principal');
-      if (stockTiendaIIInicial > 0) ajustarStockSede(nuevoProd, stockTiendaIIInicial, 'Tienda Aleze II');
+      if (stockInicial > 0) ajustarStockSede(nuevoProd, stockInicial, 'principal');
       if (autoGenerado) prodsSinCodigo.push({ nombre: nuevoProd.nombre, codigo: codigoFinal });
       newCount++;
     }
