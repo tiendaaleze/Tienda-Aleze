@@ -542,6 +542,15 @@ function _norm(s) {
 // ===================== UTILS =====================
 function sol(n) { return 'S/ ' + parseFloat(n || 0).toFixed(2); }
 
+// Mueve un riel de scroll horizontal (categorias de POS, o los de tienda publica) al tocar
+// una flecha — un tercio del ancho visible por click, se siente natural sin importar cuantos
+// items quepan por pantalla.
+function _scrollRielCats(id, dir) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollBy({ left: dir * Math.round(el.clientWidth * 0.7), behavior: 'smooth' });
+}
+
 // ── Fiados: monto pendiente real y si "todavía debe algo" — CRITICO, corrige un bug real de
 // punto flotante confirmado (JavaScript: 0.1 + 0.2 no da exactamente 0.3). Varios lugares del
 // sistema comparaban (f.total - f.pagado) contra 0 sin ninguna tolerancia — un fiado
