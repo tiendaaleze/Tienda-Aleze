@@ -407,12 +407,13 @@ function _renderTienda() {
    burbujas, para que toda la pagina responda igual al tacto. */
 .tnd-rail-card { transition:transform .12s ease; }
 .tnd-rail-card:active { transform:scale(.96); }
-.tnd-cats { display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;margin-bottom:1.25rem;scrollbar-width:none;-webkit-overflow-scrolling:touch; }
+.tnd-cats { margin-bottom:1.25rem; }
+.tnd-cats #tnd-cats-riel::-webkit-scrollbar { display:none; }
 .tnd-cat-tag {
   padding:.25rem .6rem;border-radius:20px;cursor:pointer;
   border:1.5px solid #e5e7eb;background:white;
   font-size:.75rem;font-weight:600;color:#6b7280;transition:all .15s;
-  white-space:nowrap;
+  white-space:nowrap;flex-shrink:0;
 }
 .tnd-cat-tag.active { background:#7C3AED;color:white;border-color:#7C3AED; }
 .tnd-grid {
@@ -572,7 +573,11 @@ function _renderTienda() {
   <div id="tnd-back-home" style="display:none;margin-bottom:.75rem">
    <button onclick="_tndIrHome()" style="display:inline-flex;align-items:center;gap:.4rem;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:.55rem 1.2rem;font-size:.88rem;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(124,58,237,.35)">🏠 Inicio</button>
   </div>
-  <div class="tnd-cats" id="tnd-cats" style="display:none"></div>
+  <div class="tnd-cats" id="tnd-cats" style="display:none;position:relative;padding:0 26px">
+    <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-cats-riel',-1)" aria-label="Categorías anteriores">‹</button>
+    <div id="tnd-cats-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
+    <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-cats-riel',1)" aria-label="Categorías siguientes">›</button>
+  </div>
   <div class="tnd-grid" id="tnd-grid"></div>
 </div>
 
@@ -742,7 +747,7 @@ let _tndEntrega = 'recojo';
 let _tndStep = 'cart'; // cart | datos | pago | confirmacion
 
 function tndRenderCats() {
-  const el = document.getElementById('tnd-cats');
+  const el = document.getElementById('tnd-cats-riel');
   if (!el) return;
   const catPromo = (DB.categorias||[]).find(c => c.nombre === 'Promociones' && !c.oculta);
   const otrosCats = (DB.categorias||[]).filter(c => c.nombre !== 'Promociones' && !c.oculta);
