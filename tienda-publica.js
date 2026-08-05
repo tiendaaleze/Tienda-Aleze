@@ -648,9 +648,11 @@ function _tndRenderHome() {
   let bannerHtml;
   if (cfg.bannerVisible !== false && _banners.length) {
     bannerHtml = `<div class="tnd-banner-carousel">
+      ${_banners.length > 1 ? `<button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-banner-track',-1)" aria-label="Banner anterior">‹</button>` : ''}
       <div class="tnd-banner-track" id="tnd-banner-track">
         ${_banners.map(b => `<div class="tnd-banner-slide" ${b.link ? `onclick="window.open('${b.link}','_blank')" style="cursor:pointer"` : ''}><img src="${b.url}" alt="Banner"></div>`).join('')}
       </div>
+      ${_banners.length > 1 ? `<button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-banner-track',1)" aria-label="Banner siguiente">›</button>` : ''}
       ${_banners.length > 1 ? `<div class="tnd-banner-dots" id="tnd-banner-dots">${_banners.map((_,i) => `<span class="tnd-banner-dot${i===0?' active':''}"></span>`).join('')}</div>` : ''}
     </div>`;
   } else {
@@ -672,13 +674,13 @@ function _tndRenderHome() {
   const hoy = new Date().toISOString().slice(0,10);
   const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && !p.sedeId);
   const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
-  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${prodsPromo.slice(0,10).map(p => _tarjetaProdRail(p, false)).join('')}</div></div>` : '';
+  const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-wrap"><button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-riel-promos',-1)" aria-label="Anteriores">‹</button><div class="tnd-scroll-row" id="tnd-riel-promos">${prodsPromo.slice(0,10).map(p => _tarjetaProdRail(p, false)).join('')}</div><button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-riel-promos',1)" aria-label="Siguientes">›</button></div>` : '';
 
   // Categorias como riel de burbujas — reemplaza las fotos-collage con texto incrustado (ver
   // nota mas abajo) por circulos de color + emoji: mas liviano, mas consistente, y con scroll
   // horizontal real en vez de una grilla vertical estatica.
   const cats2 = (DB.categorias||[]).filter(c => c.nombre && !c.oculta);
-  const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${cats2.map(c => {
+  const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-wrap"><button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-riel-cats',-1)" aria-label="Anteriores">‹</button><div class="tnd-scroll-row" id="tnd-riel-cats">${cats2.map(c => {
     // Icono ilustrado a medida (con su propio color) si la categoria esta en la tabla — si no,
     // cae a emoji (la foto trae el nombre incrustado, ilegible en un circulo chico, asi que
     // solo es el ultimo recurso si no hay ni icono a medida ni emoji cargado).
@@ -689,13 +691,13 @@ function _tndRenderHome() {
       <div class="tnd-cat-circle" style="background:${_catBg}">${_catVisual}</div>
       <div class="tnd-cat-label">${c.nombre}</div>
     </div>`;
-  }).join('')}</div></div>` : '';
+  }).join('')}</div><button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-riel-cats',1)" aria-label="Siguientes">›</button></div>` : '';
 
   // Recien agregados — dato real (ordenado por id, que ya incluye el momento de creacion),
   // no una seccion inventada. Le da a la home algo que cambie con el tiempo, ademas de las
   // categorias fijas — sensacion de tienda con movimiento, no un catalogo estatico.
   const recientes = (DB.productos||[]).filter(p => stockTotal(p) > 0).slice().sort((a,b) => b.id - a.id).slice(0, 10);
-  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-wrap"><div class="tnd-scroll-row">${recientes.map(p => _tarjetaProdRail(p, true)).join('')}</div></div>` : '';
+  const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-wrap"><button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-riel-recientes',-1)" aria-label="Anteriores">‹</button><div class="tnd-scroll-row" id="tnd-riel-recientes">${recientes.map(p => _tarjetaProdRail(p, true)).join('')}</div><button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-riel-recientes',1)" aria-label="Siguientes">›</button></div>` : '';
 
   const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
   const serviciosHtml = cfg.serviciosBannerUrl
