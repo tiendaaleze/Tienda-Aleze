@@ -759,6 +759,15 @@ function fbEscucharStock() {
       if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
       if (pageId === 'inventario') { filterInventario(); }
     } catch(e){}
+    // Tienda publica no usa el sistema de "page.active" (tiene su propio home/catalogo/
+    // detalle via _tndVista) — sin esto, un visitante nunca veia el stock cambiar en vivo,
+    // necesitaba salir por completo de la app y volver a entrar para verlo actualizado.
+    try {
+      if (typeof _tndVista !== 'undefined') {
+        if (_tndVista === 'home') { if (typeof _tndRenderHome === 'function') _tndRenderHome(); }
+        else if (typeof tndFiltrar === 'function') tndFiltrar();
+      }
+    } catch(e){}
   }, err => { console.warn('Firestore listener error (stock):', err.code); });
 }
 
