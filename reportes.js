@@ -449,35 +449,6 @@ async function exportReporte() {
   a.href = url; a.download = `reporte-aleze-${desde}-${hasta}.xls`; a.click();
   URL.revokeObjectURL(url);
 }
-async function migrarImagenesAStorage() {
-  if (!fbStorage) { alert('Storage no disponible'); return; }
-  const pendientes = DB.productos.filter(p => p.imagen && p.imagen.startsWith('data:'));
-  if (!pendientes.length) { alert('✅ No hay imágenes base64 pendientes de migrar.'); return; }
- if (!confirm(`Se migrarán ${pendientes.length} imágenes a Firebase Storage.\nEsto puede tardar 2-3 minutos.\n¿Continuar?`)) return;
-  // Crear indicador de progreso
-  const _migBtn = document.querySelector('[onclick="migrarImagenesAStorage()"]');
-  if (_migBtn) { _migBtn.disabled = true; _migBtn.textContent = '⏳ Migrando 0/' + pendientes.length + '...'; }
-  let ok = 0, err = 0;
-  const _idsMigrados = [];
-  for (const p of pendientes) {
-    try {
-      const blob = await fetch(p.imagen).then(r => r.blob());
-      const ref  = fbStorage.ref(`productos/${p.id}.webp`);
-      await ref.put(blob, { contentType: 'image/webp' });
-      p.imagen = await ref.getDownloadURL();
-      ok++;
-      _idsMigrados.push(p.id);
-      if (_migBtn) _migBtn.textContent = `⏳ Migrando ${ok}/${pendientes.length}...`;
-    } catch(e) {
-      console.warn('Error migrando:', p.nombre, e);
-      err++;
-    }
-    await new Promise(r => setTimeout(r, 150));
-  }
-  if (_migBtn) { _migBtn.disabled = false; _migBtn.textContent = '🖼️ Migrar imágenes a Storage'; }
-  fbGuardarProductosLote(_idsMigrados);
-  alert(`✅ Migración completa.\n${ok} imágenes migradas a Storage.\n${err ? '⚠️ '+err+' errores.' : 'Sin errores.'}`);
-}
 // ===================== HISTORIAL DE VENTAS =====================
 // ── Fase 2: consulta a ventas/{id} por rango de fecha (colección nueva, sin listener — Sección 9) ──
 async function _fetchVentasRango(desde, hasta) {
