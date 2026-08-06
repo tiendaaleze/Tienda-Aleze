@@ -301,22 +301,18 @@ async function _completarSesion(name, role) {
       if (productosColSnap) {
         DB.productos = productosColSnap.docs.map(d => d.data());
       } else { console.warn('[Offline] No se pudo reconciliar el catálogo de productos fresco'); }
-      (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG-LOGIN] tras cargar coleccion productos:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
-      console.log('🔬[DIAG-LOGIN] stockSnap existe?', !!stockSnap, '— size:', stockSnap ? stockSnap.size : 'N/A', '— tiene el doc 1785907151107288?', stockSnap ? stockSnap.docs.some(d => d.id === '1785907151107288') : 'N/A');
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       if (stockSnap) {
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
-          if (doc.id === '1785907151107288') console.log('🔬[DIAG-LOGIN] doc stock encontrado, data:', JSON.stringify(d), '— prod encontrado en DB.productos?', !!prod);
           if (prod && d && d.stockPorSede) {
             prod.stockPorSede = d.stockPorSede;
             prod.stock = stockTotal(prod);
           }
         });
       } else { console.warn('[Offline] No se pudo reconciliar stock fresco'); }
-      (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG-LOGIN] tras mezclar stock:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
 
       // CRITICO — corrige la causa raiz de perdida real de datos: TODO lo que camposOp carga
       // desde el documento combinado (ventas, clientes, fiados, mermas, movimientos) puede
@@ -485,7 +481,6 @@ currentRole = role;
   }
   updateAlertCount();
   _tlogC('render inicial (dashboard/pos) TERMINO, arrancando listeners en tiempo real');
-  (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG-LOGIN] justo antes de arrancar listeners:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
 
   // ── PASO 6: Listener en tiempo real (DESPUÉS del render inicial) ──
   fbEscuchar();
