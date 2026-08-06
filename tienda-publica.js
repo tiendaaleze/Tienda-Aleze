@@ -809,8 +809,16 @@ function tndFiltrar() {
   if (_gridEl) _gridEl.style.cssText = '';
   const buscar = (document.getElementById('tnd-search')?.value||'').toLowerCase();
   const hoy = today();
+  // Al filtrar por "Promociones" (la categoria especial de los packs/combos), tambien se
+  // incluyen productos individuales con descuento activo, aunque vivan en otra categoria real
+  // — un descuento directo (ej. Papa a S/2.00) es tan "promocion" como un pack, no debe
+  // quedar invisible en este filtro solo por no tener su propia categoria.
+  const _catPromoActiva = _tndCatActiva && (DB.categorias||[]).find(c => c.id == _tndCatActiva && c.nombre === 'Promociones');
   let prods = (DB.productos||[]).filter(p => {
-    if (_tndCatActiva && p.cat != _tndCatActiva) return false;
+    if (_tndCatActiva) {
+      const _esDescuentoIndividual = _catPromoActiva && !p.esCombo && !!_getPromoTienda(p);
+      if (p.cat != _tndCatActiva && !_esDescuentoIndividual) return false;
+    }
   if (buscar && !_norm(p.nombre||'').includes(_norm(buscar))) return false;
     if (p.venc && p.venc < hoy) return false;
     if (p.esCombo && p.promoActiva === false) return false; // ocultar combos desactivados
