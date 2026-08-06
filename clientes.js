@@ -551,7 +551,7 @@ Escribe 1 para confirmar:`;
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 1 ===
     if (cli) ajustarDeudaCliente(cli, -pend);
     
-    fbGuardar(); fbGuardarProductos();
+    fbGuardar();
     renderFiados(); renderInventario && renderInventario();
     alert('✅ Fiado eliminado y stock restaurado.');
 
@@ -584,7 +584,7 @@ Escribe 1 para confirmar:`;
     // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 2 ===
     if (cli) ajustarDeudaCliente(cli, -pend);
     
-    fbGuardar(); fbGuardarProductos();
+    fbGuardar();
     renderFiados(); try { renderMermas(); } catch(e) {}
     alert('✅ Fiado eliminado y registrado como merma.');
   } else {
