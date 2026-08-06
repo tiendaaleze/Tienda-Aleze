@@ -458,6 +458,7 @@ async function migrarImagenesAStorage() {
   const _migBtn = document.querySelector('[onclick="migrarImagenesAStorage()"]');
   if (_migBtn) { _migBtn.disabled = true; _migBtn.textContent = '⏳ Migrando 0/' + pendientes.length + '...'; }
   let ok = 0, err = 0;
+  const _idsMigrados = [];
   for (const p of pendientes) {
     try {
       const blob = await fetch(p.imagen).then(r => r.blob());
@@ -465,6 +466,7 @@ async function migrarImagenesAStorage() {
       await ref.put(blob, { contentType: 'image/webp' });
       p.imagen = await ref.getDownloadURL();
       ok++;
+      _idsMigrados.push(p.id);
       if (_migBtn) _migBtn.textContent = `⏳ Migrando ${ok}/${pendientes.length}...`;
     } catch(e) {
       console.warn('Error migrando:', p.nombre, e);
@@ -473,7 +475,7 @@ async function migrarImagenesAStorage() {
     await new Promise(r => setTimeout(r, 150));
   }
   if (_migBtn) { _migBtn.disabled = false; _migBtn.textContent = '🖼️ Migrar imágenes a Storage'; }
-  fbGuardarProductos();
+  fbGuardarProductosLote(_idsMigrados);
   alert(`✅ Migración completa.\n${ok} imágenes migradas a Storage.\n${err ? '⚠️ '+err+' errores.' : 'Sin errores.'}`);
 }
 // ===================== HISTORIAL DE VENTAS =====================
@@ -965,7 +967,6 @@ async function guardarActualizarVenta() {
     DB.movimientos.push(_movData);
 
     fbGuardar();
-    fbGuardarProductos();
     cerrarModal('modal-actualizar-venta');
     renderHistorialVentas();
     try { renderInvTable(); } catch(e){}
@@ -1088,7 +1089,6 @@ async function guardarActualizarVenta() {
   DB.movimientos.push(_movDataP);
 
   fbGuardar();
-  fbGuardarProductos();
   cerrarModal('modal-actualizar-venta');
   renderHistorialVentas();
   try { renderInvTable(); } catch(e){}
@@ -1495,6 +1495,7 @@ function aplicarCambiosExcel() {
 
   let modCount = 0, newCount = 0;
   const prodsSinCodigo = [];
+  const _idsAfectados = [];
 
   // IDs únicos garantizados — evita colisiones en importaciones masivas
   const _idsUsados = new Set(DB.productos.map(p => p.id));
@@ -1518,6 +1519,7 @@ function aplicarCambiosExcel() {
           prod[d.campo] = d.nuevo;
         }
       });
+      _idsAfectados.push(prod.id);
       modCount++;
     } else if (c.tipo === 'nuevo') {
       const f = c.fila;
@@ -1549,11 +1551,12 @@ function aplicarCambiosExcel() {
       DB.productos.push(nuevoProd);
       if (stockInicial > 0) ajustarStockSede(nuevoProd, stockInicial, 'principal');
       if (autoGenerado) prodsSinCodigo.push({ nombre: nuevoProd.nombre, codigo: codigoFinal });
+      _idsAfectados.push(nuevoProd.id);
       newCount++;
     }
   });
 
-  fbGuardarProductos();
+  fbGuardarProductosLote(_idsAfectados);
   cerrarModal('modal-excel-review');
   renderInvTable();
   updateAlertCount();
