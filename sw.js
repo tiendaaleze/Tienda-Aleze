@@ -58,7 +58,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-const CACHE_NAME = 'tienda-aleze-test-v3';
+const CACHE_NAME = 'tienda-aleze-test-v4';
 const BASE_PATH = '/Tienda-Aleze';
 
 // Archivos a pre-cachear al instalar
