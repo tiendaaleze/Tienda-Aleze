@@ -656,7 +656,6 @@ async function procesarVenta() {
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   fbGuardar();
-  fbGuardarProductos();
 
   _ventaPendiente = null;
   try { renderDashboard(); } catch(e){}
@@ -796,7 +795,6 @@ async function cobrarFiado() {
   if (!DB.movimientos) DB.movimientos = [];
   DB.movimientos.push(_movData);
   fbGuardar();
-  fbGuardarProductos();
 
   _fiadoPendiente = null;
   try { renderDashboard(); } catch(e){}
