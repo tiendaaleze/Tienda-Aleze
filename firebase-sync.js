@@ -465,7 +465,15 @@ function fbGuardarProducto(prodId) {
     }
     const { stock, stockPorSede, ...prodSinStock } = prod;
     _sincIniciar('productos', String(prodId));
-    setDocM(docM(dbModular, 'productos', String(prodId)), JSON.parse(JSON.stringify(prodSinStock)))
+    // CRITICO: merge:true es obligatorio aca. stock/stockPorSede se excluyen del payload a
+    // proposito (para no pisar una venta/ajuste concurrente que este tocando el stock al
+    // mismo tiempo desde otra sesion) — pero SIN merge, una escritura de Firestore reemplaza
+    // el documento ENTERO con solo los campos del payload, borrando cualquier campo no
+    // incluido. Eso es lo que estaba pasando: cada vez que se guardaba un producto (crear,
+    // editar cualquier campo, o incluso el propio alta con "stock inicial"), el stock que ya
+    // se habia escrito correctamente quedaba borrado 600ms despues por esta misma funcion.
+    // Con merge:true, stockPorSede nunca se toca en absoluto — ni se borra ni se sobrescribe.
+    setDocM(docM(dbModular, 'productos', String(prodId)), JSON.parse(JSON.stringify(prodSinStock)), { merge: true })
       .then(() => _sincTerminar('productos', String(prodId)))
       .catch(e => _sincError('productos', String(prodId), e, 'el producto ' + (prod.nombre || prodId)));
   }, 600);
@@ -484,7 +492,10 @@ async function fbGuardarProductosLote(prodIds) {
       const prod = DB.productos.find(p => p.id === id);
       if (!prod) return;
       const { stock, stockPorSede, ...prodSinStock } = prod;
-      batch.set(docM(dbModular, 'productos', String(id)), JSON.parse(JSON.stringify(prodSinStock)));
+      // CRITICO: merge:true obligatorio, mismo motivo que fbGuardarProducto() (ver arriba) —
+      // sin esto, cada actualizacion masiva (Excel, precios por categoria, migracion de
+      // imagenes) borraba el stock de TODOS los productos incluidos en el lote.
+      batch.set(docM(dbModular, 'productos', String(id)), JSON.parse(JSON.stringify(prodSinStock)), { merge: true });
     });
     _sincIniciar('productos_lote', 'lote_' + i);
     try {
