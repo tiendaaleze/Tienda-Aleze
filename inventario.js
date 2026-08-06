@@ -104,19 +104,23 @@ function stockTotal(prod) {
   if (!prod.stockPorSede) return prod.stock || 0;
   return Object.values(prod.stockPorSede).reduce((s,v) => s + (v||0), 0);
 }
-// ── Fase Offline: incremento atómico de stock — colección propia y chica (stock/{id}), separada de "productos" ──
-// Firestore no puede incrementar de forma segura un campo dentro de un array; por eso stock vive aparte.
-// No bloqueante — funciona sin señal porque el incremento se encola local (enablePersistence) y el
-// servidor lo aplica cuando reconecta, sumando correctamente aunque 2 sedes ajusten a la vez sin red.
+// ── Incremento atómico de stock — directamente sobre el documento del producto ──
+// FASE 2/4 de la unificacion: antes vivia en una coleccion separada (stock/{id}) porque
+// Firestore no podia incrementar de forma segura un campo DENTRO DE UN ARRAY (productos vivia
+// como un array gigante en un solo documento). Esa razon ya no aplica — productos ahora es una
+// coleccion con un documento por item, exactamente igual que stock lo era, asi que incrementar
+// un campo de ESE documento es igual de seguro contra concurrencia (dos sesiones tocando
+// productos distintos, o el mismo producto en campos distintos, nunca se pisan). Mismo
+// mecanismo offline (se encola local, el servidor lo aplica al reconectar).
 function fbIncrementarStock(prodId, sede, delta) {
   if (!dbModular || prodId == null || !delta) return; // [SDK modular]
   const campo = `stockPorSede.${sede}`;
-  _sincIniciar('stock', prodId);
-  setDocM(docM(dbModular, 'stock', String(prodId)),
+  _sincIniciar('productos', String(prodId));
+  setDocM(docM(dbModular, 'productos', String(prodId)),
     { [campo]: incrementM(delta) },
     { merge: true }
-  ).then(() => _sincTerminar('stock', prodId))
-   .catch(e => _sincError('stock', prodId, e, 'el stock del producto'));
+  ).then(() => _sincTerminar('productos', String(prodId)))
+   .catch(e => _sincError('productos', String(prodId), e, 'el stock del producto'));
 }
 
 function ajustarStockSede(prod, delta, sede) {
@@ -382,7 +386,6 @@ function eliminarProducto(id) {
   const tieneFiado = DB.fiados.some(f => f.items.some(i => i.prodId === id));
   if (tieneFiado) { alert('Este producto tiene fiados pendientes. Salda los fiados antes de eliminarlo.'); return; }
   DB.productos = DB.productos.filter(p => p.id !== id); fbGuardarProducto(id);
-  if (dbModular) deleteDocM(docM(dbModular, 'stock', String(id))).catch(e => console.warn('No se pudo borrar stock/'+id, e)); // [SDK modular]
   renderInvTable();
 }
 
@@ -1336,7 +1339,7 @@ async function sincronizarMermasInventario() {
     const trozo = _pendientes.slice(i, i + _CHUNK);
     const batch = writeBatchM(dbModular);
     trozo.forEach(({prod, delta, merma}) => {
-      batch.set(docM(dbModular, 'stock', String(prod.id)),
+      batch.set(docM(dbModular, 'productos', String(prod.id)),
         { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
       batch.set(docM(dbModular, 'mermas', String(merma.id)), merma);
     });
@@ -1405,7 +1408,7 @@ async function guardarInventarioMensual() {
       const trozo = _pendientes.slice(i, i + _CHUNK);
       const batch = writeBatchM(dbModular);
       trozo.forEach(({prod, delta}) => {
-        batch.set(docM(dbModular, 'stock', String(prod.id)),
+        batch.set(docM(dbModular, 'productos', String(prod.id)),
           { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
       });
       _sincIniciar('inv_mensual_stock_lote', fecha + '_' + i);
