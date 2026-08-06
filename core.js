@@ -779,6 +779,18 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharPromociones()
+      // (que solo arranca como parte de los listeners operativos post-login, ver
+      // _iniciarListenersOperativos en firebase-sync.js) nunca se llamaba para un visitante
+      // real — DB.promociones se quedaba vacio para siempre en esa sesion, sin importar que
+      // tan correcta fuera la logica de deteccion de promos. Lectura unica (no listener en
+      // tiempo real, mismo criterio ya usado para el catalogo publico) solo para tienda.
+      if (window.__rutaTienda) {
+        try {
+          const snapPromos = await getDocsM(collectionM(dbModular, 'promociones'));
+          DB.promociones = snapPromos.docs.map(d => d.data());
+        } catch(e) { console.warn('[Tienda pública] No se pudieron cargar promociones:', e); }
+      }
       // Estadísticas reales de la pantalla de bienvenida — contadas del catálogo, no inventadas.
       try {
         const _elProd = document.getElementById('welcome-stat-productos');
