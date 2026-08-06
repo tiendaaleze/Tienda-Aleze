@@ -685,7 +685,6 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       DB.movimientos.push(_movData);
 
       fbGuardar();
-      fbGuardarProductos();
       setTimeout(() => { _fbEscribiendo = false; }, 8000);
 
       // ── Sincronizar UI ─────────────────────────────────────────────────────
@@ -742,7 +741,6 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
     }).catch(e => console.warn('pedidos_online update error:', e.code));
   }
   fbGuardar();
-  fbGuardarProductos();
   setTimeout(() => { _fbEscribiendo = false; }, 8000);
   renderPedidosOnline();
   try { renderInvTable(); }        catch(e){}
