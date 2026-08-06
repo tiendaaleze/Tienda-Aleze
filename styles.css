@@ -471,6 +471,10 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.75rem; }
   .product-card { background: white; border-radius: 10px; overflow: hidden; cursor: pointer; box-shadow: var(--shadow); transition: all 0.15s; border: 2px solid transparent; text-align: center; position: relative; display: flex; flex-direction: column; }
   .product-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+  /* Mismo criterio que tienda publica — la tarjeta entera destaca, no solo la etiqueta chica */
+  .product-card.en-oferta { border-color: #FCA5A5; background: #FFF5F5; }
+  .product-card.en-oferta:hover { border-color: var(--primary); }
+  .product-card .p-price-orig { font-size: 0.72rem; color: var(--gray-400); text-decoration: line-through; font-weight: 400; }
   .product-card .p-name { font-size: 0.8rem; font-weight: 600; color: var(--gray-800); margin-bottom: 0.25rem; }
   .product-card .p-price { font-size: 1rem; font-weight: 700; color: var(--primary); }
   .product-card .p-stock { font-size: 0.7rem; color: var(--gray-400); }
@@ -881,7 +885,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   }
 
   /* PROMO TAG */
-  .promo-tag { background: var(--danger); color: white; font-size: 0.65rem; padding: 1px 5px; border-radius: 4px; }
+  .promo-tag { background: var(--danger); color: white; font-size: 0.74rem; font-weight: 800; padding: .2rem .5rem; border-radius: 5px; box-shadow: 0 1px 4px rgba(239,68,68,.4); }
 
   /* ALERT PANEL */
   .alert-item {
