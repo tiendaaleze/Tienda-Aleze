@@ -342,6 +342,46 @@ function _reiniciarCaja() {
   if (dbModular) setDocM(docM(dbModular, 'caja', 'principal'), vacia).catch(()=>{}); // [SDK modular]
 }
 
+// FASE 1/4 de la unificacion de stock dentro de producto (ver core.js/firebase-sync.js para
+// el porque completo) — fusiona el stockPorSede que ya existe en la coleccion separada
+// 'stock/{id}' DENTRO del documento de cada producto en 'productos/{id}', usando merge
+// siempre. El catalogo (nombre, imagen, precio, categoria) es lo que importa de verdad y
+// NUNCA se toca ni se sobrescribe con esto — si algun producto no tiene stock recuperable,
+// no pasa nada, es un dato descartable que se vuelve a cargar manualmente despues.
+async function migrarStockAProducto() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede ejecutar esto.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento.'); return; } // [SDK modular]
+  if (!confirm('Esto copia el stock actual (colección separada) dentro de cada producto, sin tocar ni borrar nombre/imagen/precio/categoría de ningún producto. Puede tardar unos segundos.\n\n¿Continuar?')) return;
+
+  try {
+    const stockSnap = await getDocsM(collectionM(dbModular, 'stock'));
+    const stockPorId = {};
+    stockSnap.forEach(doc => { stockPorId[doc.id] = doc.data(); });
+
+    const ids = DB.productos.map(p => String(p.id));
+    let migrados = 0, sinStock = 0;
+    const CHUNK = 200;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const trozo = ids.slice(i, i + CHUNK);
+      const batch = writeBatchM(dbModular);
+      trozo.forEach(id => {
+        const s = stockPorId[id];
+        if (s && s.stockPorSede) {
+          batch.set(docM(dbModular, 'productos', id), { stockPorSede: s.stockPorSede }, { merge: true });
+          migrados++;
+        } else {
+          sinStock++;
+        }
+      });
+      await batch.commit();
+    }
+    alert(`✅ Migración completada.\n\n${migrados} producto(s) con stock copiado.\n${sinStock} producto(s) sin stock previo (quedan en 0, se cargan manualmente si corresponde).\n\nEl catálogo (nombre/imagen/precio) no se tocó.`);
+  } catch (e) {
+    console.warn('migrarStockAProducto: error', e);
+    alert('⚠️ Hubo un error durante la migración — revisa la consola. Nada del catálogo actual se vio afectado.');
+  }
+}
+
 const RESET_CONFIG = {
   dashboard: {
     nombre: 'Dashboard (todos los datos operativos)',
