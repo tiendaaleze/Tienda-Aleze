@@ -491,18 +491,42 @@ function guardarPromocion() {
     const el = document.getElementById('promo-qr-preview');
     if (el) { el.innerHTML = ''; new QRCode(el, { text: packCodigo, width: 120, height: 120 }); }
   } else if (espack && packProdId) {
+    const componentesPack = [
+      { prodId: prod1Id, cant: 1 },
+      ...(prod2Id ? [{ prodId: prod2Id, cant: 1 }] : []),
+      ...(prod3Id ? [{ prodId: prod3Id, cant: 1 }] : [])
+    ];
     const prodPack = DB.productos.find(p => p.id === packProdId);
     if (prodPack) {
       prodPack.nombre = nombre;
       prodPack.precio = precioPromo;
       prodPack.costo = costoTotal;
       prodPack.imagen = imagen;
-      prodPack.componentes = [
-        { prodId: prod1Id, cant: 1 },
-        ...(prod2Id ? [{ prodId: prod2Id, cant: 1 }] : []),
-        ...(prod3Id ? [{ prodId: prod3Id, cant: 1 }] : [])
-      ];
+      prodPack.componentes = componentesPack;
       fbGuardarProductos();
+    } else {
+      // CRITICO: red de seguridad — el producto combo original se perdio (nunca llego a
+      // escribirse en el servidor, o se perdio en una sobrescritura concurrente del documento
+      // db_productos completo). Sin esto, editar y guardar la promocion no hacia
+      // absolutamente nada para recuperarlo — el combo quedaba invisible en POS para siempre,
+      // aunque la promocion en si siguiera existiendo y mostrando su QR con normalidad. Se
+      // recrea desde cero, misma logica que la creacion original de mas arriba.
+      let catPromo = DB.categorias.find(c => c.nombre === 'Promociones');
+      if (!catPromo) {
+        catPromo = { id: getId(), nombre: 'Promociones', emoji: '🏷️', margen: 0, imagen: '' };
+        DB.categorias.unshift(catPromo);
+      }
+      DB.productos.push({
+        id: packProdId, nombre, cat: catPromo.id,
+        tipo: 'combo', unidad: 'und',
+        costo: costoTotal, precio: precioPromo,
+        stock: 999, stockMin: 0, venc: '',
+        codigo: packCodigo || ('PROMO-' + packProdId), prov: null,
+        esCombo: true, componentes: componentesPack, imagen, promoActiva: true
+      });
+      _fbEscribiendo = true;
+      fbGuardarProductos();
+      setTimeout(() => { _fbEscribiendo = false; }, 300);
     }
   }
   const data = {
