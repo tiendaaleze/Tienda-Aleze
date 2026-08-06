@@ -593,7 +593,7 @@ async function procesarVenta() {
   });
   const _deltasStock = [];
   _deltasPorProducto.forEach(({prod, delta}) => {
-    batch.set(docM(dbModular, 'stock', String(prod.id)),
+    batch.set(docM(dbModular, 'productos', String(prod.id)),
       { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
   });
@@ -742,7 +742,7 @@ async function cobrarFiado() {
   });
   const _deltasStock = [];
   _deltasPorProducto.forEach(({prod, delta}) => {
-    batch.set(docM(dbModular, 'stock', String(prod.id)),
+    batch.set(docM(dbModular, 'productos', String(prod.id)),
       { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
   });
