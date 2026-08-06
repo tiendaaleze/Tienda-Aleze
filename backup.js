@@ -4,7 +4,7 @@ let _backupTimer = null;
 // Firestore limita cada documento a 1 MB — por eso el respaldo se guarda como VARIOS
 // documentos (uno principal + uno por colección), no todo apretado en uno solo. Ventas y
 // movimientos se acotan a 30 días (mismo criterio que la poda local); el resto va completo.
-const _BACKUP_COLECCIONES_COMPLETAS = ['boletas', 'fiados', 'mermas', 'gastos', 'stock', 'caja', 'clientes'];
+const _BACKUP_COLECCIONES_COMPLETAS = ['boletas', 'fiados', 'mermas', 'gastos', 'caja', 'clientes'];
 const _BACKUP_COLECCIONES_30DIAS = ['ventas', 'movimientos'];
 
 async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
@@ -98,10 +98,22 @@ async function restaurarBackup(id) {
 
     // 1) Documento principal (legado + config)
     await setDocM(docM(dbModular, 'aleze', 'db'), data);
-    // 2) Catálogo completo (productos + categorías + stockPorSede, ya incluido en cada producto)
-    await setDocM(docM(dbModular, 'aleze', 'db_productos'), { productos, categorias, config: DB.config || {} });
-    // 3) Cada colección propia: vaciar la actual y volver a escribir lo respaldado
-    for (const col of colecciones) {
+    // 2) categorías + config — productos (con su stock unificado adentro) va aparte, como
+    // coleccion, en el paso 3 junto al resto de colecciones propias.
+    await setDocM(docM(dbModular, 'aleze', 'db_productos'), { categorias, config: DB.config || {} });
+    // 3) Cada colección propia (incluida 'productos'): vaciar la actual y volver a escribir lo respaldado
+    for (const col of [...colecciones, 'productos']) {
+      if (col === 'productos') {
+        await _vaciarColeccion('productos');
+        for (let i = 0; i < productos.length; i += 450) {
+          const batch = writeBatchM(dbModular);
+          productos.slice(i, i + 450).forEach(p => {
+            batch.set(docM(dbModular, 'productos', String(p.id)), p);
+          });
+          await batch.commit();
+        }
+        continue;
+      }
       await _vaciarColeccion(col);
       const satDoc = await getDocM(docM(dbModular, 'aleze_backups', id + '__' + col));
       if (satDoc.exists()) { // en modular, exists es un METODO
