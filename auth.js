@@ -301,18 +301,14 @@ async function _completarSesion(name, role) {
       if (productosColSnap) {
         DB.productos = productosColSnap.docs.map(d => d.data());
       } else { console.warn('[Offline] No se pudo reconciliar el catálogo de productos fresco'); }
-      // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
-      // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
-      if (stockSnap) {
-        stockSnap.forEach(doc => {
-          const prod = DB.productos.find(p => String(p.id) === doc.id);
-          const d = doc.data();
-          if (prod && d && d.stockPorSede) {
-            prod.stockPorSede = d.stockPorSede;
-            prod.stock = stockTotal(prod);
-          }
-        });
-      } else { console.warn('[Offline] No se pudo reconciliar stock fresco'); }
+      // FASE 3/4 unificacion de stock dentro de producto: ya no hace falta este segundo paso
+      // de "traer stock aparte y mezclarlo a mano" — cada producto ya trae su propio
+      // stockPorSede desde productosColSnap de arriba, un solo documento, un solo paso. Esto
+      // era justo la ventana donde un login en paralelo con otra carga podia pisar el trabajo
+      // del otro, dejando el catalogo entero sin stock — confirmado con evidencia real en
+      // produccion. NOTA: stockSnap (indice 4, arriba) ya no se usa para nada — se deja sin
+      // tocar por ahora para no arriesgar renumerar los 15 indices en el mismo cambio,
+      // pendiente de limpiar en una ronda posterior mas tranquila.
 
       // CRITICO — corrige la causa raiz de perdida real de datos: TODO lo que camposOp carga
       // desde el documento combinado (ventas, clientes, fiados, mermas, movimientos) puede
