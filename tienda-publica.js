@@ -567,13 +567,11 @@ function _renderTienda() {
 
 <div class="tnd-main">
   <div class="tnd-search-bar">
+    <button id="tnd-back-home" onclick="_tndIrHome()" style="display:none;flex-shrink:0;align-items:center;gap:.3rem;background:var(--primary);color:#fff;border:none;border-radius:8px;padding:0 .7rem;font-size:.82rem;font-weight:700;cursor:pointer">🏠 <span class="tnd-back-home-txt">Inicio</span></button>
     <span>🔍</span>
     <input type="text" id="tnd-search" placeholder="Buscar producto..." oninput="tndBuscarDesdeHome()" />
   </div>
-  <div id="tnd-back-home" style="display:none;margin-bottom:.75rem">
-   <button onclick="_tndIrHome()" style="display:inline-flex;align-items:center;gap:.4rem;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:.55rem 1.2rem;font-size:.88rem;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(124,58,237,.35)">🏠 Inicio</button>
-  </div>
-  <div class="tnd-cats" id="tnd-cats" style="display:none;position:relative;padding:0 26px">
+  <div class="tnd-cats" id="tnd-cats" style="display:none;position:relative">
     <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-cats-riel',-1)" aria-label="Categorías anteriores">‹</button>
     <div id="tnd-cats-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
     <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-cats-riel',1)" aria-label="Categorías siguientes">›</button>
@@ -763,7 +761,7 @@ function tndBuscarDesdeHome() {
     _tndCatActiva = '';
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
-    if (back) back.style.display = 'block';
+    if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
     tndRenderCats();
   }
@@ -775,7 +773,7 @@ function tndSetCat(id) {
     _tndVista = 'catalogo';
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
-    if (back) back.style.display = 'block';
+    if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
     tndRenderCats();
     tndFiltrar();
