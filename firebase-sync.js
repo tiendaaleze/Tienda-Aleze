@@ -512,13 +512,9 @@ function fbEscucharProductosColeccion() {
       const idx = DB.productos.findIndex(p => String(p.id) === change.doc.id);
       if (change.type === 'removed') {
         if (idx !== -1) { DB.productos.splice(idx, 1); huboCambioReal = true; }
-      } else { // 'added' o 'modified' — preservar stock/stockPorSede local, que vive aparte
-        if (idx !== -1) {
-          const { stock: _s, stockPorSede: _sp } = DB.productos[idx];
-          DB.productos[idx] = { ...data, stock: _s, stockPorSede: _sp };
-        } else {
-          DB.productos.push(data); // producto nuevo — su stock llega por separado via fbEscucharStock()
-        }
+      } else { // 'added' o 'modified' — FASE 3/4: data ya trae el stockPorSede unificado
+        // directo del documento real, no hace falta preservar nada de la copia local vieja.
+        if (idx !== -1) { DB.productos[idx] = data; } else { DB.productos.push(data); }
         huboCambioReal = true;
       }
     });
