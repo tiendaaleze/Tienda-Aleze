@@ -787,6 +787,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         const prodsSnap = await getDocsM(collectionM(dbModular, 'productos'));
         DB.productos = prodsSnap.docs.map(d => d.data());
       } catch(e) { console.warn('No se pudo cargar la colección productos:', e); }
+      // DIAGNOSTICO TEMPORAL — rastrea el producto id 1785907151107288 (Vodka Smirnoff, con
+      // 100 unidades confirmadas en Firestore) en cada paso clave de la carga.
+      (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG] tras cargar coleccion productos:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
       // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharPromociones()
       // (que solo arranca como parte de los listeners operativos post-login, ver
       // _iniciarListenersOperativos en firebase-sync.js) nunca se llamaba para un visitante
@@ -814,15 +817,18 @@ document.addEventListener('DOMContentLoaded', async function() {
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
         const stockSnap = await getDocsM(collectionM(dbModular, 'stock')); // [SDK modular]
+        console.log('🔬[DIAG] stockSnap.size:', stockSnap.size, '— tiene el doc 1785907151107288?', stockSnap.docs.some(d => d.id === '1785907151107288'));
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
+          if (doc.id === '1785907151107288') console.log('🔬[DIAG] doc stock encontrado, data:', JSON.stringify(d), '— prod encontrado en DB.productos?', !!prod);
           if (prod && d && d.stockPorSede) {
             prod.stockPorSede = d.stockPorSede;
             prod.stock = stockTotal(prod);
           }
         });
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); console.log('🔬[DIAG] ERROR leyendo stock:', e.code, e.message); }
+      (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG] tras mezclar stock:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
       // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharStock() (que
       // solo arranca como parte de los listeners operativos post-login) nunca se activaba
       // para un visitante real — el stock que veia quedaba congelado en la lectura unica de
