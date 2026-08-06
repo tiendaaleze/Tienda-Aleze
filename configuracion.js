@@ -411,6 +411,27 @@ async function migrarResiduosSede2() {
     `\n\nTotal: ${_totalCorregidos + _clientesMigrados} registros corregidos.` + _avisoCajaVieja);
 }
 
+// FASE 2/4 de la migración de productos a colección propia (ver firebase-sync.js para el
+// porqué completo) — copia cada producto del documento único db_productos a su propio
+// documento en la colección 'productos/{id}', sin borrar ni tocar nada del documento viejo
+// todavía (queda como red de seguridad hasta confirmar que todo funciona bien en las
+// siguientes fases). Seguro de correr más de una vez — sobrescribe cada documento con el
+// mismo contenido, no duplica nada.
+async function migrarProductosAColeccion() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede ejecutar esto.'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento.'); return; } // [SDK modular]
+  if (!DB.productos || !DB.productos.length) { alert('⚠️ No hay productos cargados en este momento.'); return; }
+  if (!confirm(`Esto copia los ${DB.productos.length} productos actuales a la nueva colección individual, sin borrar ni modificar nada del catálogo actual. Puede tardar unos segundos.\n\n¿Continuar?`)) return;
+
+  try {
+    await fbGuardarProductosLote(DB.productos.map(p => p.id));
+    alert(`✅ Migración completada. ${DB.productos.length} producto(s) copiados a la nueva colección 'productos'.\n\nEl catálogo sigue funcionando exactamente igual que antes — este paso es solo de preparación para las siguientes fases.`);
+  } catch (e) {
+    console.warn('migrarProductosAColeccion: error', e);
+    alert('⚠️ Hubo un error durante la migración — revisa la consola. Nada del catálogo actual se vio afectado.');
+  }
+}
+
 // Reinicia la caja del negocio a su estado inicial (sin abrir, sin movimientos).
 function _reiniciarCaja() {
   const vacia = { abierta: false, inicial: 0, ingresos: 0, egresos: 0, turnoInicio: null, cajero: '', fecha: '' };
