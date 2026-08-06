@@ -290,7 +290,9 @@ function _getStockBadge(p) {
 function _getPromoTienda(p) {
   const hoy = today();
   const promoActivas = (DB.promociones||[]).filter(pr => pr.activa && pr.hasta >= hoy && _promoAplicaSede(pr, 'principal'));
-  return promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
+  return p.esCombo
+    ? promoActivas.find(pr => pr.packProdId === p.id)
+    : promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
 }
 function _renderTienda() {
   try {
@@ -672,12 +674,16 @@ function _tndRenderHome() {
   // en ambas, para que la pagina se sienta de una sola pieza, no secciones inconexas.
   const _tarjetaProdRail = (p, _esNuevo) => {
     const _promoRail = _getPromoTienda(p);
-    const _pctDesc = _promoRail && _promoRail.precioPromo && _promoRail.precioPromo < p.precio
-      ? Math.round((1 - _promoRail.precioPromo / p.precio) * 100) : 0;
-    const _precioMostrar = _pctDesc > 0 ? _promoRail.precioPromo : p.precio;
+    // Para un combo, p.precio YA es el precio de oferta (se establecio asi al crearlo) —
+    // comparar contra si mismo siempre daria 0% de descuento. El precio de referencia real
+    // para calcular el ahorro es precioOrig de la promocion (la suma de los productos sueltos).
+    const _precioRefRail = p.esCombo ? (_promoRail && _promoRail.precioOrig) : p.precio;
+    const _pctDesc = _promoRail && _promoRail.precioPromo && _precioRefRail && _promoRail.precioPromo < _precioRefRail
+      ? Math.round((1 - _promoRail.precioPromo / _precioRefRail) * 100) : 0;
+    const _precioMostrar = p.esCombo ? p.precio : (_pctDesc > 0 ? _promoRail.precioPromo : p.precio);
     const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
       : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : '');
-    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
+    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+_precioRefRail).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
 
   const hoy = new Date().toISOString().slice(0,10);
@@ -837,8 +843,11 @@ function tndFiltrar() {
         : `<span class="tnd-prod-icon-emoji">${cat?.emoji || '📦'}</span>`;
     const badge = _getStockBadge(p);
     const promo = _getPromoTienda(p);
-    const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
-    const precioOrig = (promo && promo.precioPromo && promo.precioPromo < p.precio) ? p.precio : null;
+    const precio = p.esCombo ? p.precio : (promo && promo.precioPromo ? promo.precioPromo : p.precio);
+    // Para un combo, p.precio YA es el precio de oferta — comparar contra si mismo siempre
+    // daria 0% de descuento. El precio de referencia real es precioOrig de la promocion.
+    const _precioRefCat = p.esCombo ? (promo && promo.precioOrig) : p.precio;
+    const precioOrig = (promo && promo.precioPromo && _precioRefCat && promo.precioPromo < _precioRefCat) ? _precioRefCat : null;
     const pctDescCat = precioOrig ? Math.round((1 - precio / precioOrig) * 100) : 0;
     const precioCat = p.costo ? Math.ceil(p.costo * (1 + ((DB.categorias||[]).find(c=>c.id===p.cat)?.margen||0)/100) * 10) / 10 : null;
     const sugerido = precioCat && precioCat !== p.precio ? precioCat : null;
@@ -871,7 +880,7 @@ function tndFiltrar() {
 
 function tndAgregarCarrito(prodId) {
   const p = DB.productos.find(x => x.id === prodId);
-  if (!p || stockTotal(p) <= 0) return;
+  if (!p || (p.esCombo ? p.promoActiva === false : stockTotal(p) <= 0)) return;
   if (p.venc && p.venc < today()) { alert('Este producto ya no está disponible.'); tndFiltrar(); return; }
   const promo = _getPromoTienda(p);
   const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
@@ -964,7 +973,7 @@ function tndDetalleAgregarCarrito() {
   // CRITICO — la validacion anterior solo miraba la cantidad nueva, no la suma con lo que ya
   // estuviera en el carrito — permitia superar el stock real si el producto ya estaba agregado.
   const cantTotalTrasAgregar = (existing ? existing.cant : 0) + cant;
-  if (cantTotalTrasAgregar > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
+  if (!p.esCombo && cantTotalTrasAgregar > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
   const promo = _getPromoTienda(p);
   let precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
   const mayor = _tndDetalleData?.precioMayor;
@@ -1084,8 +1093,9 @@ function tndRenderPanel() {
       // ANTES de agregar seguia siendo el regular, mismo patron ya usado en la grilla del
       // catalogo (precio tachado + precio con descuento + etiqueta PROMO).
       const promo = _getPromoTienda(p);
-      const precioMostrar = promo && promo.precioPromo ? promo.precioPromo : p.precio;
-      const precioOrigDetalle = (promo && promo.precioPromo && promo.precioPromo < p.precio) ? p.precio : null;
+      const precioMostrar = p.esCombo ? p.precio : (promo && promo.precioPromo ? promo.precioPromo : p.precio);
+      const _precioRefDet = p.esCombo ? (promo && promo.precioOrig) : p.precio;
+      const precioOrigDetalle = (promo && promo.precioPromo && _precioRefDet && promo.precioPromo < _precioRefDet) ? _precioRefDet : null;
       const pctDescDet = precioOrigDetalle ? Math.round((1 - precioMostrar / precioOrigDetalle) * 100) : 0;
       body.innerHTML = `
         <div style="text-align:center;margin-bottom:1rem;background:#F3F4F6;border-radius:12px;padding:.75rem">
