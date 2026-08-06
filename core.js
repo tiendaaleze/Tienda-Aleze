@@ -770,9 +770,10 @@ document.addEventListener('DOMContentLoaded', async function() {
       }
       // CRITICO FASE 4/4 migracion de productos: productos ya no vive en db_productos (ver
       // firebase-sync.js, fbGuardarProductos() simplificada) — vive en su propia coleccion,
-      // un documento por producto, mismo criterio que ventas/clientes/fiados/stock. Sin esto,
-      // DB.productos se hubiera quedado con la ultima copia congelada de pd.productos, de
-      // antes de la migracion, ignorando cualquier cambio real hecho despues.
+      // un documento por producto (mismo criterio que ventas/clientes/fiados), CON su stock
+      // unificado adentro (ver FASE 3/4 mas abajo) — un solo documento, una sola lectura. Sin
+      // esto, DB.productos se hubiera quedado con la ultima copia congelada de pd.productos,
+      // de antes de la migracion, ignorando cualquier cambio real hecho despues.
       try {
         const prodsSnap = await getDocsM(collectionM(dbModular, 'productos'));
         DB.productos = prodsSnap.docs.map(d => d.data());
@@ -800,26 +801,19 @@ document.addEventListener('DOMContentLoaded', async function() {
           _elCat.textContent = DB.categorias.length;
         }
       } catch(e) {}
-      // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
-      // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
-      try {
-        const stockSnap = await getDocsM(collectionM(dbModular, 'stock')); // [SDK modular]
-        stockSnap.forEach(doc => {
-          const prod = DB.productos.find(p => String(p.id) === doc.id);
-          const d = doc.data();
-          if (prod && d && d.stockPorSede) {
-            prod.stockPorSede = d.stockPorSede;
-            prod.stock = stockTotal(prod);
-          }
-        });
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
-      // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharStock() (que
-      // solo arranca como parte de los listeners operativos post-login) nunca se activaba
-      // para un visitante real — el stock que veia quedaba congelado en la lectura unica de
-      // arriba, sin ningun cambio en vivo hasta salir por completo de la app y volver a
-      // entrar. Mismo criterio ya aplicado a promociones.
+      // FASE 3/4 unificacion de stock dentro de producto: ya no hace falta este segundo paso
+      // de "traer stock aparte y mezclarlo a mano" — cada producto ya trae su propio
+      // stockPorSede desde la lectura de la coleccion 'productos' de mas arriba, un solo
+      // documento, un solo paso. Esto era justo la ventana donde un login/recarga en paralelo
+      // podia pisar el trabajo del otro, dejando el catalogo entero sin stock — confirmado con
+      // evidencia real en produccion.
+      // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharProductosColeccion()
+      // (que solo arranca como parte de los listeners operativos post-login) nunca se activaba
+      // para un visitante real — ni productos nuevos ni cambios de stock llegaban en vivo, solo
+      // en la lectura unica de arriba, sin ningun cambio hasta salir por completo y volver a
+      // entrar. Mismo criterio ya aplicado antes a promociones.
       if (window.__rutaTienda) {
-        try { fbEscucharStock(); } catch(e) { console.warn('[Tienda pública] No se pudo activar el stock en tiempo real:', e); }
+        try { fbEscucharProductosColeccion(); } catch(e) { console.warn('[Tienda pública] No se pudo activar productos en tiempo real:', e); }
       }
       aplicarNombreNegocio();
 
