@@ -118,7 +118,7 @@ if (editingMermaId) {
     _acumular(prod, -cant); // aplicar el nuevo descuento
     const _deltasStock = [];
     _deltasPorProducto.forEach(({prod: p, delta}) => {
-      batch.set(docM(dbModular, 'stock', String(p.id)),
+      batch.set(docM(dbModular, 'productos', String(p.id)),
         { [`stockPorSede.${_sede}`]: incrementM(delta) }, { merge: true });
       _deltasStock.push({ prod: p, delta });
     });
@@ -144,7 +144,7 @@ if (editingMermaId) {
   } else {
     if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
     const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede, costoUnitario: prod.costo };
-    batch.set(docM(dbModular, 'stock', String(prod.id)),
+    batch.set(docM(dbModular, 'productos', String(prod.id)),
       { [`stockPorSede.${_sede}`]: incrementM(-cant) }, { merge: true });
     batch.set(docM(dbModular, 'mermas', String(nuevaMerma.id)), nuevaMerma);
 
@@ -197,7 +197,7 @@ async function _confirmarElimMerma() {
   // Paquete atomico: restaurar stock (si aplica) y borrar la merma viajan juntos.
   const batch = writeBatchM(dbModular);
   if (_restaurar && prod) {
-    batch.set(docM(dbModular, 'stock', String(prod.id)),
+    batch.set(docM(dbModular, 'productos', String(prod.id)),
       { [`stockPorSede.${m.sedeId || sedeAdminEfectiva()}`]: incrementM(m.cant) }, { merge: true });
   }
   batch.delete(docM(dbModular, 'mermas', String(_mermaElimId)));
@@ -576,9 +576,6 @@ function eliminarPromo(id) {
   if (p && p.packProdId) {
     DB.productos = DB.productos.filter(x => x.id !== p.packProdId);
     fbGuardarProducto(p.packProdId);
-    // Limpia el documento huérfano en stock/{id} — el pack no trackea stock real (se arma
-    // de sus componentes), pero el doc igual quedaría abandonado si no se borra explícito.
-    if (dbModular) deleteDocM(docM(dbModular, 'stock', String(p.packProdId))).catch(()=>{}); // [SDK modular]
   }
   DB.promociones = DB.promociones.filter(x => x.id !== id);
   if (dbModular) deleteDocM(docM(dbModular, 'promociones', String(id))).catch(e => console.warn('No se pudo borrar promociones/'+id, e));
