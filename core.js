@@ -752,17 +752,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   console.log(`⏱️ [T+0ms] DOMContentLoaded disparado, arrancando await iniciarFirebase()`);
   const fbOk = await iniciarFirebase();
   console.log(`⏱️ [T+${(performance.now()-_t0b).toFixed(0)}ms] await iniciarFirebase() TERMINO, fbOk=${fbOk}`);
-  // CRITICO: el boton empieza deshabilitado (ver index.html) — sin esto, un click antes de
-  // que iniciarFirebase() termine su rama modular disparaba "docM is not a function" dentro
-  // del login (docM/dbModular todavia no existian), silenciosamente saltandose toda la
-  // reconciliacion de datos frescos y cayendo a cache local vieja. Se habilita aca, recien
-  // cuando iniciarFirebase() realmente termino — tanto si tuvo exito como si fallo, para no
-  // dejar al usuario con un boton eternamente en "Cargando..." sin explicacion.
   const _btnLogin = document.getElementById('btn-login');
-  if (_btnLogin) {
-    _btnLogin.disabled = false;
-    _btnLogin.textContent = fbOk ? 'Ingresar' : '⚠️ Ingresar (sin conexión)';
-  }
 
   if (fbOk) {
     try {
@@ -787,9 +777,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         const prodsSnap = await getDocsM(collectionM(dbModular, 'productos'));
         DB.productos = prodsSnap.docs.map(d => d.data());
       } catch(e) { console.warn('No se pudo cargar la colección productos:', e); }
-      // DIAGNOSTICO TEMPORAL — rastrea el producto id 1785907151107288 (Vodka Smirnoff, con
-      // 100 unidades confirmadas en Firestore) en cada paso clave de la carga.
-      (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG] tras cargar coleccion productos:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
       // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharPromociones()
       // (que solo arranca como parte de los listeners operativos post-login, ver
       // _iniciarListenersOperativos en firebase-sync.js) nunca se llamaba para un visitante
@@ -817,18 +804,15 @@ document.addEventListener('DOMContentLoaded', async function() {
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       try {
         const stockSnap = await getDocsM(collectionM(dbModular, 'stock')); // [SDK modular]
-        console.log('🔬[DIAG] stockSnap.size:', stockSnap.size, '— tiene el doc 1785907151107288?', stockSnap.docs.some(d => d.id === '1785907151107288'));
         stockSnap.forEach(doc => {
           const prod = DB.productos.find(p => String(p.id) === doc.id);
           const d = doc.data();
-          if (doc.id === '1785907151107288') console.log('🔬[DIAG] doc stock encontrado, data:', JSON.stringify(d), '— prod encontrado en DB.productos?', !!prod);
           if (prod && d && d.stockPorSede) {
             prod.stockPorSede = d.stockPorSede;
             prod.stock = stockTotal(prod);
           }
         });
-      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); console.log('🔬[DIAG] ERROR leyendo stock:', e.code, e.message); }
-      (function(){ const _pd = DB.productos.find(p => p.id === 1785907151107288); console.log('🔬[DIAG] tras mezclar stock:', _pd ? JSON.stringify({id:_pd.id, stock:_pd.stock, stockPorSede:_pd.stockPorSede}) : 'NO ENCONTRADO'); })();
+      } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
       // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharStock() (que
       // solo arranca como parte de los listeners operativos post-login) nunca se activaba
       // para un visitante real — el stock que veia quedaba congelado en la lectura unica de
@@ -847,11 +831,23 @@ document.addEventListener('DOMContentLoaded', async function() {
         renderDashboard();
         mobUpdateBar();
       }
+      // CRITICO: recien aca, con productos+stock YA cargados y mezclados por completo, es
+      // seguro habilitar el boton de login. Antes se habilitaba apenas terminaba
+      // iniciarFirebase() (rapido, ~20-30ms) — mucho antes de que esta carga completa
+      // terminara (puede tardar 30+ segundos en un arranque en frio). Un click apenas el
+      // boton se habilitaba disparaba el login en paralelo con esta carga todavia en curso —
+      // ambos flujos reasignan DB.productos de forma independiente, y el que terminaba
+      // ultimo pisaba al otro, pudiendo dejar el catalogo entero sin stock sin ningun error
+      // visible. Confirmado con evidencia real: el stock desaparecia solo en arranques en
+      // frio (que es cuando esta carga es mas lenta y da tiempo a hacer login antes).
+      if (_btnLogin) { _btnLogin.disabled = false; _btnLogin.textContent = 'Ingresar'; }
     } catch(e) {
       console.warn('Firestore no disponible:', e.message);
+      if (_btnLogin) { _btnLogin.disabled = false; _btnLogin.textContent = '⚠️ Ingresar (sin conexión)'; }
       _mostrarErrorConexionInicial();
     }
   } else {
+    if (_btnLogin) { _btnLogin.disabled = false; _btnLogin.textContent = '⚠️ Ingresar (sin conexión)'; }
     _mostrarErrorConexionInicial();
   }
 });
