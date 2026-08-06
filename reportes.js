@@ -881,7 +881,7 @@ async function guardarActualizarVenta() {
         }, 0);
         const cantARestituir = Math.max(0, cantOrig - yaDevuelto);
         if (cantARestituir > 0) {
-          batch.set(docM(dbModular, 'stock', String(prod.id)),
+          batch.set(docM(dbModular, 'productos', String(prod.id)),
             { [`stockPorSede.${_sedeDev}`]: incrementM(cantARestituir) }, { merge: true });
           _deltasStock.push({ prod, delta: cantARestituir });
         }
@@ -990,7 +990,7 @@ async function guardarActualizarVenta() {
   itemsDevueltos.forEach(dev => {
     const prod = DB.productos.find(p => p.id === dev.prodId);
     if (prod) {
-      batchP.set(docM(dbModular, 'stock', String(prod.id)),
+      batchP.set(docM(dbModular, 'productos', String(prod.id)),
         { [`stockPorSede.${_sedeDevP}`]: incrementM(dev.cantDevuelta) }, { merge: true });
       _deltasStockP.push({ prod, delta: dev.cantDevuelta });
     }
