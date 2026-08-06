@@ -381,7 +381,7 @@ function eliminarProducto(id) {
   if (!confirm('¿Eliminar este producto?')) return;
   const tieneFiado = DB.fiados.some(f => f.items.some(i => i.prodId === id));
   if (tieneFiado) { alert('Este producto tiene fiados pendientes. Salda los fiados antes de eliminarlo.'); return; }
-  DB.productos = DB.productos.filter(p => p.id !== id); fbGuardarProductos();
+  DB.productos = DB.productos.filter(p => p.id !== id); fbGuardarProducto(id);
   if (dbModular) deleteDocM(docM(dbModular, 'stock', String(id))).catch(e => console.warn('No se pudo borrar stock/'+id, e)); // [SDK modular]
   renderInvTable();
 }
@@ -655,7 +655,7 @@ function guardarProducto() {
     DB.productos.push(prod);
     if (stockInicial > 0) ajustarStockSede(prod, stockInicial, sede);
   }
-  fbGuardarProductos();
+  fbGuardarProducto(prod.id);
 
   // Detalle: colección aparte (productos_detalle) — solo se escribe/lee si el producto la usa.
   if (tieneDetalle) {
@@ -954,7 +954,7 @@ function actualizarPreciosCat(modo) {
       p.precio = nuevo;
       actualizados++;
     });
-    fbGuardarProductos();
+    fbGuardarProductosLote(prods.map(p => p.id));
     cerrarModal('modal-categoria');
     renderCategorias();
     renderInvTable();
@@ -982,14 +982,16 @@ function aplicarPreciosCatSeleccionados() {
   const cat = DB.categorias.find(c => c.id === editingCatId);
   const prods = DB.productos.filter(p => p.cat == editingCatId);
   let n = 0;
+  const _idsModificados = [];
   prods.forEach(p => {
     const chk = document.getElementById('cup-chk-' + p.id);
     if (chk && chk.checked) {
       p.precio = Math.ceil(p.costo * (1 + cat.margen/100) * 10) / 10;
       n++;
+      _idsModificados.push(p.id);
     }
   });
-  fbGuardarProductos();
+  fbGuardarProductosLote(_idsModificados);
   cerrarModal('modal-cat-update-precios');
   cerrarModal('modal-categoria');
   renderInvTable();
@@ -1356,7 +1358,7 @@ async function sincronizarMermasInventario() {
     prod.stock = stockTotal(prod);
     DB.mermas.push(merma);
   });
-  fbGuardar(); fbGuardarProductos();
+  fbGuardar();
   alert('✅ ' + _pendientes.length + ' diferencia(s) sincronizadas con mermas y stock actualizado.');
   updateAlertCount();
   // CRITICO: sin esto, el stock se actualizaba correctamente por dentro (memoria + Firestore)
@@ -1421,7 +1423,6 @@ async function guardarInventarioMensual() {
       prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
       prod.stock = stockTotal(prod);
     });
-    fbGuardarProductos();
   }
 
   const resumen = { id: getId(), fecha, usuario: currentUser, sedeId: currentUserSedeId || 'principal', items: _itemsResumen };
@@ -1508,7 +1509,7 @@ function aplicarSug(i, id) {
   const p = DB.productos.find(x => x.id === id);
   if (p) {
     p.precio = v;
-    fbGuardarProductos();
+    fbGuardarProducto(id);
     const row = input.closest('tr');
     if (row) {
       const btn = row.querySelector('button');
@@ -1522,12 +1523,13 @@ function aplicarSug(i, id) {
 
 function aplicarTodosPrecios() {
   if (!window._sugData) return;
+  const _idsAplicados = [];
   window._sugData.forEach((sd, i) => {
     const v = parseFloat(document.getElementById('sg-' + i)?.value);
-    if (!isNaN(v) && v > 0) { const p = DB.productos.find(x => x.id===sd.id); if(p) p.precio = v; }
+    if (!isNaN(v) && v > 0) { const p = DB.productos.find(x => x.id===sd.id); if(p) { p.precio = v; _idsAplicados.push(p.id); } }
   });
   cerrarModal('modal-sugerir-precios');
-  fbGuardarProductos();
+  fbGuardarProductosLote(_idsAplicados);
   renderInvTable();
   alert('✅ Todos los precios actualizados');
 }
