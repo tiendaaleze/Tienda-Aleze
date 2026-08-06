@@ -820,7 +820,7 @@ function tndFiltrar() {
   const grid = document.getElementById('tnd-grid');
   if (!grid) return;
   grid.innerHTML = prods.map(p => {
-    const agotado = stockTotal(p) <= 0;
+    const agotado = p.esCombo ? (p.promoActiva === false) : stockTotal(p) <= 0;
     const cat = (DB.categorias||[]).find(c => c.id === p.cat);
    const icon = p.imagen
       ? `<img src="${p.imagen}" alt="${p.nombre}">`
@@ -1069,7 +1069,7 @@ function tndRenderPanel() {
       const extra = _tndDetalleData?.imagenesExtra || [];
       const desc = _tndDetalleData?.descripcion || '';
       const mayor = _tndDetalleData?.precioMayor;
-      const agotado = stockTotal(p) <= 0;
+      const agotado = p.esCombo ? (p.promoActiva === false) : stockTotal(p) <= 0;
       // CRITICO: esta vista mostraba p.precio directo, sin chequear nunca si el producto tenia
       // una promo individual activa — el carrito SI aplicaba el descuento correctamente al
       // agregar (tndDetalleAgregarCarrito ya usa _getPromoTienda), pero el precio que se veia
