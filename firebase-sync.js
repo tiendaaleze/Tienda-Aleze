@@ -559,8 +559,12 @@ function fbGuardarProductos() {
       pasarelaPago: DB.config?.pasarelaPago,
       usuariosStaff: DB.config?.usuariosStaff || []
     };
+    // FASE 4/4 migracion de productos: 'productos' ya NO se escribe aca — cada producto vive
+    // en su propia coleccion (ver fbGuardarProducto/fbGuardarProductosLote mas arriba), la
+    // misma razon por la que ventas/clientes/fiados/stock ya no viven en un documento unico.
+    // setDocM (sin merge) limpia el campo 'productos' viejo del documento apenas esto corra
+    // una vez, sin necesitar un script de limpieza aparte.
     const payload = {
-      productos:  JSON.parse(JSON.stringify(DB.productos)),
       categorias: JSON.parse(JSON.stringify(DB.categorias)),
       config:     JSON.parse(JSON.stringify(_configPublico))
     };
@@ -587,7 +591,12 @@ function fbEscuchar() {
   // normal vuelve a tocar ese documento, así que este listener nunca se disparaba de verdad.
   // El listener de db_productos (catálogo) sigue siendo necesario y activo, abajo.
 
-  // Listener db_productos (catálogo — solo si otro dispositivo admin cambia inventario)
+  // Listener db_productos (categorías/config — solo si otro dispositivo admin cambia algo.
+  // CRITICO FASE 4/4 migracion de productos: productos ya NO se lee de aca — este documento
+  // guarda una copia vieja congelada de antes de la migracion (fbGuardarProductos() ya no la
+  // actualiza), sobrescribir DB.productos con eso borraria cualquier cambio real hecho
+  // despues via la coleccion propia. Ver fbEscucharProductosColeccion() mas abajo, que es la
+  // que ahora mantiene DB.productos al dia en tiempo real.)
   onSnapshotM(docM(dbModular, 'aleze', 'db_productos'), snapshot => { // [SDK modular]
     if (_fbEscribiendo) return;
     if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
@@ -595,7 +604,6 @@ function fbEscuchar() {
     if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
     const data = snapshot.data();
     if (!data) return;
-    if (data.productos)  DB.productos  = data.productos;
     if (data.categorias) DB.categorias = data.categorias;
     if (data.config)     DB.config     = { ...DB.config, ...data.config };
     _fbProdCacheTs = Date.now();
@@ -604,8 +612,6 @@ function fbEscuchar() {
     const activePage = document.querySelector('.page.active');
     const pageId = activePage ? activePage.id.replace('page-','') : '';
     try {
-  if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
-      if (pageId === 'inventario') { filterInventario(); }
       if (pageId === 'categorias') { renderCategorias(); }
     } catch(e){}
   }, err => { console.warn('Firestore db_productos listener error:', err.code); });
@@ -965,7 +971,7 @@ function fbEscucharCapitalMovimientos() {
 function _iniciarListenersOperativos() {
   fbEscucharStock();
   fbEscucharClientes();
-  setTimeout(() => { fbEscucharVentasHoy(); fbEscucharMovimientosHoy(); }, 120);
+  setTimeout(() => { fbEscucharVentasHoy(); fbEscucharMovimientosHoy(); fbEscucharProductosColeccion(); }, 120);
   setTimeout(() => { fbEscucharFiadosPendientes(); fbEscucharPromociones(); }, 240);
   setTimeout(() => { fbEscucharMermasMes(); fbEscucharCanjes(); }, 360);
   setTimeout(() => { fbEscucharGastos(); fbEscucharCapitalMovimientos(); }, 480);
