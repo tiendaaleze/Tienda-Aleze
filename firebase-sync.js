@@ -440,6 +440,101 @@ function fbGuardar() {
 
 // ── Guardar solo productos y categorias en documento separado ──
 // Se llama únicamente cuando el admin edita inventario/categorias
+// ── NUEVO: escritura individual de productos (colección 'productos/{id}') ──
+// CRITICO: fbGuardarProductos() de abajo reescribe el catalogo COMPLETO en un solo documento
+// cada vez que se llama, para cualquier cambio por chico que sea — si 2 sesiones distintas
+// escriben casi al mismo tiempo (ej. un cajero vendiendo mientras otro edita un producto), la
+// que llega despues al servidor pisa por completo los cambios de la que llego primero, sin
+// fusionar nada. Confirmado en la practica: un pack recien creado se perdio asi. Mismo
+// principio ya aplicado a ventas/clientes/fiados/mermas/movimientos/promociones/proveedores
+// (y a 'stock', que YA vive en su propia coleccion desde antes) — cada producto ahora se
+// puede escribir solo, sin tocar el resto del catalogo. Migracion gradual: esta funcion nueva
+// convive con fbGuardarProductos() (que se mantiene sin tocar) mientras cada llamador se pasa
+// uno por uno a usar esta — stock/stockPorSede se excluyen a proposito, esos siguen viviendo
+// solo en la coleccion 'stock', ya establecida y funcionando bien.
+let _fbProdSaveTimers = {}; // debounce por producto individual — {prodId: timerId}
+function fbGuardarProducto(prodId) {
+  if (!dbModular) return;
+  if (!fbAuth || !fbAuth.currentUser) return;
+  clearTimeout(_fbProdSaveTimers[prodId]);
+  _fbProdSaveTimers[prodId] = setTimeout(() => {
+    const prod = DB.productos.find(p => p.id === prodId);
+    if (!prod) { // producto eliminado localmente — reflejar el borrado en la coleccion nueva tambien
+      deleteDocM(docM(dbModular, 'productos', String(prodId))).catch(() => {});
+      return;
+    }
+    const { stock, stockPorSede, ...prodSinStock } = prod;
+    _sincIniciar('productos', String(prodId));
+    setDocM(docM(dbModular, 'productos', String(prodId)), JSON.parse(JSON.stringify(prodSinStock)))
+      .then(() => _sincTerminar('productos', String(prodId)))
+      .catch(e => _sincError('productos', String(prodId), e, 'el producto ' + (prod.nombre || prodId)));
+  }, 600);
+}
+// Version en lote — para cambios que tocan muchos productos a la vez (ej. importacion Excel,
+// sincronizar mermas de inventario mensual). Un batch atomico por cada 200 productos (limite
+// real de Firestore por batch), sin reescribir nada de los productos que NO estan en la lista.
+async function fbGuardarProductosLote(prodIds) {
+  if (!dbModular || !prodIds || !prodIds.length) return;
+  const ids = [...new Set(prodIds)];
+  const CHUNK = 200;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const trozo = ids.slice(i, i + CHUNK);
+    const batch = writeBatchM(dbModular);
+    trozo.forEach(id => {
+      const prod = DB.productos.find(p => p.id === id);
+      if (!prod) return;
+      const { stock, stockPorSede, ...prodSinStock } = prod;
+      batch.set(docM(dbModular, 'productos', String(id)), JSON.parse(JSON.stringify(prodSinStock)));
+    });
+    _sincIniciar('productos_lote', 'lote_' + i);
+    try {
+      await batch.commit();
+      _sincTerminar('productos_lote', 'lote_' + i);
+    } catch (e) {
+      _sincError('productos_lote', 'lote_' + i, e, `la actualización de ${trozo.length} producto(s) — se aplicaron ${i} de ${ids.length} antes del error`);
+      return;
+    }
+  }
+}
+// Listener de la coleccion nueva — mismo criterio ya usado para stock/ventas/clientes/etc,
+// fusion incremental via docChanges() en vez de reemplazar el array entero. Convive en
+// paralelo al listener viejo de db_productos mientras dura la migracion (ver mas abajo,
+// fbEscuchar() sigue escuchando db_productos.categorias/config, ya no productos).
+let _fbProductosColUnsub = null;
+function fbEscucharProductosColeccion() {
+  if (!dbModular) return;
+  if (_fbProductosColUnsub) { _fbProductosColUnsub(); _fbProductosColUnsub = null; }
+  _fbProductosColUnsub = onSnapshotM(collectionM(dbModular, 'productos'), snapshot => {
+    let huboCambioReal = false;
+    snapshot.docChanges().forEach(change => {
+      if (change.doc.metadata.hasPendingWrites) return;
+      const data = change.doc.data();
+      const idx = DB.productos.findIndex(p => String(p.id) === change.doc.id);
+      if (change.type === 'removed') {
+        if (idx !== -1) { DB.productos.splice(idx, 1); huboCambioReal = true; }
+      } else { // 'added' o 'modified' — preservar stock/stockPorSede local, que vive aparte
+        if (idx !== -1) {
+          const { stock: _s, stockPorSede: _sp } = DB.productos[idx];
+          DB.productos[idx] = { ...data, stock: _s, stockPorSede: _sp };
+        } else {
+          DB.productos.push(data); // producto nuevo — su stock llega por separado via fbEscucharStock()
+        }
+        huboCambioReal = true;
+      }
+    });
+    if (!huboCambioReal) return;
+    try { renderDashboard(); } catch(e){}
+    try { updateAlertCount(); } catch(e){}
+    const activePage = document.querySelector('.page.active');
+    const pageId = activePage ? activePage.id.replace('page-','') : '';
+    try {
+      if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
+      if (pageId === 'inventario') { filterInventario(); }
+      if (pageId === 'categorias') { renderCategorias(); }
+    } catch(e){}
+  }, err => { console.warn('Firestore listener error (productos):', err.code); });
+}
+
 function fbGuardarProductos() {
   if (!dbModular) return; // [SDK modular]
   if (!fbAuth || !fbAuth.currentUser) return;
