@@ -816,9 +816,6 @@ window.addEventListener('error', function(e) {
           <div style="font-size:.85rem;color:var(--gray-500);margin-bottom:.75rem">El sistema guarda un respaldo automático cada 30 minutos. Puedes restaurar manualmente si algo sale mal.</div>
           <div id="backup-lista" style="margin-bottom:.75rem;font-size:.82rem"></div>
          <button type="button" class="btn btn-outline btn-sm" onclick="verBackups()">🔍 Ver respaldos disponibles</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="migrarImagenesAStorage()">🖼️ Migrar imágenes a Storage</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="migrarResiduosSede2()">🧹 Corregir registros viejos de Sede II</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="migrarProductosAColeccion()">📦 Migrar productos a colección propia (Fase 2/4)</button>
         </div>
         <div class="card" style="margin-bottom:1rem">
           <div class="card-title">💳 Pasarela de pago (Izipay)</div>
@@ -1595,8 +1592,12 @@ window.addEventListener('error', function(e) {
       <button type="button" class="btn btn-outline btn-sm" style="margin-top:1.2rem" onclick="exportarValorizacionInventario()">💰 Exportar valorización</button>
     </div>
     <div style="font-size:.72rem;color:var(--gray-500);margin-bottom:1rem;line-height:1.5">
-      <strong>Guardar inventario</strong> (abajo) corrige el stock real a la cantidad contada, en cualquier dirección — no afecta caja ni registra mermas, úsalo para carga inicial o correcciones puntuales.
+      <strong>Guardar inventario</strong> corrige el stock real a la cantidad contada, en cualquier dirección — no afecta caja ni registra mermas, úsalo para carga inicial o correcciones puntuales.
       <strong>🔄 Sincronizar mermas</strong> es aparte — úsalo solo si querés registrar una pérdida real confirmada (rotura, vencido, robo) con motivo.
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--gray-100)">
+      <button type="button" class="btn btn-outline btn-sm" onclick="cerrarModal('modal-inv-mensual')">Cerrar</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="guardarInventarioMensual()">Guardar inventario</button>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Producto</th><th>Cat.</th><th>Stock sistema</th><th>Cantidad contada</th><th>Diferencia</th><th>Motivo faltante</th><th>✅ Verificado</th></tr></thead>
