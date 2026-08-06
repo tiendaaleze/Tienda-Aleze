@@ -484,17 +484,15 @@ async function navigate(page) {
       getDocM(docM(dbModular, 'aleze', 'db_productos')).then(snap => {
         if (snap.exists()) { // en modular, exists es un METODO, no una propiedad
           const pd = snap.data();
-          if (pd.productos)  DB.productos  = pd.productos;
           if (pd.categorias) DB.categorias = pd.categorias;
           if (pd.config)     DB.config = { ...DB.config, ...pd.config };
         }
-        // Fase Offline: stock más fresco, mismo criterio que en el login.
-        return getDocsM(collectionM(dbModular, 'stock')).then(stockSnap => { // [SDK modular]
-          stockSnap.forEach(doc => {
-            const prod = DB.productos.find(p => String(p.id) === doc.id);
-            const d = doc.data();
-            if (prod && d && d.stockPorSede) { prod.stockPorSede = d.stockPorSede; prod.stock = stockTotal(prod); }
-          });
+        // CRITICO: productos (con su stock ya unificado adentro, ver FASE 3/4) vive en su
+        // propia coleccion, no en pd.productos (el array viejo, ya no existe). Antes este
+        // fallback seguia el patron viejo por completo (pd.productos + lectura separada de
+        // la coleccion stock, ya muerta) — sobrescribia el stock correcto con datos vacios.
+        return getDocsM(collectionM(dbModular, 'productos')).then(prodsSnap => { // [SDK modular]
+          DB.productos = prodsSnap.docs.map(d => d.data());
         }).catch(() => {});
       }).then(() => {
         renderPos(); if (isMobile()) renderMobPos();
