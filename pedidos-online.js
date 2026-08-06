@@ -548,7 +548,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       });
       const _deltasStock = [];
       _deltasPorProducto.forEach(({prod, delta}) => {
-        batch.set(docM(dbModular, 'stock', String(prod.id)),
+        batch.set(docM(dbModular, 'productos', String(prod.id)),
           { [`stockPorSede.${_sedeDespacho}`]: incrementM(delta) }, { merge: true });
         _deltasStock.push({ prod, delta });
       });
