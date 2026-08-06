@@ -216,7 +216,7 @@ async function eliminarBoleta(idx) {
       }
     });
     _deltasPorProducto.forEach(({prod, delta}) => {
-      batch.set(docM(dbModular, 'stock', String(prod.id)),
+      batch.set(docM(dbModular, 'productos', String(prod.id)),
         { [`stockPorSede.${boleta.sedeId || sedeAdminEfectiva()}`]: incrementM(delta) }, { merge: true });
     });
   }
@@ -509,7 +509,7 @@ async function guardarBoleta() {
       else _deltasPorProducto.set(c.prod.id, { ...c });
     });
     _deltasPorProducto.forEach(({prod, delta}) => {
-      batch.set(docM(dbModular, 'stock', String(prod.id)),
+      batch.set(docM(dbModular, 'productos', String(prod.id)),
         { [`stockPorSede.${_sedeBoleta}`]: incrementM(delta) }, { merge: true });
     });
 
