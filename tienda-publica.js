@@ -258,18 +258,18 @@ function initTienda() {
     getDocM(docM(dbModular, 'aleze', 'db_productos')).then(snap => {
       if (snap.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snap.data();
-        if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
-      // Fase Offline: stock más fresco, mismo criterio que en el login.
-      return getDocsM(collectionM(dbModular, 'stock')).then(stockSnap => {
-        stockSnap.forEach(doc => {
-          const prod = DB.productos.find(p => String(p.id) === doc.id);
-          const d = doc.data();
-          if (prod && d && d.stockPorSede) { prod.stockPorSede = d.stockPorSede; prod.stock = stockTotal(prod); }
-        });
+      // CRITICO: productos (con su stock ya unificado adentro, ver FASE 3/4) vive en su
+      // propia coleccion, no en pd.productos (el array viejo, que ya no existe desde que
+      // fbGuardarProductos() se simplifico). Antes esta funcion seguia el patron viejo por
+      // completo (pd.productos + una lectura separada de la coleccion stock, que ya no se
+      // actualiza desde ningun lado) — sobrescribia el stock ya correcto, cargado bien desde
+      // otro lado, con datos vacios/desactualizados de esa coleccion muerta.
+      return getDocsM(collectionM(dbModular, 'productos')).then(prodsSnap => {
+        DB.productos = prodsSnap.docs.map(d => d.data());
       }).catch(() => {});
     }).then(() => {
       _initTiendaConDatos();
