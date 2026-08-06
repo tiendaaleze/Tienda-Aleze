@@ -513,6 +513,7 @@ function fbEscucharProductosColeccion() {
       if (change.type === 'removed') {
         if (idx !== -1) { DB.productos.splice(idx, 1); huboCambioReal = true; }
       } else { // 'added' o 'modified' — preservar stock/stockPorSede local, que vive aparte
+        if (change.doc.id === '1785907151107288') console.log('🔬[DIAG-LISTENER] recibido change.type:', change.type, '— idx en DB.productos:', idx, '— stock/stockPorSede local antes:', idx !== -1 ? JSON.stringify({stock: DB.productos[idx].stock, stockPorSede: DB.productos[idx].stockPorSede}) : 'N/A (no existia)');
         if (idx !== -1) {
           const { stock: _s, stockPorSede: _sp } = DB.productos[idx];
           DB.productos[idx] = { ...data, stock: _s, stockPorSede: _sp };
