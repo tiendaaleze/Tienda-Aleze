@@ -238,7 +238,7 @@ async function eliminarBoleta(idx) {
     prod.stockPorSede[_sedeBol] = Math.max(0, Math.round(((prod.stockPorSede[_sedeBol]||0)+delta)*1000)/1000);
     prod.stock = stockTotal(prod);
   });
-  if (_revertirStock) fbGuardarProductos();
+  // Nota: si _revertirStock, ese stock ya se escribio correctamente en el batch atomico de arriba.
   prov.boletas.splice(idx, 1);
   fbGuardar();
   renderProveedores();
@@ -309,7 +309,7 @@ function _boletaCrearProducto() {
     codigo: '7' + getId().toString().slice(-12), prov: editingBoletaProvId, imagen: ''
   };
   DB.productos.push(prod);
-  fbGuardarProductos();
+  fbGuardarProducto(prod.id);
   document.getElementById('bol-prod-nuevo').style.display = 'none';
   document.getElementById('bol-prod-buscar').value = '';
   _boletaAgregarProd(prod.id);
@@ -541,7 +541,7 @@ async function guardarBoleta() {
       prod.costo = costoNuevo;
       if (venc) prod.venc = venc;
     });
-    fbGuardarProductos();
+    fbGuardarProductosLote([..._deltasPorProducto.keys()]);
     prov.boletas.push(_nuevaBoleta);
     fbGuardar();
     cerrarAgregarBoleta();
