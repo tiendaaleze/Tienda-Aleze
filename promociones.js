@@ -140,7 +140,7 @@ if (editingMermaId) {
       p.stock = stockTotal(p);
     });
     old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede; old.costoUnitario = prod.costo;
-    fbGuardar(); fbGuardarProductos();
+    fbGuardar();
   } else {
     if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
     const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede, costoUnitario: prod.costo };
@@ -160,7 +160,7 @@ if (editingMermaId) {
     prod.stockPorSede[_sede] = Math.max(0, Math.round(((prod.stockPorSede[_sede]||0)-cant)*1000)/1000);
     prod.stock = stockTotal(prod);
     DB.mermas.push(nuevaMerma);
-    fbGuardar(); fbGuardarProductos();
+    fbGuardar();
   }
   cerrarModal('modal-merma');
   renderMermas();
@@ -216,7 +216,6 @@ async function _confirmarElimMerma() {
     if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
     prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+m.cant)*1000)/1000);
     prod.stock = stockTotal(prod);
-    fbGuardarProductos();
   }
   DB.mermas = DB.mermas.filter(x => x.id !== _mermaElimId);
   _mermaElimId = null;
@@ -484,7 +483,7 @@ function guardarPromocion() {
     // de "Salir" después de crear un combo/pack quedaba trabado en silencio, reintentando cada
     // 200ms para siempre (doLogout espera a que este flag baje antes de cerrar sesión).
     _fbEscribiendo = true;
-    fbGuardarProductos();
+    fbGuardarProducto(packProdId);
     setTimeout(() => { _fbEscribiendo = false; }, 300);
     document.getElementById('promo-qr-wrap').style.display = 'block';
     document.getElementById('promo-qr-label').textContent = nombre;
@@ -503,7 +502,7 @@ function guardarPromocion() {
       prodPack.costo = costoTotal;
       prodPack.imagen = imagen;
       prodPack.componentes = componentesPack;
-      fbGuardarProductos();
+      fbGuardarProducto(packProdId);
     } else {
       // CRITICO: red de seguridad — el producto combo original se perdio (nunca llego a
       // escribirse en el servidor, o se perdio en una sobrescritura concurrente del documento
@@ -525,7 +524,7 @@ function guardarPromocion() {
         esCombo: true, componentes: componentesPack, imagen, promoActiva: true
       });
       _fbEscribiendo = true;
-      fbGuardarProductos();
+      fbGuardarProducto(packProdId);
       setTimeout(() => { _fbEscribiendo = false; }, 300);
     }
   }
@@ -564,7 +563,7 @@ function togglePromo(id) {
   p.activa = !p.activa;
   if (p.packProdId) {
     const prodPack = DB.productos.find(x => x.id === p.packProdId);
-    if (prodPack) { prodPack.promoActiva = p.activa; fbGuardarProductos(); }
+    if (prodPack) { prodPack.promoActiva = p.activa; fbGuardarProducto(p.packProdId); }
   }
   if (dbModular) setDocM(docM(dbModular, 'promociones', String(id)), { activa: p.activa }, { merge: true }).catch(e => console.warn('No se pudo actualizar promociones/'+id, e)); // [SDK modular]
   renderPromociones();
@@ -576,7 +575,7 @@ function eliminarPromo(id) {
   const p = DB.promociones.find(x => x.id === id);
   if (p && p.packProdId) {
     DB.productos = DB.productos.filter(x => x.id !== p.packProdId);
-    fbGuardarProductos();
+    fbGuardarProducto(p.packProdId);
     // Limpia el documento huérfano en stock/{id} — el pack no trackea stock real (se arma
     // de sus componentes), pero el doc igual quedaría abandonado si no se borra explícito.
     if (dbModular) deleteDocM(docM(dbModular, 'stock', String(p.packProdId))).catch(()=>{}); // [SDK modular]
