@@ -259,7 +259,8 @@ async function _completarSesion(name, role) {
         getDocsM(collectionM(dbModular, 'proveedores')),                                             // 11
         getDocsM(collectionM(dbModular, 'boletas')),                                                 // 12
         getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia))),  // 13
-        getDocsM(collectionM(dbModular, 'capital_movimientos')) // capital: todo, nunca deberia faltar — bajo volumen (aportes/pagos no son frecuentes), mismo criterio que fiados/clientes/mermas — 14
+        getDocsM(collectionM(dbModular, 'capital_movimientos')), // capital: todo, nunca deberia faltar — bajo volumen (aportes/pagos no son frecuentes), mismo criterio que fiados/clientes/mermas — 14
+        getDocsM(collectionM(dbModular, 'productos')) // FASE 4/4 migracion de productos: coleccion propia, un documento por producto — 15
       ]);
       _tlogC('Promise.allSettled de 15 lecturas TERMINO');
       // CRITICO: antes, si una de estas 15 lecturas fallaba, solo se veia un aviso generico
@@ -267,7 +268,7 @@ async function _completarSesion(name, role) {
       // caida? App Check bloqueado?) — imposible diagnosticar con certeza cuando pasaba. Ahora
       // se registra el codigo y mensaje real de CADA fallo, identificado por nombre.
       const _nombresLectura = ['db_productos','db_ext','config','caja','stock','ventas','fiados',
-        'clientes','mermas','movimientos','promociones','proveedores','boletas','gastos','capital_movimientos'];
+        'clientes','mermas','movimientos','promociones','proveedores','boletas','gastos','capital_movimientos','productos'];
       const _ok = i => {
         if (_resultados[i].status === 'fulfilled') return _resultados[i].value;
         const _razon = _resultados[i].reason;
@@ -277,7 +278,7 @@ async function _completarSesion(name, role) {
       const snapProd = _ok(0), snapExt = _ok(1), snapConfig = _ok(2), cajaSnap = _ok(3), stockSnap = _ok(4),
             ventasSnap = _ok(5), fiadosSnap = _ok(6), clientesSnap = _ok(7), mermasSnap = _ok(8),
             movimientosSnap = _ok(9), promocionesSnap = _ok(10), proveedoresSnap = _ok(11),
-            boletasSnap = _ok(12), gastosSnap = _ok(13), capitalMovSnap = _ok(14);
+            boletasSnap = _ok(12), gastosSnap = _ok(13), capitalMovSnap = _ok(14), productosColSnap = _ok(15);
 
       // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
       if (snapConfig && snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
@@ -290,11 +291,16 @@ async function _completarSesion(name, role) {
 
       if (snapProd && snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snapProd.data();
-        if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // FASE 4/4 migracion de productos: productos ya no vive en db_productos (pd.productos
+      // seria la copia vieja congelada de antes de la migracion) — vive en su propia
+      // coleccion, misma fuente de verdad que ya usa el listener en tiempo real.
+      if (productosColSnap) {
+        DB.productos = productosColSnap.docs.map(d => d.data());
+      } else { console.warn('[Offline] No se pudo reconciliar el catálogo de productos fresco'); }
       // Fase Offline: trae el stock más fresco (colección aparte, puede tener cambios más recientes
       // que el snapshot de arriba si otra sede vendió/ajustó mientras este dispositivo no estaba conectado).
       if (stockSnap) {
