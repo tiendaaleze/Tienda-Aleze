@@ -774,11 +774,19 @@ document.addEventListener('DOMContentLoaded', async function() {
 
       if (snapProd.exists()) { // en modular, exists es un METODO, no una propiedad
         const pd = snapProd.data();
-        if (pd.productos)  DB.productos  = pd.productos;
         if (pd.categorias) DB.categorias = pd.categorias;
         if (pd.config)     DB.config     = { ...DB.config, ...pd.config };
         _fbProdCacheTs = Date.now();
       }
+      // CRITICO FASE 4/4 migracion de productos: productos ya no vive en db_productos (ver
+      // firebase-sync.js, fbGuardarProductos() simplificada) — vive en su propia coleccion,
+      // un documento por producto, mismo criterio que ventas/clientes/fiados/stock. Sin esto,
+      // DB.productos se hubiera quedado con la ultima copia congelada de pd.productos, de
+      // antes de la migracion, ignorando cualquier cambio real hecho despues.
+      try {
+        const prodsSnap = await getDocsM(collectionM(dbModular, 'productos'));
+        DB.productos = prodsSnap.docs.map(d => d.data());
+      } catch(e) { console.warn('No se pudo cargar la colección productos:', e); }
       // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharPromociones()
       // (que solo arranca como parte de los listeners operativos post-login, ver
       // _iniciarListenersOperativos en firebase-sync.js) nunca se llamaba para un visitante
