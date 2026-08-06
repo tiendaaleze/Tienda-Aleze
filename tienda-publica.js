@@ -428,6 +428,12 @@ function _renderTienda() {
 }
 .tnd-prod-card:hover:not(.agotado) { border-color:#7C3AED;transform:translateY(-2px); }
 .tnd-prod-card.agotado { opacity:.6;cursor:not-allowed; }
+/* Tarjetas con oferta activa — antes solo la etiqueta chica de la esquina distinguia un
+   producto en oferta, facil de pasar por alto al escanear rapido una grilla completa. Borde +
+   fondo sutil hacen que la tarjeta entera destaque a la distancia, sin ser tan agresivo como
+   para verse como un error o una alerta. */
+.tnd-prod-card.en-oferta { border-color:#FCA5A5;background:#FFF5F5; }
+.tnd-prod-card.en-oferta:hover:not(.agotado) { border-color:#7C3AED; }
 /* La imagen ocupa la mayor parte de la tarjeta — formato 4:5 (mas alta que ancha, no
    cuadrada) en vez de 1:1, para que el texto de abajo (nombre + precio) quede genuinamente
    en el 30% o menos del total, no la mitad. Fondo gris muy suave para que fotos con fondo
@@ -671,7 +677,7 @@ function _tndRenderHome() {
     const _precioMostrar = _pctDesc > 0 ? _promoRail.precioPromo : p.precio;
     const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
       : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : '');
-    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
+    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+p.precio).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
 
   const hoy = new Date().toISOString().slice(0,10);
@@ -836,7 +842,7 @@ function tndFiltrar() {
     // mantienen siempre — son informacion de urgencia real, nunca redundante con una promo.
     const _badgeVisible = (_hayPromoActiva && badge.includes('badge-green')) ? '' : badge;
     const accionClic = agotado ? '' : (p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`);
- return `<div class="tnd-prod-card ${agotado?'agotado':''}" onclick="${accionClic}" style="position:relative">
+ return `<div class="tnd-prod-card ${agotado?'agotado':''} ${_hayPromoActiva?'en-oferta':''}" onclick="${accionClic}" style="position:relative">
       <div class="tnd-badges-top">
         <div class="tnd-badges-left">
           ${p.tieneDetalle ? `<span class="tnd-badge-detalle">🔍 Detalle</span>` : ''}
