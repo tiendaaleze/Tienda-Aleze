@@ -823,6 +823,14 @@ document.addEventListener('DOMContentLoaded', async function() {
           }
         });
       } catch(e) { console.warn('[Offline] No se pudo reconciliar stock fresco:', e); }
+      // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharStock() (que
+      // solo arranca como parte de los listeners operativos post-login) nunca se activaba
+      // para un visitante real — el stock que veia quedaba congelado en la lectura unica de
+      // arriba, sin ningun cambio en vivo hasta salir por completo de la app y volver a
+      // entrar. Mismo criterio ya aplicado a promociones.
+      if (window.__rutaTienda) {
+        try { fbEscucharStock(); } catch(e) { console.warn('[Tienda pública] No se pudo activar el stock en tiempo real:', e); }
+      }
       aplicarNombreNegocio();
 
       _fbLastWriteTs = Date.now();
