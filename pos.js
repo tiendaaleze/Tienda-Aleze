@@ -31,24 +31,23 @@ function renderPosGrid(search = '') {
   if (posFilterCat) prods = prods.filter(p => p.cat == posFilterCat);
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   document.getElementById('pos-grid').innerHTML = prods.map(p => {
-    const promoTag = p.esCombo
-      ? `<span class="promo-tag" style="background:var(--accent)">OFERTA</span>`
-      : (() => {
-          const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
-          return promo ? '<span class="promo-tag">PROMO</span>' : '';
-        })();
-    const precioMostrar = p.esCombo ? p.precio : (() => {
-      const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
-      return promo ? promo.precioPromo : p.precio;
-    })();
+    const promoDelProducto = p.esCombo
+      ? promoActivas.find(pr => pr.packProdId === p.id)
+      : promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
+    const precioMostrar = p.esCombo ? p.precio : (promoDelProducto ? promoDelProducto.precioPromo : p.precio);
+    const precioOrigMostrar = promoDelProducto && promoDelProducto.precioOrig > precioMostrar ? promoDelProducto.precioOrig : null;
+    const pctDesc = precioOrigMostrar ? Math.round((1 - precioMostrar / precioOrigMostrar) * 100) : 0;
+    const promoTag = promoDelProducto
+      ? `<span class="promo-tag">${pctDesc > 0 ? `-${pctDesc}%` : (p.esCombo ? 'OFERTA' : 'PROMO')}</span>`
+      : '';
     const iconHtml = p.imagen
       ? `<div class="p-img-wrap"><img src="${p.imagen}" alt="${p.nombre}"></div>`
       : `<div class="p-img-wrap"><div class="p-icon">${getCatIcono(p.cat)}</div></div>`;
-    return `<div class="product-card" onclick="addToCart(${p.id})">
+    return `<div class="product-card ${promoDelProducto?'en-oferta':''}" onclick="addToCart(${p.id})">
       ${iconHtml}
       <div class="p-info">
         <div class="p-name">${p.nombre}</div>
-        <div class="p-price">${sol(precioMostrar)} ${promoTag}</div>
+        <div class="p-price">${precioOrigMostrar ? `<span class="p-price-orig">${sol(precioOrigMostrar)}</span> ` : ''}${sol(precioMostrar)} ${promoTag}</div>
         <div class="p-stock">Stock: ${stockEnSede(p)} ${p.unidad}</div>
       </div>
     </div>`;
@@ -999,27 +998,26 @@ function renderMobPosGrid(prods) {
   if (!grid) return;
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   grid.innerHTML = prods.map(p => {
-    const tag = p.esCombo
-      ? `<span class="promo-tag" style="position:absolute;top:4px;right:4px;font-size:.6rem;background:var(--accent)">OFERTA</span>`
-      : (() => {
-          const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
-          return promo ? `<span class="promo-tag" style="position:absolute;top:4px;right:4px;font-size:.6rem">PROMO</span>` : '';
-        })();
-    const precio = p.esCombo ? p.precio : (() => {
-      const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
-      return promo ? promo.precioPromo : p.precio;
-    })();
+    const promoDelProducto = p.esCombo
+      ? promoActivas.find(pr => pr.packProdId === p.id)
+      : promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
+    const precio = p.esCombo ? p.precio : (promoDelProducto ? promoDelProducto.precioPromo : p.precio);
+    const precioOrigM = promoDelProducto && promoDelProducto.precioOrig > precio ? promoDelProducto.precioOrig : null;
+    const pctDescM = precioOrigM ? Math.round((1 - precio / precioOrigM) * 100) : 0;
+    const tag = promoDelProducto
+      ? `<span class="promo-tag" style="position:absolute;top:4px;right:4px;font-size:.68rem">${pctDescM > 0 ? `-${pctDescM}%` : (p.esCombo ? 'OFERTA' : 'PROMO')}</span>`
+      : '';
     const stockBajo = stockEnSede(p) <= p.stockMin;
     const iconHtml = p.imagen
       ? `<div class="p-img-wrap"><img src="${p.imagen}" alt="${p.nombre}"></div>`
       : `<div class="p-img-wrap"><div class="p-icon">${getCatIcono(p.cat)}</div></div>`;
     const _stockSede = stockEnSede(p);
-    return `<div class="product-card${_stockSede === 0 && !p.esCombo ? ' opacity-50' : ''}" onclick="mobAddToCart(${p.id})" style="${_stockSede===0 && !p.esCombo?'opacity:.45;pointer-events:none':''}">
+    return `<div class="product-card${_stockSede === 0 && !p.esCombo ? ' opacity-50' : ''}${promoDelProducto?' en-oferta':''}" onclick="mobAddToCart(${p.id})" style="${_stockSede===0 && !p.esCombo?'opacity:.45;pointer-events:none':''}">
       ${tag}
       ${iconHtml}
       <div class="p-info">
         <div class="p-name">${p.nombre}</div>
-        <div class="p-price" style="${stockBajo?'color:var(--danger)':''}">S/ ${precio.toFixed(2)}</div>
+        <div class="p-price" style="${stockBajo?'color:var(--danger)':''}">${precioOrigM ? `<span class="p-price-orig">S/ ${precioOrigM.toFixed(2)}</span> ` : ''}S/ ${precio.toFixed(2)}</div>
         <div class="p-stock" style="${stockBajo?'color:var(--danger);font-weight:700':''}">Stock: ${_stockSede} ${p.unidad}</div>
       </div>
     </div>`;
