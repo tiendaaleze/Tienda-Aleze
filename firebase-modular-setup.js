@@ -1,7 +1,7 @@
   import { initializeApp as initializeAppModular } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import {
     getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-    doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc,
+    doc, setDoc, getDoc, getDocFromServer, getDocs, deleteDoc, updateDoc, addDoc,
     collection, query, where, orderBy, limit,
     writeBatch, runTransaction, increment, serverTimestamp, deleteField,
     onSnapshot, Timestamp
@@ -20,7 +20,7 @@
   // (si se llamara acá arriba, todavía no existiría ninguna app que obtener).
   window.__fbModular = {
     initializeAppModular,
-    firestore: { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, runTransaction, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
+    firestore: { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, getDocFromServer, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, runTransaction, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
     auth: { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously, setPersistence, browserLocalPersistence },
     storage: { getStorage, ref, uploadBytes, getDownloadURL, deleteObject },
     appCheck: { initializeAppCheck, ReCaptchaV3Provider, getAppCheckToken },
