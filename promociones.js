@@ -64,7 +64,7 @@ function renderMermas() {
 function abrirModalMerma() {
   editingMermaId = null;
   const sel = document.getElementById('merma-prod');
-  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p, sedeAdminEfectiva())} ${p.unidad})</option>`).join('');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
   document.getElementById('merma-cant').value = '';
   document.getElementById('merma-obs').value = '';
   abrirModal('modal-merma');
@@ -75,7 +75,7 @@ function editarMerma(id) {
   const m = DB.mermas.find(x => x.id === id);
   editingMermaId = id;
   const sel = document.getElementById('merma-prod');
-  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p, sedeAdminEfectiva())} ${p.unidad})</option>`).join('');
+  sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
   sel.value = m.prodId;
   document.getElementById('merma-cant').value = m.cant;
   document.getElementById('merma-motivo-sel').value = m.motivo;
@@ -106,7 +106,7 @@ if (editingMermaId) {
     const oldProd = DB.productos.find(p => p.id === old.prodId);
     const oldCant = old.cant;
     // Verificar disponibilidad simulando la restauracion, sin tocar nada todavia
-    const stockSimulado = stockEnSede(prod, _sede) + (oldProd && oldProd.id === prod.id ? oldCant : 0);
+    const stockSimulado = stockEnSede(prod) + (oldProd && oldProd.id === prod.id ? oldCant : 0);
     if (cant > stockSimulado) { alert('La cantidad supera el stock disponible en esa sede'); return; }
 
     const _deltasPorProducto = new Map();
@@ -119,7 +119,7 @@ if (editingMermaId) {
     const _deltasStock = [];
     _deltasPorProducto.forEach(({prod: p, delta}) => {
       batch.set(docM(dbModular, 'productos', String(p.id)),
-        { [`stockPorSede.${_sede}`]: incrementM(delta) }, { merge: true });
+        { stock: incrementM(delta) }, { merge: true });
       _deltasStock.push({ prod: p, delta });
     });
 
@@ -135,17 +135,15 @@ if (editingMermaId) {
       return;
     }
     _deltasStock.forEach(({prod: p, delta}) => {
-      if (!p.stockPorSede) p.stockPorSede = { principal: p.stock||0 };
-      p.stockPorSede[_sede] = Math.max(0, Math.round(((p.stockPorSede[_sede]||0)+delta)*1000)/1000);
-      p.stock = stockTotal(p);
+      p.stock = Math.max(0, Math.round(((p.stock||0)+delta)*1000)/1000);
     });
     old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede; old.costoUnitario = prod.costo;
     fbGuardar();
   } else {
-    if (cant > stockEnSede(prod, _sede)) { alert('La cantidad supera el stock disponible en esa sede'); return; }
+    if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible'); return; }
     const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede, costoUnitario: prod.costo };
     batch.set(docM(dbModular, 'productos', String(prod.id)),
-      { [`stockPorSede.${_sede}`]: incrementM(-cant) }, { merge: true });
+      { stock: incrementM(-cant) }, { merge: true });
     batch.set(docM(dbModular, 'mermas', String(nuevaMerma.id)), nuevaMerma);
 
     _sincIniciar('merma_lote', nuevaMerma.id);
@@ -156,9 +154,7 @@ if (editingMermaId) {
       _sincError('merma_lote', nuevaMerma.id, e, 'la merma — no se aplicó nada');
       return;
     }
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[_sede] = Math.max(0, Math.round(((prod.stockPorSede[_sede]||0)-cant)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)-cant)*1000)/1000);
     DB.mermas.push(nuevaMerma);
     fbGuardar();
   }
@@ -198,7 +194,7 @@ async function _confirmarElimMerma() {
   const batch = writeBatchM(dbModular);
   if (_restaurar && prod) {
     batch.set(docM(dbModular, 'productos', String(prod.id)),
-      { [`stockPorSede.${m.sedeId || sedeAdminEfectiva()}`]: incrementM(m.cant) }, { merge: true });
+      { stock: incrementM(m.cant) }, { merge: true });
   }
   batch.delete(docM(dbModular, 'mermas', String(_mermaElimId)));
 
@@ -212,10 +208,7 @@ async function _confirmarElimMerma() {
   }
 
   if (_restaurar && prod) {
-    const sede = m.sedeId || sedeAdminEfectiva();
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+m.cant)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)+m.cant)*1000)/1000);
   }
   DB.mermas = DB.mermas.filter(x => x.id !== _mermaElimId);
   _mermaElimId = null;
