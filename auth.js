@@ -302,8 +302,8 @@ async function _completarSesion(name, role) {
         DB.productos = productosColSnap.docs.map(d => d.data());
       } else { console.warn('[Offline] No se pudo reconciliar el catálogo de productos fresco'); }
       // FASE 3/4 unificacion de stock dentro de producto: ya no hace falta este segundo paso
-      // de "traer stock aparte y mezclarlo a mano" — cada producto ya trae su propio
-      // stockPorSede desde productosColSnap de arriba, un solo documento, un solo paso. Esto
+      // de "traer stock aparte y mezclarlo a mano" — cada producto ya trae su propio stock
+      // desde productosColSnap de arriba, un solo documento, un solo paso. Esto
       // era justo la ventana donde un login en paralelo con otra carga podia pisar el trabajo
       // del otro, dejando el catalogo entero sin stock — confirmado con evidencia real en
       // produccion. NOTA: stockSnap (indice 4, arriba) ya no se usa para nada — se deja sin
