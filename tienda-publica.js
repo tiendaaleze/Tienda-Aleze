@@ -231,6 +231,13 @@ function initTienda() {
     document.body.appendChild(tiendaEl);
   }
   tiendaEl.style.display = 'block';
+  // Mostrar el estado de carga DE INMEDIATO — antes, la pantalla quedaba en blanco
+  // mientras la lectura de Firestore estaba en curso (el mensaje "Cargando catálogo..."
+  // solo aparecía DESPUÉS de que la lectura terminaba y seguía sin haber productos).
+  tiendaEl.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:1rem;color:#6B7280;font-size:1rem;background:#FAF8FF">' +
+    '<div style="width:40px;height:40px;border:3px solid #EDE9FE;border-top-color:#7C3AED;border-radius:50%;animation:tndSpin .8s linear infinite"></div>' +
+    '<div>Cargando catálogo...</div>' +
+    '</div><style>@keyframes tndSpin{to{transform:rotate(360deg)}}</style>';
 
   // Helper interno: inicializar datos persistidos y renderizar
   function _initTiendaConDatos() {
