@@ -39,7 +39,7 @@ let messagingModular = null;
 // Alias cortos para las funciones modulares de Firestore — se asignan dentro de
 // iniciarFirebase() una vez que window.__fbModular esta confirmado disponible. Evita repetir
 // "window.__fbModular.firestore.X" en cada uno de los puntos de contacto que se van migrando.
-let docM, setDocM, getDocM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
+let docM, setDocM, getDocM, getDocDelServidorM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
     queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
     serverTimestampM, deleteFieldM, onSnapshotM;
 
@@ -322,7 +322,7 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           // solo el riesgo del cuelgue. Se elimina la llamada por completo — authModular
           // sigue disponible para cuando se migre el login real al SDK modular.
           storageModular = window.__fbModular.storage.getStorage(appModular);
-          ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocs: getDocsM, deleteDoc: deleteDocM,
+          ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocFromServer: getDocDelServidorM, getDocs: getDocsM, deleteDoc: deleteDocM,
              updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
              where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
              runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
