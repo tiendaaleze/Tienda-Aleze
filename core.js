@@ -374,7 +374,7 @@ Object.defineProperty(DB, 'caja', {
   set(v) {
     // Reasignación completa (abrir/cerrar caja) — la escritura a Firestore ya la hizo, de
     // forma explícita, la función que llama (dentro de su propio lote o transacción). Esto
-    // solo actualiza la copia local, igual que "prod.stockPorSede[sede] = X" en inventario.
+    // solo actualiza la copia local, igual que "prod.stock = X" en inventario.
     DB._cajas[sedeAdminEfectiva()] = v;
   },
   configurable: true
@@ -800,9 +800,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
       } catch(e) {}
       // FASE 3/4 unificacion de stock dentro de producto: ya no hace falta este segundo paso
-      // de "traer stock aparte y mezclarlo a mano" — cada producto ya trae su propio
-      // stockPorSede desde la lectura de la coleccion 'productos' de mas arriba, un solo
-      // documento, un solo paso. Esto era justo la ventana donde un login/recarga en paralelo
+      // de "traer stock aparte y mezclarlo a mano" — cada producto ya trae su propio stock
+      // desde la lectura de la coleccion 'productos' de mas arriba, un solo documento, un
+      // solo paso. Esto era justo la ventana donde un login/recarga en paralelo
       // podia pisar el trabajo del otro, dejando el catalogo entero sin stock — confirmado con
       // evidencia real en produccion.
       // CRITICO: tienda publica nunca hace login de staff, asi que fbEscucharProductosColeccion()
