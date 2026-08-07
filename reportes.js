@@ -882,7 +882,7 @@ async function guardarActualizarVenta() {
         const cantARestituir = Math.max(0, cantOrig - yaDevuelto);
         if (cantARestituir > 0) {
           batch.set(docM(dbModular, 'productos', String(prod.id)),
-            { [`stockPorSede.${_sedeDev}`]: incrementM(cantARestituir) }, { merge: true });
+            { stock: incrementM(cantARestituir) }, { merge: true });
           _deltasStock.push({ prod, delta: cantARestituir });
         }
       }
@@ -921,9 +921,7 @@ async function guardarActualizarVenta() {
     }
 
     _deltasStock.forEach(({prod, delta}) => {
-      if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-      prod.stockPorSede[_sedeDev] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDev]||0)+delta)*1000)/1000);
-      prod.stock = stockTotal(prod);
+      prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
     });
     // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
     DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
@@ -991,7 +989,7 @@ async function guardarActualizarVenta() {
     const prod = DB.productos.find(p => p.id === dev.prodId);
     if (prod) {
       batchP.set(docM(dbModular, 'productos', String(prod.id)),
-        { [`stockPorSede.${_sedeDevP}`]: incrementM(dev.cantDevuelta) }, { merge: true });
+        { stock: incrementM(dev.cantDevuelta) }, { merge: true });
       _deltasStockP.push({ prod, delta: dev.cantDevuelta });
     }
   });
@@ -1037,9 +1035,7 @@ async function guardarActualizarVenta() {
   }
 
   _deltasStockP.forEach(({prod, delta}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[_sedeDevP] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDevP]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
   });
   (vDB.items||[]).forEach((item, i) => {
     const dev = itemsDevueltos.find(d => d.prodId === item.prodId);
@@ -1485,7 +1481,7 @@ function aplicarCambiosExcel() {
       c.diffs.forEach(d => {
         if (d.campo === 'stock') {
           const delta = Math.round((d.nuevo - d.viejo) * 1000) / 1000;
-          if (delta !== 0) ajustarStockSede(prod, delta, 'principal');
+          if (delta !== 0) ajustarStockSede(prod, delta);
         } else {
           prod[d.campo] = d.nuevo;
         }
@@ -1506,7 +1502,7 @@ function aplicarCambiosExcel() {
         unidad:   f['Unidad'] || 'und',
         costo:    parseFloat(f['Precio_Costo']) || 0,
         precio:   parseFloat(f['Precio_Venta']) || 0,
-        stockPorSede: {}, stock: 0,
+        stock: 0,
         stockMin: parseFloat(f['Stock_Minimo']) || 5,
         venc:     f['Vencimiento'] ? excelSerialToDate(f['Vencimiento'].toString().trim()) : '',
         codigo:   codigoFinal,
@@ -1520,7 +1516,7 @@ function aplicarCambiosExcel() {
         }
       }
       DB.productos.push(nuevoProd);
-      if (stockInicial > 0) ajustarStockSede(nuevoProd, stockInicial, 'principal');
+      if (stockInicial > 0) ajustarStockSede(nuevoProd, stockInicial);
       if (autoGenerado) prodsSinCodigo.push({ nombre: nuevoProd.nombre, codigo: codigoFinal });
       _idsAfectados.push(nuevoProd.id);
       newCount++;
