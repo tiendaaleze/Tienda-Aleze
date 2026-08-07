@@ -480,7 +480,7 @@ function confirmarEntregaPedido(id) {
     // Revisar stock suficiente antes de descontar
     const sinStock = (p.items||[]).filter(i => i.cant > 0 && !i.eliminado).filter(item => {
       const prod = DB.productos.find(x => x.id === item.prodId);
-      return prod && stockEnSede(prod, _sedeDespacho) < item.cant;
+      return prod && stockEnSede(prod) < item.cant;
     });
 
     let confirmMsg = `¿Confirmar entrega del pedido de ${p.clienteNombre||'cliente'}?\n\nProductos a descontar del inventario:\n`;
@@ -492,7 +492,7 @@ function confirmarEntregaPedido(id) {
       confirmMsg += `\n\n⚠️ ALERTA: Los siguientes productos tienen stock insuficiente:\n`;
       sinStock.forEach(item => {
         const prod = DB.productos.find(x => x.id === item.prodId);
-        confirmMsg += `• ${item.nombre}: necesitas ${item.cant}, disponible ${prod?stockEnSede(prod,_sedeDespacho):0}\n`;
+        confirmMsg += `• ${item.nombre}: necesitas ${item.cant}, disponible ${prod?stockEnSede(prod):0}\n`;
       });
       confirmMsg += '\n¿Continuar de todas formas?';
     }
@@ -549,7 +549,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       const _deltasStock = [];
       _deltasPorProducto.forEach(({prod, delta}) => {
         batch.set(docM(dbModular, 'productos', String(prod.id)),
-          { [`stockPorSede.${_sedeDespacho}`]: incrementM(delta) }, { merge: true });
+          { stock: incrementM(delta) }, { merge: true });
         _deltasStock.push({ prod, delta });
       });
 
@@ -648,9 +648,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
 
       // El lote ya fue aceptado — recien ahora se refleja todo en memoria local.
       _deltasStock.forEach(({prod, delta}) => {
-        if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-        prod.stockPorSede[_sedeDespacho] = Math.max(0, Math.round(((prod.stockPorSede[_sedeDespacho]||0)+delta)*1000)/1000);
-        prod.stock = stockTotal(prod);
+        prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
       });
       if (_esClienteNuevo && cli) DB.clientes.push(cli);
       if (!DB.historialVentas) DB.historialVentas = [];
