@@ -37,8 +37,8 @@ document.getElementById('dash-ventas').textContent = sol(totalHoy + fiadosCobrad
   }, 0);
   document.getElementById('dash-rent').textContent = sol(totalHoy + fiadosCobradosHoy - costoHoy - costoFiadosHoy - gastosHoy - mermasHoy);
 
-  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p, _sedeDash) <= p.stockMin).length;
-  document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0 && stockEnSede(p, _sedeDash) > 0).length;
+  document.getElementById('dash-stock-bajo').textContent = DB.productos.filter(p => stockEnSede(p) <= p.stockMin).length;
+  document.getElementById('dash-vencimientos').textContent = DB.productos.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0 && stockEnSede(p) > 0).length;
 
   // Deuda en fiados — por sede, mismo criterio que el resto del dashboard. Capital se retiró
   // de acá (sigue disponible en su propia pantalla) — es algo de largo plazo, no algo del día.
