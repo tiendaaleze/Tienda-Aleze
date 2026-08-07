@@ -288,25 +288,28 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           // pestañas del sistema a la vez en la misma compu, la segunda cae al respaldo sin
           // persistencia de mas abajo (no rompe nada, solo pierde cache offline en esa pestaña
           // extra puntual).
-          try {
-            dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
-              localCache: window.__fbModular.firestore.persistentLocalCache({}),
-              // Redes moviles con proxy/firewall restrictivo a veces bloquean o retrasan
-              // WebSockets — sin esto, Firestore espera un timeout completo antes de caer a
-              // HTTP normal. Con esto, detecta el bloqueo de entrada y cambia de inmediato,
-              // sin hacer esperar al usuario por ese timeout.
-              experimentalAutoDetectLongPolling: true
-            });
-            _tlog('dbModular = initializeFirestore() CON persistencia offline, listo');
-          } catch (persistErr) {
-            // Si la persistencia no se puede activar (ej. navegador sin IndexedDB, modo
-            // incognito en algunos navegadores, u otra pestaña ya tiene la persistencia
-            // tomada), se sigue igual con la conexión simple — sin offline en esta pestaña
-            // puntual, pero sin romper el resto del sistema.
-            console.warn('[SDK modular] No se pudo activar persistencia offline, sigue sin ella:', persistErr.message);
-            _tlog('dbModular = getFirestore() SIN persistencia (fallo la de arriba): ' + persistErr.message);
-            dbModular = window.__fbModular.firestore.getFirestore(appModular);
-          }
+          // CRITICO: persistencia offline en disco DESACTIVADA por completo. Confirmado con
+          // evidencia real y repetida (3 rondas de intentos de arreglo distintos, mismo
+          // patron de fondo cada vez): onSnapshot() con persistencia activa SIEMPRE entrega
+          // primero lo que tiene en cache local antes de sincronizar con el servidor — esto
+          // es el diseño normal de Firestore, no un bug — pero sigue encontrando formas de
+          // filtrarse en calculos criticos de stock (inventario mensual, entre otros),
+          // causando corrupcion silenciosa de datos financieros reales que erosiona la
+          // confianza del vendedor. Firestore sigue encolando escrituras en memoria mientras
+          // la app este abierta AUNQUE no haya persistencia en disco — la app sigue pudiendo
+          // vender durante un corte breve de red (el caso real y comun, ej. wifi que titila),
+          // solo se pierde la proteccion contra el caso mucho mas raro de cerrar la app por
+          // completo durante ese corte especifico. Ese costo raro es muchisimo menor que el
+          // de la corrupcion silenciosa de stock que veniamos sufriendo repetidamente.
+          dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
+            // Redes moviles con proxy/firewall restrictivo a veces bloquean o retrasan
+            // WebSockets — sin esto, Firestore espera un timeout completo antes de caer a
+            // HTTP normal. Con esto, detecta el bloqueo de entrada y cambia de inmediato,
+            // sin hacer esperar al usuario por ese timeout. Independiente de localCache —
+            // se mantiene aunque la persistencia en disco este desactivada.
+            experimentalAutoDetectLongPolling: true
+          });
+          _tlog('dbModular = getFirestore() SIN persistencia offline (desactivada a proposito)');
           authModular = window.__fbModular.auth.getAuth(appModular);
           _tlog('authModular = getAuth() listo');
           // CRITICO: encontrada la causa real de la demora intermitente de 20-30+ segundos,
