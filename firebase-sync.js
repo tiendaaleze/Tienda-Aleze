@@ -578,12 +578,20 @@ function fbGuardarProductos() {
     // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
     // exposición que cualquier login por correo público en cualquier sistema.
     const _configPublico = {
-      nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
-      whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
-      requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
-      pasarelaPago: DB.config?.pasarelaPago,
-      usuariosStaff: DB.config?.usuariosStaff || []
-    };
+  nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
+  whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
+  requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
+  pasarelaPago: DB.config?.pasarelaPago,
+  usuariosStaff: DB.config?.usuariosStaff || [],
+  // CRITICO: faltaban acá — sin esto, cada fbGuardarProductos() (que corre en cualquier
+  // edición de producto/categoría, no solo al guardar Configuración) borraba en silencio
+  // estos campos del documento remoto, aunque siguieran viéndose bien en memoria local del
+  // admin. Un visitante nuevo, leyendo el documento remoto fresco, nunca los recibía.
+  eslogan: DB.config?.eslogan, bannerVisible: DB.config?.bannerVisible,
+  banners: DB.config?.banners || [], serviciosBannerUrl: DB.config?.serviciosBannerUrl,
+  tiendasTexto: DB.config?.tiendasTexto, tiendasExternas: DB.config?.tiendasExternas || [],
+  serviciosWa: DB.config?.serviciosWa || []
+};
     // FASE 4/4 migracion de productos: 'productos' ya NO se escribe aca — cada producto vive
     // en su propia coleccion (ver fbGuardarProducto/fbGuardarProductosLote mas arriba), la
     // misma razon por la que ventas/clientes/fiados/stock ya no viven en un documento unico.
