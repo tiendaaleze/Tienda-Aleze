@@ -1325,6 +1325,8 @@ async function sincronizarMermasInventario() {
         _diagInfo.lecturaServidor = 'OK';
         _diagInfo.valorServidor = _stockReal;
         _diagInfo.stockPorSedeCompleto = JSON.stringify(df.stockPorSede);
+        _diagInfo.DOCUMENTO_CRUDO_COMPLETO = JSON.stringify(df);
+        _diagInfo.tieneClaveLiteralConPunto = Object.keys(df).some(k => k.includes('.'));
       } else {
         _diagInfo.lecturaServidor = 'DOC NO EXISTE';
       }
@@ -1444,6 +1446,8 @@ async function guardarInventarioMensual() {
         _diagInfo.lecturaServidor = 'OK';
         _diagInfo.valorServidor = _stockReal;
         _diagInfo.stockPorSedeCompleto = JSON.stringify(df.stockPorSede);
+        _diagInfo.DOCUMENTO_CRUDO_COMPLETO = JSON.stringify(df);
+        _diagInfo.tieneClaveLiteralConPunto = Object.keys(df).some(k => k.includes('.'));
       } else {
         _diagInfo.lecturaServidor = 'DOC NO EXISTE';
       }
