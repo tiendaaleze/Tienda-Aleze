@@ -84,57 +84,39 @@ if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.c
 }
 
 
-// ── Fase 6 arquitectura multi-sede: stock por sede ──
-// ajustarStockSede() es el UNICO lugar que muta stock — así prod.stock (total consolidado,
-// usado por reportes y donde no importa la sede) nunca se desincroniza de stockPorSede (el dato real).
-function stockEnSede(prod, sede) {
+// ── Stock: un solo campo plano "stock" por producto — ya no hay mas de una sede ──
+// CAUSA RAIZ REAL de la corrupcion de stock que persistio durante toda la migracion:
+// {[`stockPorSede.${sede}`]: incrementM(delta)} con setDoc+merge NO crea un campo anidado
+// stockPorSede:{principal:N} como el codigo de lectura siempre asumio — crea un campo PLANO
+// cuyo NOMBRE LITERAL es el string completo "stockPorSede.principal" (el punto es parte del
+// nombre, no un separador de ruta). Confirmado con el volcado crudo directo del documento en
+// Firestore. El incremento SI llegaba al servidor y SI se acumulaba correctamente (por eso el
+// valor real seguia creciendo en cada prueba) — pero ninguna lectura en todo el sistema
+// buscaba ese nombre exacto, todas buscaban una estructura anidada que nunca existio, asi que
+// siempre leian 0 y volvian a sumar desde cero. No era cache, no eran reglas, no era la red.
+function stockEnSede(prod) {
   if (!prod) return 0;
-  // Corrección de raíz: el default era currentUserSedeId (la sede de LOGIN), lo que hacía
-  // que un admin cambiando de sede via el selector no viera reflejado el cambio en POS,
-  // Inventario, ni Inventario Mensual — decenas de llamadas en todo el archivo dependen de
-  // este default. sedeAdminEfectiva() ya resuelve exactamente lo mismo para un cajero (nunca
-  // tiene override), y respeta el cambio de sede para admin — un solo arreglo cubre todo,
-  // sin tener que tocar cada llamada una por una.
-  sede = sede || sedeAdminEfectiva();
-  if (!prod.stockPorSede) return sede === 'principal' ? (prod.stock || 0) : 0;
-  return prod.stockPorSede[sede] || 0;
+  return prod.stock || 0;
 }
 function stockTotal(prod) {
   if (!prod) return 0;
-  if (!prod.stockPorSede) return prod.stock || 0;
-  return Object.values(prod.stockPorSede).reduce((s,v) => s + (v||0), 0);
+  return prod.stock || 0;
 }
 // ── Incremento atómico de stock — directamente sobre el documento del producto ──
-// FASE 2/4 de la unificacion: antes vivia en una coleccion separada (stock/{id}) porque
-// Firestore no podia incrementar de forma segura un campo DENTRO DE UN ARRAY (productos vivia
-// como un array gigante en un solo documento). Esa razon ya no aplica — productos ahora es una
-// coleccion con un documento por item, exactamente igual que stock lo era, asi que incrementar
-// un campo de ESE documento es igual de seguro contra concurrencia (dos sesiones tocando
-// productos distintos, o el mismo producto en campos distintos, nunca se pisan). Mismo
-// mecanismo offline (se encola local, el servidor lo aplica al reconectar).
-function fbIncrementarStock(prodId, sede, delta) {
+function fbIncrementarStock(prodId, delta) {
   if (!dbModular || prodId == null || !delta) return; // [SDK modular]
-  const campo = `stockPorSede.${sede}`;
   _sincIniciar('productos', String(prodId));
   setDocM(docM(dbModular, 'productos', String(prodId)),
-    { [campo]: incrementM(delta) },
+    { stock: incrementM(delta) },
     { merge: true }
   ).then(() => _sincTerminar('productos', String(prodId)))
    .catch(e => _sincError('productos', String(prodId), e, 'el stock del producto'));
 }
 
-function ajustarStockSede(prod, delta, sede) {
+function ajustarStockSede(prod, delta) {
   if (!prod) return;
-  // Mismo bug de raiz que stockEnSede(), pero mas grave: esto es lo que de verdad descuenta
-  // stock al vender. Con currentUserSedeId, vender "en Sede II" via el selector en realidad
-  // descontaba el stock de Sede I sin ningun aviso — el descuento no seguia a lo que se veia
-  // en pantalla. sedeAdminEfectiva() ya es identico a currentUserSedeId para un cajero (nunca
-  // tiene override), asi que esto no cambia nada para el uso normal, solo corrige al admin.
-  sede = sede || sedeAdminEfectiva();
-  if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock || 0 };
-  prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0) + delta) * 1000) / 1000);
-  prod.stock = stockTotal(prod);
-  fbIncrementarStock(prod.id, sede, delta);
+  prod.stock = Math.max(0, Math.round(((prod.stock||0) + delta) * 1000) / 1000);
+  fbIncrementarStock(prod.id, delta);
 }
 
 function abrirModalProducto() {
@@ -642,21 +624,18 @@ function guardarProducto() {
   if (existente) {
     // Fase 6: el stock NUNCA se toca desde este formulario al editar — se preserva tal cual.
     // Cambios de stock van por boleta (compra), merma (pérdida) o inventario mensual (conteo físico),
-    // así queda auditado y atribuido a la sede correcta — no un número que se pisa a mano.
-    prod.stockPorSede = existente.stockPorSede;
+    // así queda auditado — no un número que se pisa a mano.
     prod.stock = existente.stock;
     const idx = DB.productos.findIndex(p => p.id === editingProductId);
     DB.productos[idx] = prod;
   } else {
-    // Nuevo producto: el stock inicial ingresado queda en la sede de quien lo crea.
-    // Usa ajustarStockSede() (no asignación directa) para que también sincronice a stock/{id}.
+    // Nuevo producto: el stock inicial ingresado se aplica via ajustarStockSede() (no
+    // asignación directa) para que también sincronice a Firestore.
     const stockRaw = parseFloat(document.getElementById('prod-stock').value);
     const stockInicial = isNaN(stockRaw) ? 0 : Math.round(stockRaw * 1000) / 1000;
-    const sede = sedeAdminEfectiva();
-    prod.stockPorSede = {};
     prod.stock = 0;
     DB.productos.push(prod);
-    if (stockInicial > 0) ajustarStockSede(prod, stockInicial, sede);
+    if (stockInicial > 0) ajustarStockSede(prod, stockInicial);
   }
   fbGuardarProducto(prod.id);
 
@@ -1308,35 +1287,22 @@ async function sincronizarMermasInventario() {
 
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
-  // CRITICO: el diff se calcula contra el valor REAL y fresco de Firestore, no contra la
-  // pantalla — mismo motivo que guardarInventarioMensual() (ver ahi el detalle completo).
+  // CRITICO: el diff se calcula contra el valor REAL y fresco de Firestore (getDocFromServer,
+  // nunca cache), no contra la pantalla — un conteo fisico declara la verdad de lo que hay en
+  // el local, y el ajuste nunca debe depender de que la pantalla tenga razon en ese momento.
   for (let i = 0; i < invMensualData.length; i++) {
     const d = invMensualData[i];
     if (d.contado === null || d.contado === '' || !d.verificado) continue;
     const p = DB.productos.find(prod => prod.id === invMensualData[i].prodId) || DB.productos[i];
     if (!p) continue;
     let _stockReal = stockEnSede(p);
-    let _diagInfo = { producto: p.nombre, valorLocal: _stockReal, contado: d.contado };
     try {
       const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
-      if (snapFresco.exists()) {
-        const df = snapFresco.data();
-        _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
-        _diagInfo.lecturaServidor = 'OK';
-        _diagInfo.valorServidor = _stockReal;
-        _diagInfo.stockPorSedeCompleto = JSON.stringify(df.stockPorSede);
-        _diagInfo.DOCUMENTO_CRUDO_COMPLETO = JSON.stringify(df);
-        _diagInfo.tieneClaveLiteralConPunto = Object.keys(df).some(k => k.includes('.'));
-      } else {
-        _diagInfo.lecturaServidor = 'DOC NO EXISTE';
-      }
+      if (snapFresco.exists()) _stockReal = snapFresco.data().stock || 0;
     } catch (e) {
-      _diagInfo.lecturaServidor = 'ERROR: ' + (e.code || e.message);
       console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e);
     }
     const diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
-    _diagInfo.deltaFinal = diff;
-    console.log('🔬[DIAG-MERMA-INV] ' + JSON.stringify(_diagInfo));
     if (diff < 0) {
       const cantidad = Math.abs(diff);
       const _mermaInv = {
@@ -1365,7 +1331,7 @@ async function sincronizarMermasInventario() {
     const batch = writeBatchM(dbModular);
     trozo.forEach(({prod, delta, merma}) => {
       batch.set(docM(dbModular, 'productos', String(prod.id)),
-        { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
+        { stock: incrementM(delta) }, { merge: true });
       batch.set(docM(dbModular, 'mermas', String(merma.id)), merma);
     });
 
@@ -1381,9 +1347,7 @@ async function sincronizarMermasInventario() {
   }
 
   _pendientes.forEach(({prod, delta, merma}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
     DB.mermas.push(merma);
   });
   fbGuardar();
@@ -1413,18 +1377,9 @@ async function guardarInventarioMensual() {
   const fecha = document.getElementById('inv-mens-fecha').value || today();
 
   // CRITICO: el delta (cuanto sumar o restar) se calcula contra el valor REAL y fresco de
-  // Firestore, nunca contra lo que la pantalla tenia en memoria en ese momento — un conteo
-  // fisico declara la verdad de lo que hay en el local, y si la pantalla mostraba un numero
-  // desactualizado (por cualquier motivo: cache, timing, otra sesion sin sincronizar), el
-  // ajuste calculado contra esa pantalla equivocada se aplicaba igual sobre el valor real del
-  // servidor, corrompiendolo. Confirmado con evidencia real (2 veces seguidas, mismo patron):
-  // stock real 300 -> conteo de 100 sumó dejando 400 en vez de 100. Se repitio incluso
-  // despues de agregar una lectura "fresca" con getDoc() normal — con persistencia offline
-  // activa y un listener en tiempo real ya corriendo sobre la misma coleccion, getDoc() puede
-  // compartir la misma capa de cache del listener en vez de forzar un viaje real al servidor.
-  // getDocFromServer() es la unica forma sin ambiguedad: ignora cache por completo, siempre
-  // pregunta al servidor real (si no hay conexion, falla explicito — se cae al valor local
-  // como ultimo recurso, mejor que nada en ese caso excepcional).
+  // Firestore (getDocFromServer, nunca cache), nunca contra lo que la pantalla tenia en
+  // memoria en ese momento — un conteo fisico declara la verdad de lo que hay en el local, y
+  // el ajuste nunca debe depender de que la pantalla tenga razon en ese momento.
   const _itemsResumen = [];
   const _pendientes = []; // {prod, delta}
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
@@ -1437,32 +1392,18 @@ async function guardarInventarioMensual() {
       continue;
     }
     let _stockReal = stockEnSede(p); // valor local como respaldo si la lectura fresca falla
-    let _diagInfo = { producto: p.nombre, valorLocal: _stockReal, contado: d.contado };
     try {
       const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
-      if (snapFresco.exists()) {
-        const df = snapFresco.data();
-        _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
-        _diagInfo.lecturaServidor = 'OK';
-        _diagInfo.valorServidor = _stockReal;
-        _diagInfo.stockPorSedeCompleto = JSON.stringify(df.stockPorSede);
-        _diagInfo.DOCUMENTO_CRUDO_COMPLETO = JSON.stringify(df);
-        _diagInfo.tieneClaveLiteralConPunto = Object.keys(df).some(k => k.includes('.'));
-      } else {
-        _diagInfo.lecturaServidor = 'DOC NO EXISTE';
-      }
+      if (snapFresco.exists()) _stockReal = snapFresco.data().stock || 0;
     } catch (e) {
-      _diagInfo.lecturaServidor = 'ERROR: ' + (e.code || e.message);
       console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e);
     }
     const _diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
-    _diagInfo.deltaFinal = _diff;
-    console.log('🔬[DIAG-INV-MENSUAL] ' + JSON.stringify(_diagInfo));
     _itemsResumen.push({
       prodId: p.id, nombre: p.nombre, stockSistema: _stockReal,
       contado: d.contado, diff: _diff, motivo: d.motivo, verificado: d.verificado
     });
-    if (_diff !== 0) _pendientes.push({ prod: p, delta: _diff, contado: d.contado });
+    if (_diff !== 0) _pendientes.push({ prod: p, delta: _diff });
   }
 
   if (_pendientes.length > 0) {
@@ -1472,30 +1413,12 @@ async function guardarInventarioMensual() {
       const batch = writeBatchM(dbModular);
       trozo.forEach(({prod, delta}) => {
         batch.set(docM(dbModular, 'productos', String(prod.id)),
-          { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
+          { stock: incrementM(delta) }, { merge: true });
       });
       _sincIniciar('inv_mensual_stock_lote', fecha + '_' + i);
       try {
         await batch.commit();
         _sincTerminar('inv_mensual_stock_lote', fecha + '_' + i);
-        // CRITICO: commit() sin error NO garantiza que el servidor realmente confirmo el
-        // cambio — puede resolver de forma optimista localmente aunque la conexion real este
-        // degradada. Se relee del servidor real (nunca cache) el primer producto del lote
-        // para confirmar sin ambiguedad que el valor realmente quedo guardado.
-        try {
-          const _verifProd = trozo[0].prod;
-          const _snapVerif = await getDocDelServidorM(docM(dbModular, 'productos', String(_verifProd.id)));
-          const _valorTrasEscribir = _snapVerif.exists() && _snapVerif.data().stockPorSede ? (_snapVerif.data().stockPorSede[sede] || 0) : null;
-          console.log('🔬[DIAG-VERIF-ESCRITURA] producto:', _verifProd.nombre, '— valor confirmado en servidor tras guardar:', _valorTrasEscribir);
-          const _esperado = trozo[0].contado;
-          if (_valorTrasEscribir === null || Math.abs(_valorTrasEscribir - _esperado) > 0.01) {
-            alert('⚠️ ATENCIÓN: el guardado no se pudo confirmar en el servidor. El sistema pensó que se guardó, pero al verificar de nuevo el valor real no coincide. No confíes en este resultado — probablemente hay un problema de conexión. Espera a tener señal estable e intenta de nuevo.\n\nProducto de referencia: ' + _verifProd.nombre + '\nValor esperado: ' + _esperado + '\nValor confirmado en el servidor: ' + (_valorTrasEscribir === null ? 'no se pudo leer' : _valorTrasEscribir));
-            return;
-          }
-        } catch (eVerif) {
-          alert('⚠️ ATENCIÓN: no se pudo verificar si el guardado realmente llegó al servidor (posible problema de conexión). No confíes en este resultado sin volver a revisar Firestore o intentar de nuevo con señal estable.\n\nError: ' + (eVerif.code || eVerif.message));
-          return;
-        }
       } catch (e) {
         _sincError('inv_mensual_stock_lote', fecha + '_' + i, e,
           'la corrección de stock del inventario mensual — se aplicaron ' + i + ' de ' + _pendientes.length + ' correcciones antes del error');
@@ -1503,9 +1426,7 @@ async function guardarInventarioMensual() {
       }
     }
     _pendientes.forEach(({prod, delta}) => {
-      if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-      prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
-      prod.stock = stockTotal(prod);
+      prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
     });
   }
 
