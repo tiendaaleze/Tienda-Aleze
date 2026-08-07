@@ -1458,7 +1458,7 @@ async function guardarInventarioMensual() {
       prodId: p.id, nombre: p.nombre, stockSistema: _stockReal,
       contado: d.contado, diff: _diff, motivo: d.motivo, verificado: d.verificado
     });
-    if (_diff !== 0) _pendientes.push({ prod: p, delta: _diff });
+    if (_diff !== 0) _pendientes.push({ prod: p, delta: _diff, contado: d.contado });
   }
 
   if (_pendientes.length > 0) {
@@ -1474,6 +1474,24 @@ async function guardarInventarioMensual() {
       try {
         await batch.commit();
         _sincTerminar('inv_mensual_stock_lote', fecha + '_' + i);
+        // CRITICO: commit() sin error NO garantiza que el servidor realmente confirmo el
+        // cambio — puede resolver de forma optimista localmente aunque la conexion real este
+        // degradada. Se relee del servidor real (nunca cache) el primer producto del lote
+        // para confirmar sin ambiguedad que el valor realmente quedo guardado.
+        try {
+          const _verifProd = trozo[0].prod;
+          const _snapVerif = await getDocDelServidorM(docM(dbModular, 'productos', String(_verifProd.id)));
+          const _valorTrasEscribir = _snapVerif.exists() && _snapVerif.data().stockPorSede ? (_snapVerif.data().stockPorSede[sede] || 0) : null;
+          console.log('🔬[DIAG-VERIF-ESCRITURA] producto:', _verifProd.nombre, '— valor confirmado en servidor tras guardar:', _valorTrasEscribir);
+          const _esperado = trozo[0].contado;
+          if (_valorTrasEscribir === null || Math.abs(_valorTrasEscribir - _esperado) > 0.01) {
+            alert('⚠️ ATENCIÓN: el guardado no se pudo confirmar en el servidor. El sistema pensó que se guardó, pero al verificar de nuevo el valor real no coincide. No confíes en este resultado — probablemente hay un problema de conexión. Espera a tener señal estable e intenta de nuevo.\n\nProducto de referencia: ' + _verifProd.nombre + '\nValor esperado: ' + _esperado + '\nValor confirmado en el servidor: ' + (_valorTrasEscribir === null ? 'no se pudo leer' : _valorTrasEscribir));
+            return;
+          }
+        } catch (eVerif) {
+          alert('⚠️ ATENCIÓN: no se pudo verificar si el guardado realmente llegó al servidor (posible problema de conexión). No confíes en este resultado sin volver a revisar Firestore o intentar de nuevo con señal estable.\n\nError: ' + (eVerif.code || eVerif.message));
+          return;
+        }
       } catch (e) {
         _sincError('inv_mensual_stock_lote', fecha + '_' + i, e,
           'la corrección de stock del inventario mensual — se aplicaron ' + i + ' de ' + _pendientes.length + ' correcciones antes del error');
