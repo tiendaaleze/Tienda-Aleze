@@ -516,11 +516,20 @@ function fbEscucharProductosColeccion() {
   if (!dbModular) return;
   if (_fbProductosColUnsub) { _fbProductosColUnsub(); _fbProductosColUnsub = null; }
   _fbProductosColUnsub = onSnapshotM(collectionM(dbModular, 'productos'), snapshot => {
+    if (snapshot.metadata.fromCache) console.log(`🔬[DIAG-CACHE] Snapshot de productos vino de CACHE LOCAL (no del servidor) — ${snapshot.docChanges().length} cambio(s) en este snapshot`);
     let huboCambioReal = false;
     snapshot.docChanges().forEach(change => {
       if (change.doc.metadata.hasPendingWrites) return;
-      const data = change.doc.data();
       const idx = DB.productos.findIndex(p => String(p.id) === change.doc.id);
+      // CRITICO: un snapshot que viene de la cache local del dispositivo (no del servidor)
+      // puede estar desactualizado — confirmado con evidencia real: el campo stockPorSede es
+      // nuevo (agregado con esta unificacion), asi que la cache local de sesiones anteriores
+      // en este mismo dispositivo no lo tenia. Si el producto ya existe en memoria (ya lo trajo
+      // la reconciliacion de login, que lee directo del servidor via getDocs, no cache), un
+      // cambio de cache se ignora — evita pisar el stock real con una version vieja cacheada.
+      // Solo se aplica cache si el producto es nuevo para nosotros (algo es mejor que nada).
+      if (snapshot.metadata.fromCache && idx !== -1) return;
+      const data = change.doc.data();
       if (change.type === 'removed') {
         if (idx !== -1) { DB.productos.splice(idx, 1); huboCambioReal = true; }
       } else { // 'added' o 'modified' — FASE 3/4: data ya trae el stockPorSede unificado
