@@ -916,7 +916,10 @@ window.addEventListener('error', function(e) {
             <div style="border-top:1px solid var(--gray-200);margin:1rem 0;padding-top:1rem">
               <div style="font-weight:700;font-size:.85rem;margin-bottom:.75rem">⚡ Servicios WhatsApp</div>
              <div class="form-group"><label>Número WhatsApp servicios</label><input type="text" class="form-control" id="cfg-wa-servicios" placeholder="980037284" /></div>
-             <div class="form-group"><label>Imagen banner servicios (800×300px recomendado)</label><div style="display:flex;gap:.5rem;align-items:center"><input type="text" class="form-control" id="cfg-servicios-banner" placeholder="https://firebasestorage..." style="flex:1"/><input type="file" id="_svc-banner-file" accept="image/*" style="display:none" onchange="_uploadConfigImg(this,'cfg-servicios-banner','tienda/banner-servicios.webp')"><button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('_svc-banner-file').click()">📁 Subir</button></div><div style="font-size:.72rem;color:var(--gray-400);margin-top:.2rem">Al hacer clic en el banner abre WhatsApp. Si no hay imagen, se muestran las cards individuales.</div></div>
+             <div style="font-weight:700;font-size:.85rem;margin:.75rem 0 .5rem">🖼️ Banners de servicios (carrusel)</div>
+              <div id="cfg-servicios-banners-lista"></div>
+              <button type="button" class="btn btn-outline btn-sm" style="width:100%;margin-bottom:.5rem" onclick="agregarServicioBanner()">➕ Agregar banner de servicios</button>
+              <div style="font-size:.72rem;color:var(--gray-400);margin-bottom:.75rem">Cada banner abre WhatsApp al tocarlo. Si no hay ninguno, se muestran las cards individuales de abajo.</div>
               <div id="cfg-servicios-wa"></div>
             </div>
             <button type="button" class="btn btn-primary" onclick="guardarConfigTienda()">Guardar configuración tienda</button>
