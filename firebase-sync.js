@@ -450,11 +450,11 @@ function fbGuardar() {
 // que llega despues al servidor pisa por completo los cambios de la que llego primero, sin
 // fusionar nada. Confirmado en la practica: un pack recien creado se perdio asi. Mismo
 // principio ya aplicado a ventas/clientes/fiados/mermas/movimientos/promociones/proveedores
-// (y a 'stock', que YA vive en su propia coleccion desde antes) — cada producto ahora se
-// puede escribir solo, sin tocar el resto del catalogo. Migracion gradual: esta funcion nueva
-// convive con fbGuardarProductos() (que se mantiene sin tocar) mientras cada llamador se pasa
-// uno por uno a usar esta — stock/stockPorSede se excluyen a proposito, esos siguen viviendo
-// solo en la coleccion 'stock', ya establecida y funcionando bien.
+// — cada producto ahora se puede escribir solo, sin tocar el resto del catalogo. Migracion
+// gradual: esta funcion nueva convive con fbGuardarProductos() (que se mantiene sin tocar)
+// mientras cada llamador se pasa uno por uno a usar esta — stock se excluye a proposito, para
+// no pisar una venta/ajuste concurrente que este tocando el stock al mismo tiempo desde otra
+// sesion (stock es un campo plano simple, un solo numero — ya no hay mas de una sede).
 let _fbProdSaveTimers = {}; // debounce por producto individual — {prodId: timerId}
 function fbGuardarProducto(prodId) {
   if (!dbModular) return;
@@ -466,16 +466,16 @@ function fbGuardarProducto(prodId) {
       deleteDocM(docM(dbModular, 'productos', String(prodId))).catch(() => {});
       return;
     }
-    const { stock, stockPorSede, ...prodSinStock } = prod;
+    const { stock, ...prodSinStock } = prod;
     _sincIniciar('productos', String(prodId));
-    // CRITICO: merge:true es obligatorio aca. stock/stockPorSede se excluyen del payload a
-    // proposito (para no pisar una venta/ajuste concurrente que este tocando el stock al
-    // mismo tiempo desde otra sesion) — pero SIN merge, una escritura de Firestore reemplaza
-    // el documento ENTERO con solo los campos del payload, borrando cualquier campo no
-    // incluido. Eso es lo que estaba pasando: cada vez que se guardaba un producto (crear,
-    // editar cualquier campo, o incluso el propio alta con "stock inicial"), el stock que ya
-    // se habia escrito correctamente quedaba borrado 600ms despues por esta misma funcion.
-    // Con merge:true, stockPorSede nunca se toca en absoluto — ni se borra ni se sobrescribe.
+    // CRITICO: merge:true es obligatorio aca. stock se excluye del payload a proposito (para
+    // no pisar una venta/ajuste concurrente que este tocando el stock al mismo tiempo desde
+    // otra sesion) — pero SIN merge, una escritura de Firestore reemplaza el documento ENTERO
+    // con solo los campos del payload, borrando cualquier campo no incluido. Eso es lo que
+    // estaba pasando antes: cada vez que se guardaba un producto (crear, editar cualquier
+    // campo, o incluso el propio alta con "stock inicial"), el stock que ya se habia escrito
+    // correctamente quedaba borrado 600ms despues por esta misma funcion. Con merge:true,
+    // stock nunca se toca en absoluto — ni se borra ni se sobrescribe.
     setDocM(docM(dbModular, 'productos', String(prodId)), JSON.parse(JSON.stringify(prodSinStock)), { merge: true })
       .then(() => _sincTerminar('productos', String(prodId)))
       .catch(e => _sincError('productos', String(prodId), e, 'el producto ' + (prod.nombre || prodId)));
@@ -494,7 +494,7 @@ async function fbGuardarProductosLote(prodIds) {
     trozo.forEach(id => {
       const prod = DB.productos.find(p => p.id === id);
       if (!prod) return;
-      const { stock, stockPorSede, ...prodSinStock } = prod;
+      const { stock, ...prodSinStock } = prod;
       // CRITICO: merge:true obligatorio, mismo motivo que fbGuardarProducto() (ver arriba) —
       // sin esto, cada actualizacion masiva (Excel, precios por categoria, migracion de
       // imagenes) borraba el stock de TODOS los productos incluidos en el lote.
@@ -519,24 +519,21 @@ function fbEscucharProductosColeccion() {
   if (!dbModular) return;
   if (_fbProductosColUnsub) { _fbProductosColUnsub(); _fbProductosColUnsub = null; }
   _fbProductosColUnsub = onSnapshotM(collectionM(dbModular, 'productos'), snapshot => {
-    if (snapshot.metadata.fromCache) console.log(`🔬[DIAG-CACHE] Snapshot de productos vino de CACHE LOCAL (no del servidor) — ${snapshot.docChanges().length} cambio(s) en este snapshot`);
     let huboCambioReal = false;
     snapshot.docChanges().forEach(change => {
       if (change.doc.metadata.hasPendingWrites) return;
       const idx = DB.productos.findIndex(p => String(p.id) === change.doc.id);
       // CRITICO: un snapshot que viene de la cache local del dispositivo (no del servidor)
-      // puede estar desactualizado — confirmado con evidencia real: el campo stockPorSede es
-      // nuevo (agregado con esta unificacion), asi que la cache local de sesiones anteriores
-      // en este mismo dispositivo no lo tenia. Si el producto ya existe en memoria (ya lo trajo
-      // la reconciliacion de login, que lee directo del servidor via getDocs, no cache), un
-      // cambio de cache se ignora — evita pisar el stock real con una version vieja cacheada.
+      // puede estar desactualizado. Si el producto ya existe en memoria (ya lo trajo la
+      // reconciliacion de login, que lee directo del servidor via getDocs, no cache), un
+      // cambio de cache se ignora — evita pisar datos reales con una version vieja cacheada.
       // Solo se aplica cache si el producto es nuevo para nosotros (algo es mejor que nada).
       if (snapshot.metadata.fromCache && idx !== -1) return;
       const data = change.doc.data();
       if (change.type === 'removed') {
         if (idx !== -1) { DB.productos.splice(idx, 1); huboCambioReal = true; }
-      } else { // 'added' o 'modified' — FASE 3/4: data ya trae el stockPorSede unificado
-        // directo del documento real, no hace falta preservar nada de la copia local vieja.
+      } else { // 'added' o 'modified' — data ya trae el stock unificado directo del
+        // documento real, no hace falta preservar nada de la copia local vieja.
         if (idx !== -1) { DB.productos[idx] = data; } else { DB.productos.push(data); }
         huboCambioReal = true;
       }
@@ -550,6 +547,15 @@ function fbEscucharProductosColeccion() {
       if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
       if (pageId === 'inventario') { filterInventario(); }
       if (pageId === 'categorias') { renderCategorias(); }
+    } catch(e){}
+    // Tienda publica no usa el sistema de "page.active" (tiene su propio home/catalogo/
+    // detalle via _tndVista) — sin esto, un visitante nunca veia productos/stock cambiar en
+    // vivo, necesitaba salir por completo de la app y volver a entrar para verlo actualizado.
+    try {
+      if (typeof _tndVista !== 'undefined') {
+        if (_tndVista === 'home') { if (typeof _tndRenderHome === 'function') _tndRenderHome(); }
+        else if (typeof tndFiltrar === 'function') tndFiltrar();
+      }
     } catch(e){}
   }, err => { console.warn('Firestore listener error (productos):', err.code); });
 }
@@ -748,46 +754,6 @@ function _aplicarCambiosSnapshot(snapshot, arr, idKey = 'id') {
     }
   });
   return huboCambio;
-}
-
-// ── Stock: sin filtro — cada documento ya trae ambas sedes en stockPorSede, y la cantidad de
-// productos esta acotada por el catalogo, no por el tiempo. Resuelve el reclamo real: una
-// boleta nueva o cualquier ajuste de stock se ve al instante en todos los dispositivos, sin
-// esperar relogin — incluida la preocupacion original de "los vendedores no ven el nuevo
-// ingreso de proveedores".
-function fbEscucharStock() {
-  if (!dbModular) return;
-  if (_fbStockUnsub) { _fbStockUnsub(); _fbStockUnsub = null; }
-  _fbStockUnsub = onSnapshotM(collectionM(dbModular, 'stock'), snapshot => {
-    let huboCambioReal = false;
-    snapshot.docChanges().forEach(change => {
-      if (change.doc.metadata.hasPendingWrites) return;
-      const prod = DB.productos.find(p => String(p.id) === change.doc.id);
-      const d = change.doc.data();
-      if (prod && d && d.stockPorSede) {
-        prod.stockPorSede = d.stockPorSede;
-        prod.stock = stockTotal(prod);
-        huboCambioReal = true;
-      }
-    });
-    if (!huboCambioReal) return;
-    try { renderDashboard(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try {
-      if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
-      if (pageId === 'inventario') { filterInventario(); }
-    } catch(e){}
-    // Tienda publica no usa el sistema de "page.active" (tiene su propio home/catalogo/
-    // detalle via _tndVista) — sin esto, un visitante nunca veia el stock cambiar en vivo,
-    // necesitaba salir por completo de la app y volver a entrar para verlo actualizado.
-    try {
-      if (typeof _tndVista !== 'undefined') {
-        if (_tndVista === 'home') { if (typeof _tndRenderHome === 'function') _tndRenderHome(); }
-        else if (typeof tndFiltrar === 'function') tndFiltrar();
-      }
-    } catch(e){}
-  }, err => { console.warn('Firestore listener error (stock):', err.code); });
 }
 
 // ── Ventas y movimientos de HOY. Se acotan a hoy a proposito: es lo que
@@ -997,7 +963,6 @@ function fbEscucharCapitalMovimientos() {
 // del SDK, no algo que se controle desde acá), pero reduce cuantos listeners lo disparan
 // exactamente al mismo tiempo.
 function _iniciarListenersOperativos() {
-  fbEscucharStock();
   fbEscucharClientes();
   setTimeout(() => { fbEscucharVentasHoy(); fbEscucharMovimientosHoy(); fbEscucharProductosColeccion(); }, 120);
   setTimeout(() => { fbEscucharFiadosPendientes(); fbEscucharPromociones(); }, 240);
