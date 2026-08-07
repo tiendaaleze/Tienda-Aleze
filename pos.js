@@ -594,7 +594,7 @@ async function procesarVenta() {
   const _deltasStock = [];
   _deltasPorProducto.forEach(({prod, delta}) => {
     batch.set(docM(dbModular, 'productos', String(prod.id)),
-      { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
+      { stock: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
   });
 
@@ -631,9 +631,7 @@ async function procesarVenta() {
   // El lote ya fue aceptado (confirmado en línea, o encolado si no había señal) — recién ahora
   // se refleja en la memoria local para la interfaz.
   _deltasStock.forEach(({prod, delta}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
   });
   if (clienteId) {
     const cli = DB.clientes.find(c => c.id === clienteId);
@@ -743,7 +741,7 @@ async function cobrarFiado() {
   const _deltasStock = [];
   _deltasPorProducto.forEach(({prod, delta}) => {
     batch.set(docM(dbModular, 'productos', String(prod.id)),
-      { [`stockPorSede.${sede}`]: incrementM(delta) }, { merge: true });
+      { stock: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
   });
 
@@ -775,9 +773,7 @@ async function cobrarFiado() {
   }
 
   _deltasStock.forEach(({prod, delta}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[sede] = Math.max(0, Math.round(((prod.stockPorSede[sede]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
   });
   DB.fiados.push(fiado);
   const cli = DB.clientes.find(c => c.id === clienteId);
