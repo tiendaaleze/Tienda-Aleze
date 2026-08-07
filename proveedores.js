@@ -217,7 +217,7 @@ async function eliminarBoleta(idx) {
     });
     _deltasPorProducto.forEach(({prod, delta}) => {
       batch.set(docM(dbModular, 'productos', String(prod.id)),
-        { [`stockPorSede.${boleta.sedeId || sedeAdminEfectiva()}`]: incrementM(delta) }, { merge: true });
+        { stock: incrementM(delta) }, { merge: true });
     });
   }
   const _boletaIdEliminada = boleta.id;
@@ -232,11 +232,8 @@ async function eliminarBoleta(idx) {
     return;
   }
 
-  const _sedeBol = boleta.sedeId || sedeAdminEfectiva();
   _deltasPorProducto.forEach(({prod, delta}) => {
-    if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-    prod.stockPorSede[_sedeBol] = Math.max(0, Math.round(((prod.stockPorSede[_sedeBol]||0)+delta)*1000)/1000);
-    prod.stock = stockTotal(prod);
+    prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
   });
   // Nota: si _revertirStock, ese stock ya se escribio correctamente en el batch atomico de arriba.
   prov.boletas.splice(idx, 1);
@@ -265,7 +262,7 @@ _norm(p.nombre).includes(_norm(q)) || _norm(p.codigo||'').includes(_norm(q))
   } else {
     sug.innerHTML = matches.map(p =>
       `<div onclick="_boletaAgregarProd(${p.id})" style="padding:.4rem .75rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
-        <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock aquí: ${stockEnSede(p, sedeAdminEfectiva())} | S/${p.costo}</span>
+        <strong>${p.nombre}</strong> <span style="color:var(--gray-400);font-size:.78rem">Stock aquí: ${stockEnSede(p)} | S/${p.costo}</span>
        </div>`
     ).join('') + crearLink;
   }
@@ -353,7 +350,7 @@ function _boletaRenderLista() {
 const _unidadNombre = { und:'unidades', kg:'kg', g:'g', L:'L', ml:'ml' };
 el.innerHTML = _boletaProductos.map((p, i) => {
     const prod = DB.productos.find(x => x.id === p.prodId);
-    const stockActual = prod ? stockEnSede(prod, sedeAdminEfectiva()) : 0;
+    const stockActual = prod ? stockEnSede(prod) : 0;
     const stockGlobalAntes = prod ? stockTotal(prod) : 0;
     const costoActual = prod ? prod.costo : 0;
     const cantNueva = p.cantidad || 0;
@@ -457,21 +454,19 @@ async function guardarBoleta() {
     // de calcular el promedio ponderado — reduce la ventana de riesgo, no requiere transacción
     // (que exigiría estar online siempre, rompiendo el trabajo offline ya hecho).
     if (dbModular) { // [SDK modular]
-      try {
-        const _snapFresco = await getDocM(docM(dbModular, 'aleze', 'db_productos'));
-        if (_snapFresco.exists()) { // en modular, exists es un METODO, no una propiedad
-          const _dataFresca = _snapFresco.data();
-          _boletaProductos.forEach(p => {
-            const prodFresco = (_dataFresca.productos||[]).find(x => x.id === p.prodId);
+      for (const p of _boletaProductos) {
+        try {
+          const _snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.prodId)));
+          if (_snapFresco.exists()) { // en modular, exists es un METODO, no una propiedad
+            const _dataFresca = _snapFresco.data();
             const prodLocal = DB.productos.find(x => x.id === p.prodId);
-            if (prodFresco && prodLocal) {
-              prodLocal.costo = prodFresco.costo;
-              prodLocal.stockPorSede = prodFresco.stockPorSede;
-              prodLocal.stock = stockTotal(prodLocal);
+            if (prodLocal) {
+              prodLocal.costo = _dataFresca.costo;
+              prodLocal.stock = _dataFresca.stock || 0;
             }
-          });
-        }
-      } catch(e) { console.warn('guardarBoleta: no se pudo refrescar antes de aplicar, usando datos locales', e); }
+          }
+        } catch(e) { console.warn('guardarBoleta: no se pudo refrescar ' + p.nombre + ' antes de aplicar, usando datos locales', e); }
+      }
     }
 
     // ── Calcular stock y costo (Costo Promedio Ponderado) — el CALCULO sigue siendo
@@ -510,7 +505,7 @@ async function guardarBoleta() {
     });
     _deltasPorProducto.forEach(({prod, delta}) => {
       batch.set(docM(dbModular, 'productos', String(prod.id)),
-        { [`stockPorSede.${_sedeBoleta}`]: incrementM(delta) }, { merge: true });
+        { stock: incrementM(delta) }, { merge: true });
     });
 
     if (!prov.boletas) prov.boletas = [];
@@ -535,9 +530,7 @@ async function guardarBoleta() {
     }
 
     _deltasPorProducto.forEach(({prod, delta, costoNuevo, venc}) => {
-      if (!prod.stockPorSede) prod.stockPorSede = { principal: prod.stock||0 };
-      prod.stockPorSede[_sedeBoleta] = Math.max(0, Math.round(((prod.stockPorSede[_sedeBoleta]||0)+delta)*1000)/1000);
-      prod.stock = stockTotal(prod);
+      prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
       prod.costo = costoNuevo;
       if (venc) prod.venc = venc;
     });
