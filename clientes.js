@@ -539,10 +539,10 @@ Escribe 1 para confirmar:`;
   if (!resp) return;
 
   if (resp.trim() === '1') {
-    // Restaurar stock en la sede donde se hizo la venta original
+    // Restaurar stock del fiado eliminado
     f.items.forEach(i => {
       const prod = DB.productos.find(p => p.id === i.prodId);
-      if (prod) ajustarStockSede(prod, i.cant, f.sedeId);
+      if (prod) ajustarStockSede(prod, i.cant);
     });
     DB.fiados = DB.fiados.filter(x => x.id !== id);
     if (dbModular) deleteDocM(docM(dbModular, 'fiados', String(id))).catch(e => console.warn('No se pudo borrar fiados/'+id, e)); // [SDK modular]
