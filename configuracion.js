@@ -73,9 +73,23 @@ function renderConfigTienda() {
       <div class="form-group"><label style="font-size:.75rem">Imagen (800×300px recomendado)</label><div style="display:flex;gap:.4rem;align-items:center">${b.url ? `<img src="${b.url}" style="width:60px;height:24px;object-fit:cover;border-radius:4px;flex-shrink:0">` : ''}<input type="text" class="form-control" id="cfg-ban-img-${i}" value="${b.url||''}" placeholder="https://firebasestorage..." style="flex:1"/><input type="file" id="_ban-file-${i}" accept="image/*" style="display:none" onchange="_uploadConfigImg(this,'cfg-ban-img-${i}','tienda/banner-${b.id}.webp')"><button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('_ban-file-'+${i}).click()">📁</button></div></div>
       <div class="form-group" style="margin-bottom:0"><label style="font-size:.75rem">Link destino al hacer clic (opcional)</label><input type="text" class="form-control" id="cfg-ban-link-${i}" value="${b.link||''}" placeholder="https://..." /></div>
     </div>`).join('') || '<div style="font-size:.78rem;color:var(--gray-400);padding:.5rem 0">Sin banners todavía — agrega el primero.</div>';
-  const wa = document.getElementById('cfg-wa-servicios'); if (wa) wa.value = cfg.whatsappTienda || '';
-  const sb = document.getElementById('cfg-servicios-banner'); if (sb) sb.value = cfg.serviciosBannerUrl || '';
+const wa = document.getElementById('cfg-wa-servicios'); if (wa) wa.value = cfg.whatsappTienda || '';
   const tt = document.getElementById('cfg-tiendas-texto'); if (tt) tt.value = cfg.tiendasTexto || '';
+  // Migración automática, una sola vez: el banner único viejo de servicios pasa a ser el
+  // primer elemento del array — mismo criterio ya usado para el banner principal.
+  if ((!cfg.serviciosBanners || !cfg.serviciosBanners.length) && cfg.serviciosBannerUrl) {
+    cfg.serviciosBanners = [{ id: getId(), url: cfg.serviciosBannerUrl }];
+  }
+  if (!cfg.serviciosBanners) cfg.serviciosBanners = [];
+  const bl3 = document.getElementById('cfg-servicios-banners-lista');
+  if (bl3) bl3.innerHTML = cfg.serviciosBanners.map((b, i) => `
+    <div style="border:1px solid var(--gray-200);border-radius:8px;padding:.75rem;margin-bottom:.5rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+        <div style="font-weight:700;font-size:.82rem">Banner ${i+1}</div>
+        <button type="button" class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="eliminarServicioBanner(${i})">🗑️ Quitar</button>
+      </div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:.75rem">Imagen (800×300px recomendado)</label><div style="display:flex;gap:.4rem;align-items:center">${b.url ? `<img src="${b.url}" style="width:60px;height:24px;object-fit:cover;border-radius:4px;flex-shrink:0">` : ''}<input type="text" class="form-control" id="cfg-svcban-img-${i}" value="${b.url||''}" placeholder="https://firebasestorage..." style="flex:1"/><input type="file" id="_svcban-file-${i}" accept="image/*" style="display:none" onchange="_uploadConfigImg(this,'cfg-svcban-img-${i}','tienda/banner-servicios-${b.id}.webp')"><button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('_svcban-file-'+${i}).click()">📁</button></div></div>
+    </div>`).join('') || '<div style="font-size:.78rem;color:var(--gray-400);padding:.5rem 0">Sin banners de servicios todavía.</div>';
   // Tiendas externas
   const te = document.getElementById('cfg-tiendas-externas');
   if (te) te.innerHTML = (cfg.tiendasExternas || []).map((t, i) => `
@@ -110,6 +124,21 @@ function eliminarBanner(i) {
   fbGuardar(); fbGuardarProductos();
   renderConfiguracion();
 }
+// Mismo patrón que agregarBanner/eliminarBanner, para el carrusel de servicios rápidos.
+function agregarServicioBanner() {
+  if (currentRole !== 'admin') return;
+  guardarConfigTienda(true);
+  if (!DB.config.serviciosBanners) DB.config.serviciosBanners = [];
+  DB.config.serviciosBanners.push({ id: getId(), url: '' });
+  renderConfiguracion();
+}
+function eliminarServicioBanner(i) {
+  if (currentRole !== 'admin') return;
+  guardarConfigTienda(true);
+  DB.config.serviciosBanners.splice(i, 1);
+  fbGuardar(); fbGuardarProductos();
+  renderConfiguracion();
+}
 
 function guardarConfigTienda(_silencioso) {
   if (currentRole !== 'admin') return;
@@ -120,10 +149,10 @@ function guardarConfigTienda(_silencioso) {
     b.url  = document.getElementById(`cfg-ban-img-${i}`)?.value.trim() || '';
     b.link = document.getElementById(`cfg-ban-link-${i}`)?.value.trim() || '';
   });
-cfg.serviciosBannerUrl = document.getElementById('cfg-servicios-banner')?.value.trim() || '';
 cfg.tiendasTexto = document.getElementById('cfg-tiendas-texto')?.value.trim() || '';
-  cfg.serviciosBannerUrl = document.getElementById('cfg-servicios-banner')?.value.trim() || '';
-  cfg.tiendasTexto = document.getElementById('cfg-tiendas-texto')?.value.trim() || '';
+  (cfg.serviciosBanners || []).forEach((b, i) => {
+    b.url = document.getElementById(`cfg-svcban-img-${i}`)?.value.trim() || '';
+  });
   (cfg.tiendasExternas || []).forEach((t, i) => {
     t.imagen   = document.getElementById(`cfg-te-img-${i}`)?.value.trim() || '';
     t.url      = document.getElementById(`cfg-te-url-${i}`)?.value.trim() || '';
