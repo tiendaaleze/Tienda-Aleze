@@ -1317,7 +1317,7 @@ async function sincronizarMermasInventario() {
     if (!p) continue;
     let _stockReal = stockEnSede(p);
     try {
-      const snapFresco = await getDocM(docM(dbModular, 'productos', String(p.id)));
+      const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
       if (snapFresco.exists()) {
         const df = snapFresco.data();
         _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
@@ -1404,8 +1404,14 @@ async function guardarInventarioMensual() {
   // fisico declara la verdad de lo que hay en el local, y si la pantalla mostraba un numero
   // desactualizado (por cualquier motivo: cache, timing, otra sesion sin sincronizar), el
   // ajuste calculado contra esa pantalla equivocada se aplicaba igual sobre el valor real del
-  // servidor, corrompiendolo. Confirmado con evidencia real: stock real 300, pantalla
-  // mostraba 0, conteo de "100" sumó sobre el 300 real en vez de dejarlo en 100.
+  // servidor, corrompiendolo. Confirmado con evidencia real (2 veces seguidas, mismo patron):
+  // stock real 300 -> conteo de 100 sumó dejando 400 en vez de 100. Se repitio incluso
+  // despues de agregar una lectura "fresca" con getDoc() normal — con persistencia offline
+  // activa y un listener en tiempo real ya corriendo sobre la misma coleccion, getDoc() puede
+  // compartir la misma capa de cache del listener en vez de forzar un viaje real al servidor.
+  // getDocFromServer() es la unica forma sin ambiguedad: ignora cache por completo, siempre
+  // pregunta al servidor real (si no hay conexion, falla explicito — se cae al valor local
+  // como ultimo recurso, mejor que nada en ese caso excepcional).
   const _itemsResumen = [];
   const _pendientes = []; // {prod, delta}
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
@@ -1419,7 +1425,7 @@ async function guardarInventarioMensual() {
     }
     let _stockReal = stockEnSede(p); // valor local como respaldo si la lectura fresca falla
     try {
-      const snapFresco = await getDocM(docM(dbModular, 'productos', String(p.id)));
+      const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
       if (snapFresco.exists()) {
         const df = snapFresco.data();
         _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
