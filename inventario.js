@@ -1306,12 +1306,25 @@ async function sincronizarMermasInventario() {
   const fechaInv = document.getElementById('inv-mens-fecha').value || today();
   const _pendientes = []; // {prod, cantidad, mermaObj}
 
-  invMensualData.forEach((d, i) => {
-    if (d.contado === null || d.contado === '') return;
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+
+  // CRITICO: el diff se calcula contra el valor REAL y fresco de Firestore, no contra la
+  // pantalla — mismo motivo que guardarInventarioMensual() (ver ahi el detalle completo).
+  for (let i = 0; i < invMensualData.length; i++) {
+    const d = invMensualData[i];
+    if (d.contado === null || d.contado === '' || !d.verificado) continue;
     const p = DB.productos.find(prod => prod.id === invMensualData[i].prodId) || DB.productos[i];
-    const _stockAqui = stockEnSede(p);
-    const diff = d.contado - _stockAqui;
-    if (diff < 0 && d.verificado) {
+    if (!p) continue;
+    let _stockReal = stockEnSede(p);
+    try {
+      const snapFresco = await getDocM(docM(dbModular, 'productos', String(p.id)));
+      if (snapFresco.exists()) {
+        const df = snapFresco.data();
+        _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
+      }
+    } catch (e) { console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e); }
+    const diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
+    if (diff < 0) {
       const cantidad = Math.abs(diff);
       const _mermaInv = {
         id: getId(), prodId: p.id, cant: cantidad,
@@ -1321,13 +1334,12 @@ async function sincronizarMermasInventario() {
       };
       _pendientes.push({ prod: p, delta: diff, merma: _mermaInv }); // diff ya es negativo
     }
-  });
+  }
 
   if (_pendientes.length === 0) {
     alert('No hay diferencias negativas verificadas para sincronizar.\nMarca el check ✅ en los productos con faltantes confirmados.');
     return;
   }
-  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   // Paquete atomico: TODAS las mermas del conteo y sus ajustes de stock viajan juntos —
   // mismo criterio que guardarMerma(). Firestore permite maximo 500 operaciones por lote —
@@ -1387,22 +1399,41 @@ async function guardarInventarioMensual() {
   const sede = sedeAdminEfectiva();
   const fecha = document.getElementById('inv-mens-fecha').value || today();
 
+  // CRITICO: el delta (cuanto sumar o restar) se calcula contra el valor REAL y fresco de
+  // Firestore, nunca contra lo que la pantalla tenia en memoria en ese momento — un conteo
+  // fisico declara la verdad de lo que hay en el local, y si la pantalla mostraba un numero
+  // desactualizado (por cualquier motivo: cache, timing, otra sesion sin sincronizar), el
+  // ajuste calculado contra esa pantalla equivocada se aplicaba igual sobre el valor real del
+  // servidor, corrompiendolo. Confirmado con evidencia real: stock real 300, pantalla
+  // mostraba 0, conteo de "100" sumó sobre el 300 real en vez de dejarlo en 100.
   const _itemsResumen = [];
   const _pendientes = []; // {prod, delta}
-  invMensualData.forEach((d, i) => {
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  for (let i = 0; i < invMensualData.length; i++) {
+    const d = invMensualData[i];
     const p = DB.productos.find(prod => prod.id === d.prodId) || DB.productos[i];
-    if (!p) return;
-    const _stockAqui = stockEnSede(p);
-    const _diff = d.contado !== null && d.contado !== '' ? Math.round((d.contado - _stockAqui) * 1000) / 1000 : null;
+    if (!p) continue;
+    if (d.contado === null || d.contado === '' || !d.verificado) {
+      _itemsResumen.push({ prodId: p.id, nombre: p.nombre, stockSistema: stockEnSede(p), contado: d.contado, diff: null, motivo: d.motivo, verificado: d.verificado });
+      continue;
+    }
+    let _stockReal = stockEnSede(p); // valor local como respaldo si la lectura fresca falla
+    try {
+      const snapFresco = await getDocM(docM(dbModular, 'productos', String(p.id)));
+      if (snapFresco.exists()) {
+        const df = snapFresco.data();
+        _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
+      }
+    } catch (e) { console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e); }
+    const _diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
     _itemsResumen.push({
-      prodId: p.id, nombre: p.nombre, stockSistema: _stockAqui,
+      prodId: p.id, nombre: p.nombre, stockSistema: _stockReal,
       contado: d.contado, diff: _diff, motivo: d.motivo, verificado: d.verificado
     });
-    if (_diff !== null && _diff !== 0 && d.verificado) _pendientes.push({ prod: p, delta: _diff });
-  });
+    if (_diff !== 0) _pendientes.push({ prod: p, delta: _diff });
+  }
 
   if (_pendientes.length > 0) {
-    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
     const _CHUNK = 200;
     for (let i = 0; i < _pendientes.length; i += _CHUNK) {
       const trozo = _pendientes.slice(i, i + _CHUNK);
