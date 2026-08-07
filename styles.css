@@ -145,7 +145,7 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
   #app { display: none; height: 100dvh; flex-direction: column; }
   #app.visible { display: flex; }
 
-  /* ── SPLASH SCREEN ─────────────────────────────── */
+/* ── SPLASH SCREEN ─────────────────────────────── */
   #splash-screen {
     position: fixed; inset: 0;
     background: linear-gradient(135deg, #5B21B6 0%, #7C3AED 100%);
@@ -155,30 +155,57 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     justify-content: center;
     z-index: 9999;
     transition: opacity 0.4s ease;
+    overflow: hidden;
   }
   #splash-screen.fade-out {
     opacity: 0;
     pointer-events: none;
   }
   #splash-screen.hidden { display: none; }
+  /* Ondas de color de fondo — 3 capas moviéndose a ritmos distintos, para que la pantalla
+     se sienta viva durante toda la espera, sin depender de ningún texto sobre la causa. */
+  .splash-waves {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  }
+  .splash-waves span {
+    position: absolute; left: 50%; top: 50%;
+    width: 140vmax; height: 140vmax;
+    border-radius: 42%;
+    background: rgba(255,255,255,0.06);
+    transform: translate(-50%,-50%) rotate(0deg);
+    animation: splashWave 9s linear infinite;
+  }
+  .splash-waves span:nth-child(2) {
+    background: rgba(255,255,255,0.04);
+    animation-duration: 13s;
+    animation-direction: reverse;
+  }
+  .splash-waves span:nth-child(3) {
+    background: rgba(196,181,253,0.08);
+    animation-duration: 17s;
+  }
+  @keyframes splashWave {
+    from { transform: translate(-50%,-50%) rotate(0deg); }
+    to   { transform: translate(-50%,-50%) rotate(360deg); }
+  }
   .splash-icon {
     width: 96px; height: 96px;
-    margin-bottom: 1.25rem;
-  }
-  .splash-name {
-    font-size: 2rem; font-weight: 900;
-    color: white; letter-spacing: 4px;
-    margin-bottom: 0.25rem;
-  }
-  .splash-sub {
-    font-size: 0.9rem; color: #C4B5FD;
-    letter-spacing: 8px; font-weight: 400;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
+    position: relative; z-index: 1;
   }
   .splash-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: rgba(255,255,255,0.4);
     animation: splashPulse 1.2s infinite ease-in-out;
+    position: relative; z-index: 1;
+  }
+  .splash-msg {
+    margin-top: 1rem;
+    font-size: 0.85rem; color: #E9D5FF;
+    font-weight: 500; letter-spacing: 0.3px;
+    position: relative; z-index: 1;
+    min-height: 1.2em;
+    transition: opacity 0.35s ease;
   }
   @keyframes splashPulse {
     0%, 100% { transform: scale(1); opacity: 0.4; }
