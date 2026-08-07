@@ -1316,14 +1316,25 @@ async function sincronizarMermasInventario() {
     const p = DB.productos.find(prod => prod.id === invMensualData[i].prodId) || DB.productos[i];
     if (!p) continue;
     let _stockReal = stockEnSede(p);
+    let _diagInfo = { producto: p.nombre, valorLocal: _stockReal, contado: d.contado };
     try {
       const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
       if (snapFresco.exists()) {
         const df = snapFresco.data();
         _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
+        _diagInfo.lecturaServidor = 'OK';
+        _diagInfo.valorServidor = _stockReal;
+        _diagInfo.stockPorSedeCompleto = JSON.stringify(df.stockPorSede);
+      } else {
+        _diagInfo.lecturaServidor = 'DOC NO EXISTE';
       }
-    } catch (e) { console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e); }
+    } catch (e) {
+      _diagInfo.lecturaServidor = 'ERROR: ' + (e.code || e.message);
+      console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e);
+    }
     const diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
+    _diagInfo.deltaFinal = diff;
+    console.log('🔬[DIAG-MERMA-INV] ' + JSON.stringify(_diagInfo));
     if (diff < 0) {
       const cantidad = Math.abs(diff);
       const _mermaInv = {
@@ -1424,14 +1435,25 @@ async function guardarInventarioMensual() {
       continue;
     }
     let _stockReal = stockEnSede(p); // valor local como respaldo si la lectura fresca falla
+    let _diagInfo = { producto: p.nombre, valorLocal: _stockReal, contado: d.contado };
     try {
       const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
       if (snapFresco.exists()) {
         const df = snapFresco.data();
         _stockReal = df.stockPorSede ? (df.stockPorSede[sede] || 0) : (df.stock || 0);
+        _diagInfo.lecturaServidor = 'OK';
+        _diagInfo.valorServidor = _stockReal;
+        _diagInfo.stockPorSedeCompleto = JSON.stringify(df.stockPorSede);
+      } else {
+        _diagInfo.lecturaServidor = 'DOC NO EXISTE';
       }
-    } catch (e) { console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e); }
+    } catch (e) {
+      _diagInfo.lecturaServidor = 'ERROR: ' + (e.code || e.message);
+      console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e);
+    }
     const _diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
+    _diagInfo.deltaFinal = _diff;
+    console.log('🔬[DIAG-INV-MENSUAL] ' + JSON.stringify(_diagInfo));
     _itemsResumen.push({
       prodId: p.id, nombre: p.nombre, stockSistema: _stockReal,
       contado: d.contado, diff: _diff, motivo: d.motivo, verificado: d.verificado
