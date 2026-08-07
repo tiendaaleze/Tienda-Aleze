@@ -722,12 +722,21 @@ function _tndRenderHome() {
   const recientesHtml = recientes.length ? `<div class="tnd-section-title">✨ Recién agregados</div><div class="tnd-scroll-wrap"><button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-riel-recientes',-1)" aria-label="Anteriores">‹</button><div class="tnd-scroll-row" id="tnd-riel-recientes">${recientes.map(p => _tarjetaProdRail(p, true)).join('')}</div><button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-riel-recientes',1)" aria-label="Siguientes">›</button></div>` : '';
 
   const servicios = (cfg.serviciosWa||[]).filter(s => s.visible);
-  const serviciosHtml = cfg.serviciosBannerUrl
+  // Migración defensiva: mismo criterio que cfg.banners más arriba.
+  const _svcBanners = (cfg.serviciosBanners && cfg.serviciosBanners.length) ? cfg.serviciosBanners
+    : (cfg.serviciosBannerUrl ? [{ id: 'legacy', url: cfg.serviciosBannerUrl }] : []);
+  const _waLinkServicios = `https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera información sobre sus servicios')}`;
+  const serviciosHtml = _svcBanners.length
     ? `<div style="margin-bottom:1.5rem">
         <div class="tnd-section-title">⚡ Servicios rápidos</div>
-      <a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera información sobre sus servicios')}" target="_blank" style="display:block;text-decoration:none;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.1)">
-   <img src="${cfg.serviciosBannerUrl}" style="width:100%;height:auto;object-fit:contain;display:block">
-        </a>
+        <div class="tnd-banner-carousel" style="margin-bottom:0">
+          ${_svcBanners.length > 1 ? `<button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-servicios-track',-1)" aria-label="Anterior">‹</button>` : ''}
+          <div class="tnd-banner-track" id="tnd-servicios-track">
+            ${_svcBanners.map(b => `<a href="${_waLinkServicios}" target="_blank" class="tnd-banner-slide" style="text-decoration:none"><img src="${b.url}" alt="Servicios"></a>`).join('')}
+          </div>
+          ${_svcBanners.length > 1 ? `<button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-servicios-track',1)" aria-label="Siguiente">›</button>` : ''}
+          ${_svcBanners.length > 1 ? `<div class="tnd-banner-dots" id="tnd-servicios-dots">${_svcBanners.map((_,i) => `<span class="tnd-banner-dot${i===0?' active':''}"></span>`).join('')}</div>` : ''}
+        </div>
        </div>`
     : servicios.length ? `<div style="margin-bottom:1.5rem"><div class="tnd-section-title">⚡ Servicios rápidos</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.6rem">${servicios.map(s=>`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera: '+s.nombre)}" target="_blank" class="tnd-rail-card" style="display:flex;align-items:center;gap:.6rem;background:#fff;border-radius:12px;padding:.75rem;box-shadow:0 2px 6px rgba(0,0,0,.07);text-decoration:none;color:#1f2937"><span style="font-size:1.4rem">${s.emoji}</span><span style="font-size:.82rem;font-weight:700">${s.nombre}</span></a>`).join('')}</div></div>` : '';
   const tiendas = (cfg.tiendasExternas||[]).filter(t => t.visible && t.url);
@@ -756,29 +765,36 @@ const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.5rem"><div cla
       </div>
     </a>`;
 
-  grid.innerHTML = bannerHtml + promosHtml + catsHtml + recientesHtml + serviciosHtml + tiendasHtml + pagoContactoHtml
+grid.innerHTML = bannerHtml + promosHtml + catsHtml + recientesHtml + serviciosHtml + tiendasHtml + pagoContactoHtml
     + `<button onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
   _tndIniciarCarruselBanner(_banners.length);
+  _tndIniciarCarruselServicios(_svcBanners.length);
 }
 // Auto-avance del carrusel de banners — se pausa solo (no reinicia el timer) si el usuario
 // desliza a mano, el proximo avance automatico sigue el ritmo normal desde ahi. Los puntos se
 // actualizan tanto por el auto-avance como por el deslizado manual, mismo mecanismo.
-function _tndIniciarCarruselBanner(cantidad) {
-  clearInterval(window._tndBannerInterval);
+function _tndIniciarCarrusel(trackId, dotsSelector, cantidad, intervalVarName, ritmoMs) {
+  clearInterval(window[intervalVarName]);
   if (cantidad <= 1) return;
   let idx = 0;
-  const track = document.getElementById('tnd-banner-track');
+  const track = document.getElementById(trackId);
   if (!track) return;
-  window._tndBannerInterval = setInterval(() => {
-    const t = document.getElementById('tnd-banner-track');
-    if (!t) { clearInterval(window._tndBannerInterval); return; }
+  window[intervalVarName] = setInterval(() => {
+    const t = document.getElementById(trackId);
+    if (!t) { clearInterval(window[intervalVarName]); return; }
     idx = (idx + 1) % cantidad;
     t.scrollTo({ left: t.clientWidth * idx, behavior: 'smooth' });
-  }, 4500);
+  }, ritmoMs);
   track.onscroll = () => {
     idx = Math.round(track.scrollLeft / track.clientWidth);
-    document.querySelectorAll('.tnd-banner-dot').forEach((d,i) => d.classList.toggle('active', i===idx));
+    document.querySelectorAll(dotsSelector).forEach((d,i) => d.classList.toggle('active', i===idx));
   };
+}
+function _tndIniciarCarruselBanner(cantidad) {
+  _tndIniciarCarrusel('tnd-banner-track', '#tnd-banner-dots .tnd-banner-dot', cantidad, '_tndBannerInterval', 4500);
+}
+function _tndIniciarCarruselServicios(cantidad) {
+  _tndIniciarCarrusel('tnd-servicios-track', '#tnd-servicios-dots .tnd-banner-dot', cantidad, '_tndServiciosInterval', 5200);
 }
 let _tndMetodo = 'Yape';
 let _tndEntrega = 'recojo';
