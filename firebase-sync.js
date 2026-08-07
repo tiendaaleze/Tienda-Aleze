@@ -587,8 +587,9 @@ function fbGuardarProductos() {
   // edición de producto/categoría, no solo al guardar Configuración) borraba en silencio
   // estos campos del documento remoto, aunque siguieran viéndose bien en memoria local del
   // admin. Un visitante nuevo, leyendo el documento remoto fresco, nunca los recibía.
-  eslogan: DB.config?.eslogan, bannerVisible: DB.config?.bannerVisible,
+ eslogan: DB.config?.eslogan, bannerVisible: DB.config?.bannerVisible,
   banners: DB.config?.banners || [], serviciosBannerUrl: DB.config?.serviciosBannerUrl,
+  serviciosBanners: DB.config?.serviciosBanners || [],
   tiendasTexto: DB.config?.tiendasTexto, tiendasExternas: DB.config?.tiendasExternas || [],
   serviciosWa: DB.config?.serviciosWa || []
 };
