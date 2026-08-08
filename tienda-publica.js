@@ -670,8 +670,8 @@ function _tndRenderHome() {
   if (cfg.bannerVisible !== false && _banners.length) {
     bannerHtml = `<div class="tnd-banner-carousel">
       ${_banners.length > 1 ? `<button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-banner-track',-1)" aria-label="Banner anterior">‹</button>` : ''}
-      <div class="tnd-banner-track" id="tnd-banner-track">
-        ${_banners.map(b => `<div class="tnd-banner-slide" ${b.link ? `onclick="window.open('${b.link}','_blank')" style="cursor:pointer"` : ''}><img src="${b.url}" alt="Banner"></div>`).join('')}
+  <div class="tnd-banner-track" id="tnd-banner-track">
+        ${_banners.map(b => `<div class="tnd-banner-slide" ${b.link ? `onclick="window.open('${b.link}','_blank')" style="cursor:pointer"` : ''}><picture>${b.urlDesktop ? `<source media="(min-width:900px)" srcset="${b.urlDesktop}">` : ''}<img src="${b.url}" alt="Banner"></picture></div>`).join('')}
       </div>
       ${_banners.length > 1 ? `<button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-banner-track',1)" aria-label="Banner siguiente">›</button>` : ''}
       ${_banners.length > 1 ? `<div class="tnd-banner-dots" id="tnd-banner-dots">${_banners.map((_,i) => `<span class="tnd-banner-dot${i===0?' active':''}"></span>`).join('')}</div>` : ''}
