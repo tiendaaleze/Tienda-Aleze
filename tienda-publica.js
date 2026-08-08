@@ -374,7 +374,7 @@ function _renderTienda() {
 .tnd-banner-slide { flex:0 0 100%;scroll-snap-align:start; }
 @media (min-width: 900px) {
   .tnd-banner-carousel { max-width:1100px; margin-left:auto; margin-right:auto; }
-  .tnd-banner-slide img { aspect-ratio:8/3; width:100%; object-fit:cover; display:block; }
+  .tnd-banner-slide img { aspect-ratio:auto; height:230px; width:100%; object-fit:cover; object-position:center; display:block; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
 .tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
