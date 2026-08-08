@@ -377,10 +377,7 @@ function _renderTienda() {
    completa sin cortar nada (contain) — el banner se ve más delgado sin perder logo/texto de
    los bordes. background suave rellena el espacio sobrante si la proporción no calza exacto. */
 @media (min-width: 900px) {
-  /* En vez de forzar un alto distinto a la proporción real (eso es lo que causaba el
-     recorte del texto), se limita el ANCHO del banner en pantallas grandes — el alto baja
-     solo, proporcionalmente, sin cortar ni deformar nada. */
-  .tnd-banner-carousel { max-width:640px; margin-left:auto; margin-right:auto; }
+  .tnd-banner-carousel { max-width:900px; margin-left:auto; margin-right:auto; }
   .tnd-banner-slide img { aspect-ratio:8/3; width:100%; object-fit:cover; display:block; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
