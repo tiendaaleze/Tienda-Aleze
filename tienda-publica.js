@@ -767,11 +767,11 @@ const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.5rem"><div cla
         <span style="background:#374151;color:#fff;font-size:.78rem;font-weight:700;padding:.4rem .8rem;border-radius:8px">💳 Tarjeta</span>
       </div>
     </div>
-    <a href="https://wa.me/51${waNum}" target="_blank" style="display:flex;align-items:center;gap:.75rem;background:#25D366;color:#fff;text-decoration:none;border-radius:14px;padding:1rem 1.25rem;margin-bottom:1.5rem;box-shadow:0 2px 8px rgba(37,211,102,.3)">
-      <span style="font-size:1.8rem">📲</span>
+  <a href="https://wa.me/51${waNum}" target="_blank" style="display:inline-flex;align-items:center;gap:.6rem;background:#fff;color:#1f2937;text-decoration:none;border-radius:12px;padding:.75rem 1.1rem;margin-bottom:1.5rem;box-shadow:0 2px 8px rgba(0,0,0,.08);border:1.5px solid #D1FAE5">
+      <span style="font-size:1.4rem">📲</span>
       <div>
-        <div style="font-weight:800;font-size:.95rem">Escríbenos por WhatsApp</div>
-        <div style="font-size:.82rem;opacity:.9">+51 ${waNum}</div>
+        <div style="font-weight:700;font-size:.85rem">Escríbenos por WhatsApp</div>
+        <div style="font-size:.76rem;color:#25D366;font-weight:600">+51 ${waNum}</div>
       </div>
     </a>`;
 
