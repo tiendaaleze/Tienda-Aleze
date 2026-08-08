@@ -371,10 +371,15 @@ function _renderTienda() {
   scrollbar-width:none;border-radius:14px;-webkit-overflow-scrolling:touch;
 }
 .tnd-banner-track::-webkit-scrollbar { display:none; }
-.tnd-banner-slide { flex:0 0 100%;scroll-snap-align:start; }
+/* Móvil/app: tal cual la versión que ya funcionaba bien — tamaño natural, sin recorte. */
+.tnd-banner-slide img { width:100%;height:auto;display:block; }
 @media (min-width: 900px) {
+  /* PC: si hay imagen de escritorio, se diseñó panorámica a propósito — se muestra completa,
+     sin forzar ni recortar. Si NO hay imagen de escritorio (banner viejo sin actualizar),
+     sigue aplicando el recorte de respaldo para que al menos no se vea gigante. */
   .tnd-banner-carousel { max-width:1100px; margin-left:auto; margin-right:auto; }
-  .tnd-banner-slide img { aspect-ratio:auto; height:230px; width:100%; object-fit:cover; object-position:center; display:block; }
+  .tnd-banner-slide picture:has(source) img { height:auto; object-fit:contain; }
+  .tnd-banner-slide picture:not(:has(source)) img { height:230px; width:100%; object-fit:cover; object-position:center; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
 .tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
