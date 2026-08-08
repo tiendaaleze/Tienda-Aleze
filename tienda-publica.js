@@ -372,14 +372,7 @@ function _renderTienda() {
 }
 .tnd-banner-track::-webkit-scrollbar { display:none; }
 .tnd-banner-slide { flex:0 0 100%;scroll-snap-align:start; }
-.tnd-banner-slide img { width:100%;aspect-ratio:8/3;object-fit:cover;display:block; }
-/* Escritorio: en vez de recortar la imagen (cover), se limita su ALTO máximo y se muestra
-   completa sin cortar nada (contain) — el banner se ve más delgado sin perder logo/texto de
-   los bordes. background suave rellena el espacio sobrante si la proporción no calza exacto. */
-@media (min-width: 900px) {
-  .tnd-banner-carousel { max-width:1100px; margin-left:auto; margin-right:auto; }
-  .tnd-banner-slide img { aspect-ratio:8/3; width:100%; object-fit:cover; display:block; }
-}
+.tnd-banner-slide img { width:100%;aspect-ratio:3.5/1;object-fit:cover;display:block; }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
 .tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
 .tnd-banner-dot.active { width:18px;border-radius:3px;background:#7C3AED; }
