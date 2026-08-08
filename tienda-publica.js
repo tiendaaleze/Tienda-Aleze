@@ -377,7 +377,8 @@ function _renderTienda() {
    completa sin cortar nada (contain) — el banner se ve más delgado sin perder logo/texto de
    los bordes. background suave rellena el espacio sobrante si la proporción no calza exacto. */
 @media (min-width: 900px) {
-  .tnd-banner-slide img { aspect-ratio:auto;max-height:220px;object-fit:contain;background:#F5F3FF; }
+  .tnd-banner-track { align-items:center; }
+  .tnd-banner-slide img { aspect-ratio:auto;max-height:150px;width:auto;max-width:100%;object-fit:contain;display:block;margin:0 auto;border-radius:14px; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
 .tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
