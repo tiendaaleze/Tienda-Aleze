@@ -146,9 +146,10 @@ function guardarConfigTienda(_silencioso) {
   const cfg = DB.config;
   cfg.eslogan    = document.getElementById('cfg-eslogan')?.value.trim() || 'Todo lo que necesitas, cerca de ti';
   cfg.bannerVisible = document.getElementById('cfg-banner-visible')?.checked !== false;
-  (cfg.banners || []).forEach((b, i) => {
-    b.url  = document.getElementById(`cfg-ban-img-${i}`)?.value.trim() || '';
-    b.link = document.getElementById(`cfg-ban-link-${i}`)?.value.trim() || '';
+(cfg.banners || []).forEach((b, i) => {
+    b.url        = document.getElementById(`cfg-ban-img-${i}`)?.value.trim() || '';
+    b.urlDesktop = document.getElementById(`cfg-ban-imgpc-${i}`)?.value.trim() || '';
+    b.link       = document.getElementById(`cfg-ban-link-${i}`)?.value.trim() || '';
   });
 cfg.tiendasTexto = document.getElementById('cfg-tiendas-texto')?.value.trim() || '';
   (cfg.serviciosBanners || []).forEach((b, i) => {
