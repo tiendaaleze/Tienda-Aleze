@@ -372,7 +372,7 @@ function _renderTienda() {
 }
 .tnd-banner-track::-webkit-scrollbar { display:none; }
 /* Móvil/app: tal cual la versión que ya funcionaba bien — tamaño natural, sin recorte. */
-.tnd-banner-slide { display:block; }
+.tnd-banner-slide { flex:0 0 100%;scroll-snap-align:start;display:block; }
 .tnd-banner-slide picture { display:block; width:100%; }
 .tnd-banner-slide img { width:100%;height:auto;display:block; }
 @media (min-width: 900px) {
