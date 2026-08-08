@@ -378,7 +378,7 @@ function _renderTienda() {
      sin forzar ni recortar. Si NO hay imagen de escritorio (banner viejo sin actualizar),
      sigue aplicando el recorte de respaldo para que al menos no se vea gigante. */
   .tnd-banner-carousel { max-width:1100px; margin-left:auto; margin-right:auto; }
-  .tnd-banner-slide picture:has(source) img { height:auto; object-fit:contain; }
+.tnd-banner-slide picture:has(source) img { width:100%; height:auto; object-fit:contain; }
   .tnd-banner-slide picture:not(:has(source)) img { height:230px; width:100%; object-fit:cover; object-position:center; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
