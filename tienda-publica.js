@@ -373,11 +373,11 @@ function _renderTienda() {
 .tnd-banner-track::-webkit-scrollbar { display:none; }
 .tnd-banner-slide { flex:0 0 100%;scroll-snap-align:start; }
 .tnd-banner-slide img { width:100%;aspect-ratio:8/3;object-fit:cover;display:block; }
-/* Escritorio: proporción más panorámica (más ancha, menos alta) que en móvil — la misma
-   imagen de 1600×600 recortada distinto según el ancho de pantalla, sin necesitar 2 archivos
-   separados. object-fit:cover se encarga del recorte, siempre centrado. */
+/* Escritorio: en vez de recortar la imagen (cover), se limita su ALTO máximo y se muestra
+   completa sin cortar nada (contain) — el banner se ve más delgado sin perder logo/texto de
+   los bordes. background suave rellena el espacio sobrante si la proporción no calza exacto. */
 @media (min-width: 900px) {
-  .tnd-banner-slide img { aspect-ratio:21/5; }
+  .tnd-banner-slide img { aspect-ratio:auto;max-height:220px;object-fit:contain;background:#F5F3FF; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
 .tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
