@@ -464,7 +464,7 @@ function _renderTienda() {
 .tnd-prod-info { padding:.55rem .75rem .65rem;text-align:center; }
 .tnd-prod-name { font-size:.8rem;font-weight:700;color:#1f2937;margin-bottom:.2rem;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
 .tnd-prod-price { font-size:1.05rem;font-weight:800;color:#7C3AED; }
-.tnd-prod-price-orig { font-size:.72rem;color:#9ca3af;text-decoration:line-through; }
+.tnd-prod-price-orig { font-size:.72rem;color:#6b7280;text-decoration:line-through; }
 /* Un solo contenedor coordina los 2 grupos de badges (izquierda: detalle/promo — derecha:
    stock) — antes eran 2 position:absolute independientes que no se "conocian" entre si, y en
    tarjetas angostas con texto largo en ambos lados (ej. "Ultimas unidades" + "Detalle"+
@@ -697,7 +697,7 @@ function _tndRenderHome() {
     const _precioMostrar = p.esCombo ? p.precio : (_pctDesc > 0 ? _promoRail.precioPromo : p.precio);
     const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
       : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : '');
-    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#9ca3af;text-decoration:line-through">S/ ${(+_precioRefRail).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
+    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#6b7280;text-decoration:line-through">S/ ${(+_precioRefRail).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
 
   const hoy = new Date().toISOString().slice(0,10);
@@ -710,12 +710,12 @@ function _tndRenderHome() {
   // horizontal real en vez de una grilla vertical estatica.
   const cats2 = (DB.categorias||[]).filter(c => c.nombre && !c.oculta);
   const catsHtml = cats2.length ? `<div class="tnd-section-title">📦 Categorías</div><div class="tnd-scroll-wrap"><button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-riel-cats',-1)" aria-label="Anteriores">‹</button><div class="tnd-scroll-row" id="tnd-riel-cats">${cats2.map(c => {
-    // Icono ilustrado a medida (con su propio color) si la categoria esta en la tabla — si no,
-    // cae a emoji (la foto trae el nombre incrustado, ilegible en un circulo chico, asi que
-    // solo es el ultimo recurso si no hay ni icono a medida ni emoji cargado).
+  
+// Foto real de la categoría (subida en Configuración) tiene prioridad — el ícono de
+    // color SVG queda como respaldo mientras esa categoría no tenga foto propia cargada.
     const _catIco = _tndCatIcono(c.nombre);
-    const _catBg = _catIco ? _catIco.color : 'linear-gradient(135deg,#5B21B6,#7C3AED)';
-    const _catVisual = _catIco ? `<svg width="30" height="30" viewBox="0 0 24 24" fill="white">${_catIco.svg}</svg>` : (c.emoji ? c.emoji : (c.imagen ? `<img src="${c.imagen}" alt="${c.nombre}">` : '📦'));
+    const _catBg = c.imagen ? '#F3F4F6' : (_catIco ? _catIco.color : 'linear-gradient(135deg,#5B21B6,#7C3AED)');
+    const _catVisual = c.imagen ? `<img src="${c.imagen}" alt="${c.nombre}">` : (_catIco ? `<svg width="30" height="30" viewBox="0 0 24 24" fill="white">${_catIco.svg}</svg>` : (c.emoji || '📦'));
     return `<div class="tnd-cat-bubble" onclick="tndSetCat(${c.id})">
       <div class="tnd-cat-circle" style="background:${_catBg}">${_catVisual}</div>
       <div class="tnd-cat-label">${c.nombre}</div>
