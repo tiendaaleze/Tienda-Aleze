@@ -534,6 +534,15 @@ function _renderTienda() {
   transition:all .15s;
 }
 .tnd-metodo-opt.selected { border-color:#7C3AED;background:#EDE9FE;color:#5B21B6; }
+/* Toast de feedback al agregar al carrito — reemplaza el parpadeo de borde verde anterior */
+#tnd-toast {
+  position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+  background:#1f2937; color:#fff; font-size:.85rem; font-weight:600;
+  padding:.7rem 1.2rem; border-radius:12px; box-shadow:0 4px 16px rgba(0,0,0,.25);
+  z-index:500; opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease;
+  display:flex; align-items:center; gap:.5rem; max-width:90vw;
+}
+#tnd-toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 @media(max-width:600px){
   .tnd-grid{grid-template-columns:repeat(2,1fr);}
   .tnd-panel{width:100vw;}
@@ -601,6 +610,7 @@ function _renderTienda() {
   <div class="tnd-grid" id="tnd-grid"></div>
 </div>
 
+<div id="tnd-toast">✅ <span id="tnd-toast-msg"></span></div>
 <!-- Panel lateral (carrito / checkout) -->
 <div class="tnd-panel-overlay" id="tnd-overlay" onclick="tndCerrarPanel()"></div>
 <div class="tnd-panel" id="tnd-panel">
@@ -929,6 +939,16 @@ function tndFiltrar() {
   }).join('') || '<p style="grid-column:1/-1;text-align:center;color:#9ca3af;padding:2rem">Sin productos que coincidan</p>';
 }
 
+let _tndToastTimer = null;
+function tndMostrarToast(mensaje) {
+  const toast = document.getElementById('tnd-toast');
+  const msgEl = document.getElementById('tnd-toast-msg');
+  if (!toast || !msgEl) return;
+  msgEl.textContent = mensaje;
+  toast.classList.add('show');
+  clearTimeout(_tndToastTimer);
+  _tndToastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+}
 function tndAgregarCarrito(prodId) {
   const p = DB.productos.find(x => x.id === prodId);
   if (!p || (p.esCombo ? p.promoActiva === false : stockTotal(p) <= 0)) return;
@@ -947,16 +967,9 @@ function tndAgregarCarrito(prodId) {
   } else {
     _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: paso, icon: cat?.emoji||'📦', tipo: p.tipo });
   }
-  tndSaveCart(); // persistir en localStorage
+tndSaveCart(); // persistir en localStorage
   tndUpdateCartBadge();
-  // Mini feedback
-  const cards = document.querySelectorAll('.tnd-prod-card');
-  cards.forEach(card => {
-    if (card.onclick && card.getAttribute('onclick')?.includes(''+prodId)) {
-      card.style.borderColor = '#10B981';
-      setTimeout(() => { card.style.borderColor = ''; }, 500);
-    }
-  });
+  tndMostrarToast(`${p.nombre} añadido al carrito`);
 }
 
 function tndUpdateCartBadge() {
@@ -1036,11 +1049,11 @@ function tndDetalleAgregarCarrito() {
   } else {
     _tiendaCart.push({ prodId: p.id, nombre: p.nombre, precio, cant, icon: cat?.emoji||'📦', tipo: p.tipo });
   }
-  tndSaveCart();
+tndSaveCart();
   tndUpdateCartBadge();
   tndCerrarPanel();
+  tndMostrarToast(`${p.nombre} añadido al carrito`);
 }
-
 // Identificación mínima para ver puntos — mismo mecanismo real usado al pedir (teléfono = llave).
 function tndIdentificarParaPuntos() {
   const nombre = document.getElementById('tnd-puntos-nombre')?.value.trim();
