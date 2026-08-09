@@ -186,6 +186,14 @@ function tndSaveCart() {
   } catch(e) {}
 }
 
+// Función para el tacho — eliminar item completo del carrito
+function tndEliminarDelCarrito(prodId) {
+  _tiendaCart = _tiendaCart.filter(i => i.prodId !== prodId);
+  tndSaveCart();
+  tndUpdateCartBadge();
+  tndRenderPanel();
+}
+
 // Restaura el carrito desde localStorage — valida stock y precio actual
 function tndLoadCart() {
   try {
@@ -517,6 +525,7 @@ function _renderTienda() {
 .tnd-qty-btn { width:28px;height:28px;border-radius:6px;background:#e5e7eb;border:none;cursor:pointer;font-size:1rem; }
 .tnd-qty-btn:hover { background:#7C3AED;color:white; }
 .tnd-qty-val { font-size:.9rem;font-weight:700;min-width:24px;text-align:center; }
+.tnd-cart-trash { background:none; border:none; cursor:pointer; font-size:1rem; color:#ef4444; padding:.2rem .3rem; margin-left:.2rem; flex-shrink:0; }
 .tnd-btn { width:100%;padding:.8rem;border-radius:10px;border:none;cursor:pointer;font-size:1rem;font-weight:700; }
 .tnd-btn-primary { background:#7C3AED;color:white; }
 .tnd-btn-primary:hover { background:#5B21B6; }
