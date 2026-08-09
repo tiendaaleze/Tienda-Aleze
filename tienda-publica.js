@@ -352,8 +352,14 @@ function _renderTienda() {
 .tnd-cart-count.tnd-bump { animation:tndCartBump .35s ease; }
 @keyframes tndCartBump { 0%{transform:scale(1);} 40%{transform:scale(1.45);} 100%{transform:scale(1);} }
 .tnd-main { max-width:1400px;margin:0 auto;padding:1.25rem; }
+/* Buscador sticky: queda anclado justo debajo del header al hacer scroll — fondo sólido
+   propio para que el contenido que pasa detrás no se transparente. */
+#tnd-search-sticky-wrap {
+  position:sticky; top:60px; z-index:90;
+  background:#FAF8FF; margin:0 -1.25rem; padding:0 1.25rem .75rem;
+}
 .tnd-search-bar {
-  display:flex;gap:.5rem;margin-bottom:1rem;
+  display:flex;gap:.5rem;
   background:white;border-radius:12px;padding:.6rem 1rem;
   box-shadow:0 1px 4px rgba(0,0,0,.08);
 }
@@ -613,7 +619,7 @@ function _renderTienda() {
 </div>
 <div id="tnd-recaptcha-container"></div>
 <div class="tnd-header">
-  <div class="tnd-brand"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
+  <div class="tnd-brand" onclick="_tndIrHome()" style="cursor:pointer"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.5rem;align-items:center">
     <span id="sync-badge-tienda" style="display:none;align-items:center;gap:.2rem;background:#EDE9FE;border-radius:12px;padding:.15rem .4rem;font-size:.66rem;color:#7C3AED;white-space:nowrap;flex-shrink:0"></span>
     <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
@@ -625,10 +631,11 @@ function _renderTienda() {
 </div>
 
 <div class="tnd-main">
-  <div class="tnd-search-bar">
-    <button id="tnd-back-home" onclick="_tndIrHome()" style="display:none;flex-shrink:0;align-items:center;gap:.3rem;background:var(--primary);color:#fff;border:none;border-radius:8px;padding:0 .7rem;font-size:.82rem;font-weight:700;cursor:pointer">🏠 <span class="tnd-back-home-txt">Inicio</span></button>
-    <span>🔍</span>
-    <input type="text" id="tnd-search" placeholder="Buscar producto..." oninput="tndBuscarDesdeHome()" />
+  <div id="tnd-search-sticky-wrap">
+    <div class="tnd-search-bar">
+      <span>🔍</span>
+      <input type="text" id="tnd-search" placeholder="Buscar producto..." oninput="tndBuscarDesdeHome()" />
+    </div>
   </div>
   <div class="tnd-cats" id="tnd-cats" style="display:none;position:relative">
     <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-cats-riel',-1)" aria-label="Categorías anteriores">‹</button>
@@ -826,7 +833,7 @@ const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.5rem"><div cla
       </div>
     </a>`;
 
-grid.innerHTML = bannerHtml + promosHtml + catsHtml + recientesHtml + serviciosHtml + tiendasHtml + pagoContactoHtml
+grid.innerHTML = catsHtml + bannerHtml + promosHtml + recientesHtml + serviciosHtml + tiendasHtml + pagoContactoHtml
     + `<button id="tnd-ver-catalogo-btn" onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
   _tndIniciarCarruselBanner(_banners.length);
   _tndIniciarCarruselServicios(_svcBanners.length);
