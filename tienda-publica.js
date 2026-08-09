@@ -285,13 +285,13 @@ function initTienda() {
     _initTiendaConDatos();
   }
 }
-
-// Tienda pública: siempre stock consolidado entre sedes — el cliente no elige sede, despacha quien confirme (ver Fase 6).
 function _getStockBadge(p) {
   const _stockPub = stockTotal(p);
   if (_stockPub <= 0) return '<span class="badge badge-red">Agotado</span>';
   if (_stockPub <= p.stockMin) return '<span class="badge badge-orange">Últimas unidades</span>';
-  return '<span class="badge badge-green">Disponible</span>';
+  // Sin badge cuando hay stock normal — el usuario asume disponibilidad por defecto;
+  // el badge queda reservado para las excepciones que sí necesitan atención.
+  return '';
 }
 
 function _getPromoTienda(p) {
