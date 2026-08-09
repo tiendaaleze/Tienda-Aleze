@@ -547,6 +547,29 @@ function _renderTienda() {
   .tnd-grid{grid-template-columns:repeat(2,1fr);}
   .tnd-panel{width:100vw;}
 }
+#tnd-bottombar {
+  position:fixed; left:0; right:0; bottom:0; z-index:150;
+  background:#fff; border-top:1px solid #e5e7eb;
+  display:flex; box-shadow:0 -2px 10px rgba(0,0,0,.06);
+  padding-bottom:env(safe-area-inset-bottom, 0px);
+}
+.tnd-bb-item {
+  flex:1; background:none; border:none; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  padding:.5rem 0 .4rem; color:#9ca3af; font-size:.65rem; font-weight:600;
+}
+.tnd-bb-item.active { color:#7C3AED; }
+.tnd-bb-icon { font-size:1.3rem; line-height:1; }
+.tnd-bb-badge {
+  position:absolute; top:-6px; right:-8px; background:#EF4444; color:#fff;
+  font-size:.6rem; font-weight:700; border-radius:50%; min-width:14px; height:14px;
+  display:flex; align-items:center; justify-content:center; padding:0 2px;
+}
+#tienda-publica { padding-bottom:64px; }
+@media (min-width:900px) {
+  #tnd-bottombar { display:none; }
+  #tienda-publica { padding-bottom:0; }
+}
 </style>
 
 <div class="tnd-bg-pattern" aria-hidden="true">
@@ -611,6 +634,21 @@ function _renderTienda() {
 </div>
 
 <div id="tnd-toast">✅ <span id="tnd-toast-msg"></span></div>
+<!-- Barra de navegación inferior fija -->
+<nav id="tnd-bottombar">
+  <button type="button" class="tnd-bb-item ${_tndVista==='home'?'active':''}" onclick="_tndIrHome()">
+    <span class="tnd-bb-icon">🏠</span><span class="tnd-bb-label">Inicio</span>
+  </button>
+  <button type="button" class="tnd-bb-item ${_tndVista==='catalogo'?'active':''}" onclick="tndSetCat('')">
+    <span class="tnd-bb-icon">📦</span><span class="tnd-bb-label">Catálogo</span>
+  </button>
+  <button type="button" class="tnd-bb-item" onclick="tndAbrirCarrito()">
+    <span class="tnd-bb-icon" style="position:relative">🛒<span class="tnd-bb-badge" id="tnd-bb-cart-count">0</span></span><span class="tnd-bb-label">Carrito</span>
+  </button>
+  <button type="button" class="tnd-bb-item" onclick="tndAbrirMisPuntos()">
+    <span class="tnd-bb-icon">⭐</span><span class="tnd-bb-label">Puntos</span>
+  </button>
+</nav>
 <!-- Panel lateral (carrito / checkout) -->
 <div class="tnd-panel-overlay" id="tnd-overlay" onclick="tndCerrarPanel()"></div>
 <div class="tnd-panel" id="tnd-panel">
@@ -851,7 +889,7 @@ function tndSetCat(id) {
     if (cats) cats.style.display = 'flex';
     tndRenderCats();
     tndFiltrar();
-  } else {
+} else {
     document.querySelectorAll('.tnd-cat-tag').forEach(t => t.classList.remove('active'));
     const sel = id
       ? document.querySelector(`.tnd-cat-tag[onclick="tndSetCat(${id})"]`)
@@ -859,6 +897,7 @@ function tndSetCat(id) {
     if (sel) sel.classList.add('active');
     tndFiltrar();
   }
+  _tndActualizarBottomBar();
 }
 function _tndIrHome() {
   _tndVista = 'home';
@@ -870,6 +909,10 @@ function _tndIrHome() {
   if (cats) cats.style.display = 'none';
   if (search) search.value = '';
   _tndRenderHome();
+  _tndActualizarBottomBar();
+}
+function _tndActualizarBottomBar() {
+  document.querySelectorAll('.tnd-bb-item').forEach((b,i) => b.classList.toggle('active', i === (_tndVista==='home'?0:1)));
 }
 
 function tndFiltrar() {
@@ -978,12 +1021,12 @@ function tndUpdateCartBadge() {
   const el = document.getElementById('tnd-cart-count');
   if (el) {
     el.textContent = total;
-    // Pequeño "salto" cada vez que el carrito cambia — reinicia la animacion sacando y
-    // volviendo a poner la clase, para que se dispare de nuevo aunque ya estuviera puesta.
     el.classList.remove('tnd-bump');
     void el.offsetWidth;
     el.classList.add('tnd-bump');
   }
+  const elBB = document.getElementById('tnd-bb-cart-count');
+  if (elBB) elBB.textContent = total;
 }
 
 function tndAbrirCarrito() {
