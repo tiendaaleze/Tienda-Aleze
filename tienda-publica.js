@@ -566,9 +566,14 @@ function _renderTienda() {
   display:flex; align-items:center; justify-content:center; padding:0 2px;
 }
 #tienda-publica { padding-bottom:64px; }
+/* En móvil, el header oculta ⭐ y 🛒 (ya cubiertos por la barra inferior), y se oculta el
+   botón "Ver todo el catálogo" del Home (mismo destino que "Catálogo" de la barra). En
+   escritorio no cambia nada — quedan visibles como siempre, ya que ahí la barra está oculta. */
+.tnd-header .tnd-cart-btn, #tnd-ver-catalogo-btn { display:none; }
 @media (min-width:900px) {
   #tnd-bottombar { display:none; }
   #tienda-publica { padding-bottom:0; }
+  .tnd-header .tnd-cart-btn, #tnd-ver-catalogo-btn { display:inline-flex; }
 }
 </style>
 
@@ -822,7 +827,7 @@ const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.5rem"><div cla
     </a>`;
 
 grid.innerHTML = bannerHtml + promosHtml + catsHtml + recientesHtml + serviciosHtml + tiendasHtml + pagoContactoHtml
-    + `<button onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
+    + `<button id="tnd-ver-catalogo-btn" onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
   _tndIniciarCarruselBanner(_banners.length);
   _tndIniciarCarruselServicios(_svcBanners.length);
 }
