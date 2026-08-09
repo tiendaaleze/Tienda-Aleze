@@ -581,6 +581,16 @@ function _renderTienda() {
   #tienda-publica { padding-bottom:0; }
   .tnd-header .tnd-cart-btn, #tnd-ver-catalogo-btn { display:inline-flex; }
 }
+#tnd-wa-fab {
+  position:fixed; right:16px; bottom:80px; z-index:160;
+  width:52px; height:52px; border-radius:50%;
+  background:#25D366; color:#fff; font-size:1.5rem;
+  display:flex; align-items:center; justify-content:center;
+  text-decoration:none; box-shadow:0 4px 12px rgba(37,211,102,.4);
+}
+@media (min-width:900px) {
+  #tnd-wa-fab { bottom:24px; } /* sin barra inferior en PC, baja más cerca del borde */
+}
 </style>
 
 <div class="tnd-bg-pattern" aria-hidden="true">
@@ -644,8 +654,9 @@ function _renderTienda() {
   </div>
   <div class="tnd-grid" id="tnd-grid"></div>
 </div>
-
 <div id="tnd-toast">✅ <span id="tnd-toast-msg"></span></div>
+<!-- WhatsApp flotante — siempre accesible, sin importar el scroll -->
+<a href="https://wa.me/51${waNum}" target="_blank" id="tnd-wa-fab" aria-label="Escríbenos por WhatsApp">📲</a>
 <!-- Barra de navegación inferior fija -->
 <nav id="tnd-bottombar">
   <button type="button" class="tnd-bb-item ${_tndVista==='home'?'active':''}" onclick="_tndIrHome()">
@@ -812,28 +823,7 @@ const tiendasHtml = tiendas.length ? `<div style="margin-bottom:1.5rem"><div cla
       ${cfg.tiendasTexto?`<div style="font-size:.8rem;color:#6b7280;margin-bottom:.75rem;line-height:1.4">${cfg.tiendasTexto}</div>`:''}
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.75rem">${tiendas.map(t=>`<div class="tnd-rail-card" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)"><a href="${t.url}" target="_blank" style="display:block;text-decoration:none">${t.imagen?`<img src="${t.imagen}" style="width:100%;height:90px;object-fit:cover;display:block">`:`<div style="height:90px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:700;color:#374151">${t.nombre}</div>`}</a>${t.waCatalogo?`<a href="https://wa.me/51${waNum}?text=${encodeURIComponent('Hola, quisiera hacer un pedido del catálogo '+t.nombre)}" target="_blank" style="display:block;text-align:center;padding:.5rem;font-size:.78rem;font-weight:700;color:#25D366;text-decoration:none;border-top:1px solid #f3f4f6">📲 Pedir por WhatsApp</a>`:''}</div>`).join('')}</div></div>` : '';
 
-  // Formas de pago (insignias informativas) + acceso directo a WhatsApp — reutiliza waNum,
-  // ya definido más arriba en esta misma función (_tndRenderHome).
-  const pagoContactoHtml = `
-    <div style="margin-bottom:1.25rem">
-      <div class="tnd-section-title">💳 Formas de pago</div>
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-        <span style="background:#EDE9FE;color:#5B21B6;font-size:.78rem;font-weight:700;padding:.4rem .8rem;border-radius:8px">💵 Efectivo</span>
-        <span style="background:#7C3AED;color:#fff;font-size:.78rem;font-weight:700;padding:.4rem .8rem;border-radius:8px">Yape</span>
-        <span style="background:#00B4E1;color:#fff;font-size:.78rem;font-weight:700;padding:.4rem .8rem;border-radius:8px">Plin</span>
-        <span style="background:#1f2937;color:#fff;font-size:.78rem;font-weight:700;padding:.4rem .8rem;border-radius:8px">🏦 Transferencia</span>
-        <span style="background:#374151;color:#fff;font-size:.78rem;font-weight:700;padding:.4rem .8rem;border-radius:8px">💳 Tarjeta</span>
-      </div>
-    </div>
-  <a href="https://wa.me/51${waNum}" target="_blank" style="display:inline-flex;align-items:center;gap:.6rem;background:#fff;color:#1f2937;text-decoration:none;border-radius:12px;padding:.75rem 1.1rem;margin-bottom:1.5rem;box-shadow:0 2px 8px rgba(0,0,0,.08);border:1.5px solid #D1FAE5">
-      <span style="font-size:1.4rem">📲</span>
-      <div>
-        <div style="font-weight:700;font-size:.85rem">Escríbenos por WhatsApp</div>
-        <div style="font-size:.76rem;color:#25D366;font-weight:600">+51 ${waNum}</div>
-      </div>
-    </a>`;
-
-grid.innerHTML = catsHtml + bannerHtml + promosHtml + recientesHtml + serviciosHtml + tiendasHtml + pagoContactoHtml
+grid.innerHTML = catsHtml + bannerHtml + promosHtml + recientesHtml + serviciosHtml + tiendasHtml
     + `<button id="tnd-ver-catalogo-btn" onclick="tndSetCat('')" style="width:100%;margin-top:.25rem;margin-bottom:1rem;padding:.75rem;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-weight:700;font-size:.88rem;cursor:pointer;color:#374151">Ver todo el catálogo →</button>`;
   _tndIniciarCarruselBanner(_banners.length);
   _tndIniciarCarruselServicios(_svcBanners.length);
@@ -1136,8 +1126,7 @@ function tndRenderPanel() {
   const titulo = document.getElementById('tnd-panel-titulo');
   const body = document.getElementById('tnd-panel-body');
   const footer = document.getElementById('tnd-panel-footer');
-
-  if (_tndStep === 'cart') {
+if (_tndStep === 'cart') {
     titulo.textContent = '🛒 Tu carrito';
     const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
     if (_tiendaCart.length === 0) {
@@ -1156,16 +1145,30 @@ function tndRenderPanel() {
         <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},-1)">−</button>
         <span class="tnd-qty-val">${item.tipo==='granel'?Math.round(item.cant*1000)+'g':item.cant}</span>
         <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},1)">+</button>
+        <button class="tnd-cart-trash" onclick="tndEliminarDelCarrito(${item.prodId})" title="Eliminar" aria-label="Eliminar producto">🗑️</button>
       </div>`).join('')}
-      <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:.9rem;color:#6b7280">Subtotal</span>
-        <strong style="font-size:1.2rem;color:#7C3AED">S/ ${subtotal.toFixed(2)}</strong>
+      <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem">
+        <div style="display:flex;justify-content:space-between;font-size:.85rem;color:#6b7280;margin-bottom:.3rem">
+          <span>Subtotal</span><span>S/ ${subtotal.toFixed(2)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:.85rem;color:#6b7280;margin-bottom:.5rem">
+          <span>Envío</span><span>Se calcula en el siguiente paso</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px dashed #e5e7eb;padding-top:.5rem">
+          <span style="font-size:.9rem;font-weight:700;color:#1f2937">Total estimado</span>
+          <strong style="font-size:1.2rem;color:#7C3AED">S/ ${subtotal.toFixed(2)}</strong>
+        </div>
       </div>`;
     footer.innerHTML = `
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.75rem">
+        <span style="background:#EDE9FE;color:#5B21B6;font-size:.68rem;font-weight:700;padding:.3rem .6rem;border-radius:6px">💵 Efectivo</span>
+        <span style="background:#7C3AED;color:#fff;font-size:.68rem;font-weight:700;padding:.3rem .6rem;border-radius:6px">Yape</span>
+        <span style="background:#00B4E1;color:#fff;font-size:.68rem;font-weight:700;padding:.3rem .6rem;border-radius:6px">Plin</span>
+        <span style="background:#1f2937;color:#fff;font-size:.68rem;font-weight:700;padding:.3rem .6rem;border-radius:6px">💳 Tarjeta</span>
+      </div>
       <button class="tnd-btn tnd-btn-primary" onclick="tndIrDatos()">Continuar → Datos</button>
       <button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>`;
   }
-
   if (_tndStep === 'verificar-sms') {
     titulo.textContent = '🔒 Verificar tu número';
     body.innerHTML = `
