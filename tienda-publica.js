@@ -377,11 +377,8 @@ function _renderTienda() {
 .tnd-banner-slide img { width:100%;height:auto;display:block; }
 @media (min-width: 900px) {
   .tnd-banner-carousel { max-width:1100px; margin-left:auto; margin-right:auto; }
-  /* Mismo alto fijo para TODOS los banners en escritorio, tengan o no imagen PC propia —
-     así se ven parejos entre sí durante la transición, incluso mientras se van subiendo las
-     imágenes PC de a poco. object-fit:contain para no recortar ninguna, sea cual sea su
-     proporción real. */
-  .tnd-banner-slide picture img { height:230px; width:100%; object-fit:contain; background:linear-gradient(135deg,#5B21B6,#7C3AED); }
+.tnd-banner-slide picture:has(source) img { width:100%; height:auto; object-fit:contain; }
+  .tnd-banner-slide picture:not(:has(source)) img { height:230px; width:100%; object-fit:cover; object-position:center; }
 }
 .tnd-banner-dots { display:flex;justify-content:center;gap:6px;margin-top:.6rem; }
 .tnd-banner-dot { width:6px;height:6px;border-radius:50%;background:#D1D5DB;transition:all .25s; }
