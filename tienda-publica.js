@@ -891,8 +891,10 @@ function tndBuscarDesdeHome() {
     _tndCatActiva = '';
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
+    const ordenWrap = document.getElementById('tnd-orden-wrap');
     if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
+    if (ordenWrap) ordenWrap.style.display = 'block';
     tndRenderCats();
   }
   tndFiltrar();
