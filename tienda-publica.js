@@ -656,10 +656,17 @@ function _renderTienda() {
       <input type="text" id="tnd-search" placeholder="Buscar producto..." oninput="tndBuscarDesdeHome()" />
     </div>
   </div>
-  <div class="tnd-cats" id="tnd-cats" style="display:none;position:relative">
+<div class="tnd-cats" id="tnd-cats" style="display:none;position:relative">
     <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-cats-riel',-1)" aria-label="Categorías anteriores">‹</button>
     <div id="tnd-cats-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
     <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-cats-riel',1)" aria-label="Categorías siguientes">›</button>
+  </div>
+  <div id="tnd-orden-wrap" style="display:none;margin-bottom:.75rem">
+    <select id="tnd-orden" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndFiltrar()">
+      <option value="">Ordenar por...</option>
+      <option value="precio-asc">Precio: menor a mayor</option>
+      <option value="precio-desc">Precio: mayor a menor</option>
+    </select>
   </div>
   <div class="tnd-grid" id="tnd-grid"></div>
 </div>
@@ -896,11 +903,15 @@ function tndSetCat(id) {
     _tndVista = 'catalogo';
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
-    if (back) back.style.display = 'inline-flex';
+if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
     tndRenderCats();
-    tndFiltrar();
-} else {
+  }
+  const _ordenWrap1 = document.getElementById('tnd-orden-wrap');
+  if (_ordenWrap1) _ordenWrap1.style.display = 'block';
+  tndFiltrar();
+}
+else {
     document.querySelectorAll('.tnd-cat-tag').forEach(t => t.classList.remove('active'));
     const sel = id
       ? document.querySelector(`.tnd-cat-tag[onclick="tndSetCat(${id})"]`)
@@ -916,8 +927,10 @@ function _tndIrHome() {
   const back = document.getElementById('tnd-back-home');
   const cats = document.getElementById('tnd-cats');
   const search = document.getElementById('tnd-search');
+  const ordenWrap = document.getElementById('tnd-orden-wrap');
   if (back) back.style.display = 'none';
   if (cats) cats.style.display = 'none';
+  if (ordenWrap) ordenWrap.style.display = 'none';
   if (search) search.value = '';
   _tndRenderHome();
   _tndActualizarBottomBar();
@@ -936,7 +949,7 @@ function tndFiltrar() {
   // — un descuento directo (ej. Papa a S/2.00) es tan "promocion" como un pack, no debe
   // quedar invisible en este filtro solo por no tener su propia categoria.
   const _catPromoActiva = _tndCatActiva && (DB.categorias||[]).find(c => c.id == _tndCatActiva && c.nombre === 'Promociones');
-  let prods = (DB.productos||[]).filter(p => {
+let prods = (DB.productos||[]).filter(p => {
     if (_tndCatActiva) {
       const _esDescuentoIndividual = _catPromoActiva && !p.esCombo && !!_getPromoTienda(p);
       if (p.cat != _tndCatActiva && !_esDescuentoIndividual) return false;
@@ -946,6 +959,38 @@ function tndFiltrar() {
     if (p.esCombo && p.promoActiva === false) return false; // ocultar combos desactivados
     return true;
   });
+
+  const _ordenSel = document.getElementById('tnd-orden')?.value || '';
+  // Catálogo no estático: sin orden manual elegido, se mezcla — pero los destacados (combos
+  // o con promo activa) siempre quedan primero. El mezclado se guarda en sessionStorage por
+  // el ID de cada producto, así el orden se mantiene ESTABLE durante toda la visita (entrar a
+  // un detalle y volver no reordena todo de nuevo) — recién cambia al cerrar y reabrir la
+  // tienda (nueva sessionStorage).
+  if (!_ordenSel) {
+    const destacados = prods.filter(p => p.esCombo || !!_getPromoTienda(p));
+    const resto = prods.filter(p => !p.esCombo && !_getPromoTienda(p));
+    const claveSesion = 'tnd_orden_' + (_tndCatActiva || 'todos') + '_' + (buscar || '');
+    let ordenGuardado = null;
+    try { ordenGuardado = JSON.parse(sessionStorage.getItem(claveSesion) || 'null'); } catch(e) {}
+    let restoOrdenado;
+    if (ordenGuardado) {
+      // Reconstruye el orden guardado (lista de IDs), agregando al final cualquier producto
+      // nuevo que no estuviera en esa lista todavía (recién agregado durante la sesión).
+      const porId = new Map(resto.map(p => [p.id, p]));
+      restoOrdenado = ordenGuardado.map(id => porId.get(id)).filter(Boolean);
+      resto.forEach(p => { if (!ordenGuardado.includes(p.id)) restoOrdenado.push(p); });
+    } else {
+      restoOrdenado = resto.slice();
+      for (let i = restoOrdenado.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [restoOrdenado[i], restoOrdenado[j]] = [restoOrdenado[j], restoOrdenado[i]];
+      }
+      try { sessionStorage.setItem(claveSesion, JSON.stringify(restoOrdenado.map(p => p.id))); } catch(e) {}
+    }
+    prods = [...destacados, ...restoOrdenado];
+  }
+  if (_ordenSel === 'precio-asc') prods = prods.slice().sort((a,b) => a.precio - b.precio);
+  else if (_ordenSel === 'precio-desc') prods = prods.slice().sort((a,b) => b.precio - a.precio);
 
   const grid = document.getElementById('tnd-grid');
   if (!grid) return;
