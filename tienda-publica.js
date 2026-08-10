@@ -903,15 +903,13 @@ function tndSetCat(id) {
     _tndVista = 'catalogo';
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
-if (back) back.style.display = 'inline-flex';
+    const ordenWrap = document.getElementById('tnd-orden-wrap');
+    if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
+    if (ordenWrap) ordenWrap.style.display = 'block';
     tndRenderCats();
-  }
-  const _ordenWrap1 = document.getElementById('tnd-orden-wrap');
-  if (_ordenWrap1) _ordenWrap1.style.display = 'block';
-  tndFiltrar();
-}
-else {
+    tndFiltrar();
+  } else {
     document.querySelectorAll('.tnd-cat-tag').forEach(t => t.classList.remove('active'));
     const sel = id
       ? document.querySelector(`.tnd-cat-tag[onclick="tndSetCat(${id})"]`)
