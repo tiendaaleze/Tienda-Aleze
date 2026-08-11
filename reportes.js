@@ -884,6 +884,12 @@ async function guardarActualizarVenta() {
           batch.set(docM(dbModular, 'productos', String(prod.id)),
             { stock: incrementM(cantARestituir) }, { merge: true });
           _deltasStock.push({ prod, delta: cantARestituir });
+          // Revertir el limite global de la promo, si el producto tiene una activa con limite
+          // — nunca debe quedar inflado por una venta que ya no existe.
+          const _promoAsoc = DB.promociones.find(p => p.limite > 0 && (p.packProdId === prod.id || p.prod1 == prod.id));
+          if (_promoAsoc) {
+            batch.set(docM(dbModular, 'promociones', String(_promoAsoc.id)), { vendidos: incrementM(-cantARestituir) }, { merge: true });
+          }
         }
       }
     });
@@ -991,6 +997,10 @@ async function guardarActualizarVenta() {
       batchP.set(docM(dbModular, 'productos', String(prod.id)),
         { stock: incrementM(dev.cantDevuelta) }, { merge: true });
       _deltasStockP.push({ prod, delta: dev.cantDevuelta });
+      const _promoAsocP = DB.promociones.find(p => p.limite > 0 && (p.packProdId === prod.id || p.prod1 == prod.id));
+      if (_promoAsocP) {
+        batchP.set(docM(dbModular, 'promociones', String(_promoAsocP.id)), { vendidos: incrementM(-dev.cantDevuelta) }, { merge: true });
+      }
     }
   });
 
