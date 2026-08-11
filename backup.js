@@ -36,24 +36,37 @@ async function _ejecutarBackup() {
   payload._backupUser = currentUser;
   payload._backupColecciones = [..._BACKUP_COLECCIONES_COMPLETAS, ..._BACKUP_COLECCIONES_30DIAS];
 
+  const _fallos = [];
   try {
     await setDocM(docM(dbModular, 'aleze_backups', key), payload);
-    // Un documento aparte por cada colección propia — evita el límite de 1 MB por documento.
-    const trabajos = [
-      ..._BACKUP_COLECCIONES_COMPLETAS.map(async col => {
-        const items = await _leerColeccionParaBackup(col);
-        return setDocM(docM(dbModular, 'aleze_backups', key + '__' + col), { items });
-      }),
-      ..._BACKUP_COLECCIONES_30DIAS.map(async col => {
-        const items = await _leerColeccionParaBackup(col, hace30dias);
-        return setDocM(docM(dbModular, 'aleze_backups', key + '__' + col), { items });
-      }),
-    ];
-    await Promise.all(trabajos);
-    console.log('[Backup] Guardado completo:', key);
   } catch (e) {
-    console.warn('[Backup] Error:', e);
-    alert('⚠️ El respaldo automático de las ' + ahora.toLocaleTimeString('es-PE') + ' no se pudo guardar completo. Revisa tu conexión — el sistema lo reintentará en 30 minutos.');
+    _fallos.push({ parte: 'documento principal (config + catálogo)', codigo: e.code || '', mensaje: e.message || String(e) });
+  }
+  // Un documento aparte por cada colección propia — evita el límite de 1 MB por documento.
+  // Cada uno reporta su propio resultado individualmente (allSettled, no Promise.all) — así
+  // se identifica con certeza CUAL parte especifica fallo y por que, en vez de solo saber que
+  // "algo" fallo en algun lugar del lote completo.
+  const _trabajos = [
+    ..._BACKUP_COLECCIONES_COMPLETAS.map(col => ({ col, filtro: null })),
+    ..._BACKUP_COLECCIONES_30DIAS.map(col => ({ col, filtro: hace30dias })),
+  ];
+  const _resultados = await Promise.allSettled(_trabajos.map(async ({ col, filtro }) => {
+    const items = await _leerColeccionParaBackup(col, filtro);
+    await setDocM(docM(dbModular, 'aleze_backups', key + '__' + col), { items });
+  }));
+  _resultados.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      const e = r.reason;
+      _fallos.push({ parte: 'colección "' + _trabajos[i].col + '"', codigo: e?.code || '', mensaje: e?.message || String(e) });
+    }
+  });
+
+  if (_fallos.length === 0) {
+    console.log('[Backup] Guardado completo:', key);
+  } else {
+    console.warn('[Backup] Fallos detallados:', _fallos);
+    const _detalle = _fallos.map(f => '• ' + f.parte + (f.codigo ? ' [' + f.codigo + ']' : '') + ': ' + f.mensaje).join('\n');
+    alert('⚠️ El respaldo automático de las ' + ahora.toLocaleTimeString('es-PE') + ' no se guardó completo.\n\n' + _detalle + '\n\nEl sistema lo reintentará en 30 minutos.');
   }
 }
 
