@@ -26,7 +26,7 @@ function renderPosGrid(search = '') {
   // Guard: no renderizar sin sesión activa
   if (!currentUser) return;
   const s = search || document.getElementById('pos-search')?.value.toLowerCase() || '';
-  let prods = DB.productos.filter(p => (p.esCombo || stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
+  let prods = DB.productos.filter(p => (stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
  if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)));
   if (posFilterCat) prods = prods.filter(p => p.cat == posFilterCat);
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
@@ -65,7 +65,7 @@ function _posEnterScan() {
   if (!s) return;
   
   const matches = DB.productos.filter(p =>
-    (p.esCombo || stockEnSede(p) > 0) &&
+    (stockEnSede(p) > 0) &&
     (!p.esCombo || p.promoActiva !== false) &&
     (_norm(p.codigo||'') === _norm(s) || _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)))
   );
@@ -90,7 +90,7 @@ function _mobPosEnterScan() {
   if (!s) return;
   
   const matches = DB.productos.filter(p =>
-    (p.esCombo || stockEnSede(p) > 0) &&
+    (stockEnSede(p) > 0) &&
     (!p.esCombo || p.promoActiva !== false) &&
     (_norm(p.codigo||'') === _norm(s) || _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)))
   );
@@ -112,19 +112,20 @@ function _mobPosEnterScan() {
 function addToCart(prodId) {
   const prod = DB.productos.find(p => p.id === prodId);
   if (!prod) return;
-  if (prod.esCombo && prod.componentes) {
-    for (const comp of prod.componentes) {
-      const cp = DB.productos.find(x => x.id === comp.prodId);
-      if (!cp || stockEnSede(cp) < comp.cant) {
-        alert(`Stock insuficiente de "${cp?.nombre || 'componente'}" para armar este pack`);
-        return;
-      }
-    }
-  }
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == prodId && !pr.prod2);
-  const precio = promo ? promo.precioPromo : prod.precio;
+  const esPromoCantidad = promo && (promo.tipo === '2x1' || promo.tipo === '3x2');
+  const precio = (promo && !esPromoCantidad) ? promo.precioPromo : prod.precio;
   const existing = cart.find(i => i.prodId === prodId);
+  // Pack: limite por venta es un bloqueo directo, no un precio distinto para el exceso — no
+  // hay un "precio normal" claro al que revertir un pack extra (confirmado explicitamente).
+  if (prod.esCombo) {
+    const promoPack = promoActivas.find(pr => pr.packProdId === prodId);
+    if (promoPack && promoPack.maxPorVenta > 0 && (existing ? existing.cant : 0) >= promoPack.maxPorVenta) {
+      alert(`Máximo ${promoPack.maxPorVenta} unidad(es) de este pack por venta.`);
+      return;
+    }
+  }
   if (existing) {
     if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
@@ -213,7 +214,7 @@ function getCatIcono(catId, size) {
 // número distinto al que realmente se cobró en la venta — el redondeo de productos por peso
 // se perdería en cualquier pantalla que no sea el carrito original. Se usa tanto en
 // procesarVenta() como en cobrarFiado(), ambas pasan por esta misma función.
-function aplicarPreciosProporcionales(cartRef, comboInfo, cantidadInfo) {
+function aplicarPreciosProporcionales(cartRef, comboInfo, cantidadInfo, recargoInfo) {
   const result = cartRef.map(i => ({ ...i }));
   if (comboInfo && comboInfo.total > 0) {
     const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
@@ -248,13 +249,39 @@ function aplicarPreciosProporcionales(cartRef, comboInfo, cantidadInfo) {
       const idx = result.findIndex(i => i.prodId == promo.prod1);
       if (idx < 0) return;
       const cant = result[idx].cant;
-      const grupos = Math.floor(cant / promo.cantidadRequerida);
+      // Maximo por venta: las unidades mas alla de este tope quedan fuera del calculo de
+      // grupos — mismo criterio ya aplicado en calcDescuentoCantidad() para la vista en vivo,
+      // aca se repite porque este es un calculo independiente para el precio final por item.
+      const cantParaPromo = promo.maxPorVenta > 0 ? Math.min(cant, promo.maxPorVenta) : cant;
+      const grupos = Math.floor(cantParaPromo / promo.cantidadRequerida);
       if (grupos <= 0) return;
       const prod = DB.productos.find(p => p.id == promo.prod1);
       const precioNormal = prod ? prod.precio : result[idx].precio;
       const unidadesPagadas = cant - grupos * (promo.cantidadRequerida - promo.cantidadAPagar);
       const precioBlend = Math.round((unidadesPagadas * precioNormal) / cant * 100) / 100;
       result[idx] = { ...result[idx], precio: precioBlend, precioOriginal: precioNormal, enPromoCantidad: true };
+    });
+  }
+  if (recargoInfo && recargoInfo.total > 0) {
+    // Descuento directo: el item ya entro al carrito con el precio promo aplicado a TODAS
+    // sus unidades (ver addToCart) — por cada unidad que excede el maximo por venta, el
+    // precio final por item es un promedio ponderado entre las unidades a precio promo y las
+    // que exceden el limite (a precio normal), mismo criterio de blend que los bloques de arriba.
+    const promoDescLimitada = DB.promociones.filter(p =>
+      p.activa && p.hasta >= today() && p.tipo === 'descuento' && p.maxPorVenta > 0 &&
+      _promoAplicaSede(p, currentUserSedeId || 'principal'));
+    promoDescLimitada.forEach(promo => {
+      const idx = result.findIndex(i => i.prodId == promo.prod1);
+      if (idx < 0) return;
+      const cant = result[idx].cant;
+      const unidadesExceso = Math.max(0, cant - promo.maxPorVenta);
+      if (unidadesExceso <= 0) return;
+      const prod = DB.productos.find(p => p.id == promo.prod1);
+      const precioNormal = prod ? prod.precio : result[idx].precio;
+      const precioPromoActual = result[idx].precio; // ya es el precio promo, asignado en addToCart
+      const unidadesConPromo = cant - unidadesExceso;
+      const precioBlend = Math.round((unidadesConPromo * precioPromoActual + unidadesExceso * precioNormal) / cant * 100) / 100;
+      result[idx] = { ...result[idx], precio: precioBlend, precioOriginal: precioNormal, enRecargoLimite: true };
     });
   }
   result.forEach(i => { i.subtotalFinal = subtotalItemCarrito(i); });
@@ -428,7 +455,8 @@ function calcTotal() {
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const combo = calcComboDescuento(cart);
   const cantidad = calcDescuentoCantidad(cart);
-  const total = Math.max(0, sub - desc - combo.total - cantidad.total);
+  const recargo = calcRecargoPorLimitePromo(cart);
+  const total = Math.max(0, sub - desc - combo.total - cantidad.total + recargo.total);
   // Render combo discount lines
   const comboEl = document.getElementById('cart-combo-desc');
   if (comboEl) {
@@ -442,8 +470,13 @@ function calcTotal() {
         `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:var(--accent-light);border-radius:6px;padding:.25rem .5rem;margin-bottom:.2rem">
           <span style="color:var(--accent-dark)">🏷️ ${l.nombre}${l.grupos > 1 ? ' ×'+l.grupos : ''}</span>
           <span style="font-weight:700;color:var(--accent-dark)">-${sol(l.descuento)}</span>
+        </div>`).join('') +
+      recargo.lineas.map(l =>
+        `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#FEF3C7;border-radius:6px;padding:.25rem .5rem;margin-bottom:.2rem">
+          <span style="color:#92400E">⚠️ ${l.unidadesExceso} unid. de "${l.nombre}" superan el máx. por venta — a precio normal</span>
+          <span style="font-weight:700;color:#92400E">+${sol(l.recargo)}</span>
         </div>`).join('');
-    if (combo.total > 0 || cantidad.total > 0) {
+    if (combo.total > 0 || cantidad.total > 0 || recargo.total > 0) {
       comboEl.style.display = '';
       comboEl.innerHTML = _lineasHtml;
     } else {
@@ -512,22 +545,57 @@ function _firmaCarrito(items, metodo, clienteId) {
   return JSON.stringify(items.map(i => [i.prodId, i.cant])) + '|' + metodo + '|' + clienteId;
 }
 
+// ── Verificacion del limite global de una promocion antes de cobrar ──
+// "Limite de unidades (pausa automatica al llegar)" existia como campo desde siempre pero
+// nunca se verificaba en ningun lado — esta funcion lo hace real. Lee vendidos FRESCO del
+// servidor (nunca cache local, mismo criterio ya usado para el stock real) para cada promo
+// con limite que este siendo usada en el carrito. Si el limite ya se alcanzo, pausa la promo
+// automaticamente en Firestore y rechaza la venta — el cajero reintenta, y esta vez el
+// carrito ya no aplica esa promo (queda excluida por 'activa', igual que cualquier otra).
+async function _verificarLimiteGlobalPromos(cartRef) {
+  if (!dbModular) return true; // sin conexion no se puede verificar — se deja pasar, mismo criterio que el resto del sistema en ese caso excepcional
+  const promosConLimite = DB.promociones.filter(p => {
+    if (!(p.activa && p.hasta >= today() && p.limite > 0)) return false;
+    if (p.packProdId) return cartRef.some(i => i.prodId === p.packProdId);
+    return cartRef.some(i => i.prodId == p.prod1);
+  });
+  for (const promo of promosConLimite) {
+    try {
+      const snap = await getDocDelServidorM(docM(dbModular, 'promociones', String(promo.id)));
+      const vendidosReal = snap.exists() ? (snap.data().vendidos || 0) : 0;
+      if (vendidosReal >= promo.limite) {
+        promo.activa = false; // reflejar de inmediato en memoria — el reintento ya no la aplica
+        setDocM(docM(dbModular, 'promociones', String(promo.id)), { activa: false }, { merge: true }).catch(()=>{});
+        alert(`⚠️ La promoción "${promo.nombre}" alcanzó su límite de unidades y se pausó automáticamente. El carrito ya no incluye ese descuento — revísalo e intenta cobrar de nuevo.`);
+        renderCart(); calcTotal();
+        return false;
+      }
+    } catch (e) {
+      console.warn('No se pudo verificar el límite de la promo ' + promo.nombre + ', se continúa sin bloquear:', e);
+    }
+  }
+  return true;
+}
 async function procesarVenta() {
   if (cart.length === 0) { alert('El carrito está vacío'); return; }
   // CRITICO: asegurar caja abierta ANTES de armar el lote — si esto se llama despues del
   // commit, y era la primera operacion del dia, reescribe el documento de caja entero
   // encima del incremento que el lote acaba de escribir. Ver nota en ensureCajaAbierta().
   await ensureCajaAbierta();
+  if (!(await _verificarLimiteGlobalPromos(cart))) return;
 
   const sub = cart.reduce((s, i) => s + subtotalItemCarrito(i), 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const comboInfo = calcComboDescuento(cart);
   const cantidadInfo = calcDescuentoCantidad(cart);
+  const recargoInfo = calcRecargoPorLimitePromo(cart);
   const comboDesc = comboInfo.total;
-  const total = Math.max(0, sub - desc - comboDesc);
+  const cantidadDesc = cantidadInfo.total;
+  const recargoDesc = recargoInfo.total;
+  const total = Math.max(0, sub - desc - comboDesc - cantidadDesc + recargoDesc);
   const metodo = document.getElementById('pos-metodo-pago').value;
   const clienteId = parseInt(document.getElementById('pos-cliente').value) || null;
-  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo, cantidadInfo);
+  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo, cantidadInfo, recargoInfo);
 
   const firma = _firmaCarrito(cart, metodo, clienteId);
   let venta;
@@ -540,7 +608,7 @@ async function procesarVenta() {
         const prod = DB.productos.find(p => p.id === i.prodId);
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }), subtotal: sub,
-      descuento: desc + comboDesc, descuentoManual: desc, descuentoCombo: comboDesc,
+      descuento: desc + comboDesc + cantidadDesc, descuentoManual: desc, descuentoCombo: comboDesc, descuentoCantidad: cantidadDesc,
       total, metodo, clienteId, sedeId: sedeAdminEfectiva()
     };
   }
@@ -595,10 +663,38 @@ async function procesarVenta() {
     }
   });
   const _deltasStock = [];
+  // CRITICO: validacion final de stock real ANTES de escribir nada — usando los datos ya
+  // sincronizados en tiempo real por el listener activo de POS (suficiente para este
+  // contexto; a diferencia de tienda publica, aca no hace falta una lectura extra al
+  // servidor porque el carrito no persiste dias, es la misma sesion en vivo). Si algun
+  // producto quedaria en negativo (incluidos los componentes de un pack), se corta aca, sin
+  // haber escrito nada — nunca a medias.
+  for (const { prod, delta } of _deltasPorProducto.values()) {
+    if ((prod.stock || 0) + delta < 0) {
+      alert('⚠️ No se pudo procesar la venta: no hay stock suficiente de "' + prod.nombre + '" en este momento.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
+      _ventaPendiente = null;
+      return;
+    }
+  }
   _deltasPorProducto.forEach(({prod, delta}) => {
     batch.set(docM(dbModular, 'productos', String(prod.id)),
       { stock: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
+  });
+  // Limite global: por cada promocion con limite involucrada en esta venta, incrementar
+  // vendidos en la misma cantidad que se llevo (simplificacion deliberada: cuenta todas las
+  // unidades del item, no solo las que llevaron precio promo — el limite se alcanza un poco
+  // antes en vez de un poco despues, mas seguro para el negocio que lo contrario). Viaja en
+  // el mismo lote atomico que el resto de la venta — nunca queda descontado sin registrarse.
+  const _promosConLimiteEnVenta = DB.promociones.filter(p => {
+    if (!(p.activa && p.hasta >= today() && p.limite > 0)) return false;
+    if (p.packProdId) return cart.some(i => i.prodId === p.packProdId);
+    return cart.some(i => i.prodId == p.prod1);
+  });
+  _promosConLimiteEnVenta.forEach(promo => {
+    const item = cart.find(i => (promo.packProdId ? i.prodId === promo.packProdId : i.prodId == promo.prod1));
+    if (!item) return;
+    batch.set(docM(dbModular, 'promociones', String(promo.id)), { vendidos: incrementM(item.cant) }, { merge: true });
   });
 
   const _ventaFinal = { ...venta, sedeId: sede, origen: 'pos', estado: 'completado', estadoStock: 'descontado' };
@@ -675,14 +771,18 @@ async function cobrarFiado() {
   const clienteId = parseInt(document.getElementById('pos-cliente').value);
   if (!clienteId) { alert('Selecciona un cliente para registrar el fiado'); return; }
   await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
+  if (!(await _verificarLimiteGlobalPromos(cart))) return;
 
   const sub = Math.round(cart.reduce((s, i) => s + subtotalItemCarrito(i), 0) * 100) / 100;
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const comboInfo = calcComboDescuento(cart);
   const cantidadInfo = calcDescuentoCantidad(cart);
+  const recargoInfo = calcRecargoPorLimitePromo(cart);
   const comboDesc = comboInfo.total;
-  const total = Math.round(Math.max(0, sub - desc - comboDesc) * 100) / 100;
-  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo, cantidadInfo);
+  const cantidadDesc = cantidadInfo.total;
+  const recargoDesc = recargoInfo.total;
+  const total = Math.round(Math.max(0, sub - desc - comboDesc - cantidadDesc + recargoDesc) * 100) / 100;
+  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo, cantidadInfo, recargoInfo);
 
   const firma = _firmaCarrito(cart, 'FIADO', clienteId);
   let fiado;
@@ -695,7 +795,7 @@ async function cobrarFiado() {
         const prod = DB.productos.find(p => p.id === i.prodId);
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }),
-      total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc,
+      total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc, descuentoCantidad: cantidadDesc,
       sedeId: sedeAdminEfectiva(), estado: 'pendiente'
     };
   }
@@ -743,10 +843,27 @@ async function cobrarFiado() {
     }
   });
   const _deltasStock = [];
+  for (const { prod, delta } of _deltasPorProducto.values()) {
+    if ((prod.stock || 0) + delta < 0) {
+      alert('⚠️ No se pudo registrar el fiado: no hay stock suficiente de "' + prod.nombre + '" en este momento.\n\nNo se guardó nada. Revisa el carrito e intenta de nuevo.');
+      _fiadoPendiente = null;
+      return;
+    }
+  }
   _deltasPorProducto.forEach(({prod, delta}) => {
     batch.set(docM(dbModular, 'productos', String(prod.id)),
       { stock: incrementM(delta) }, { merge: true });
     _deltasStock.push({ prod, delta });
+  });
+  const _promosConLimiteEnFiado = DB.promociones.filter(p => {
+    if (!(p.activa && p.hasta >= today() && p.limite > 0)) return false;
+    if (p.packProdId) return cart.some(i => i.prodId === p.packProdId);
+    return cart.some(i => i.prodId == p.prod1);
+  });
+  _promosConLimiteEnFiado.forEach(promo => {
+    const item = cart.find(i => (promo.packProdId ? i.prodId === promo.packProdId : i.prodId == promo.prod1));
+    if (!item) return;
+    batch.set(docM(dbModular, 'promociones', String(promo.id)), { vendidos: incrementM(item.cant) }, { merge: true });
   });
 
   batch.set(docM(dbModular, 'fiados', String(fiado.id)), { ...fiado, sedeId: sede });
@@ -810,7 +927,8 @@ function mostrarTicket(venta) {
   const cfgNombre = cfg.nombre || 'Tienda Aleze';
   const cfgMsg    = cfg.ticketMsg || '¡Gracias por su compra!';
   const comboDescuento = venta.descuentoCombo || 0;
-  const descManual = venta.descuentoManual || (comboDescuento === 0 ? (venta.descuento||0) : 0);
+  const cantidadDescuento = venta.descuentoCantidad || 0;
+  const descManual = venta.descuentoManual || ((comboDescuento === 0 && cantidadDescuento === 0) ? (venta.descuento||0) : 0);
   const html = `<div class="ticket" id="ticket-print">
     <div class="ticket-center"><strong style="font-size:1rem">${cfgNombre}</strong></div>
     ${cfg.telefono ? `<div class="ticket-center" style="font-size:0.7rem">Tel: ${cfg.telefono}</div>` : ''}
@@ -823,11 +941,12 @@ function mostrarTicket(venta) {
       : `<div class="ticket-row"><span>Pago:</span><span>${venta.metodo}</span></div>`}
     <div class="ticket-line"></div>
     ${venta.items.map(i => {
-      const tag = i.enCombo ? ' 🎁' : '';
+      const tag = i.enCombo ? ' 🎁' : (i.enPromoCantidad ? ' 🏷️' : '');
       return `<div class="ticket-row"><span>${i.nombre}${tag} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant}</span><span>${sol(subtotalItemCarrito(i))}</span></div>`;
     }).join('')}
     <div class="ticket-line"></div>
     ${comboDescuento > 0 ? `<div class="ticket-row" style="color:#6c3fff"><span>🎁 Dcto. combo:</span><span>-${sol(comboDescuento)}</span></div>` : ''}
+    ${cantidadDescuento > 0 ? `<div class="ticket-row" style="color:#6c3fff"><span>🏷️ Dcto. cantidad:</span><span>-${sol(cantidadDescuento)}</span></div>` : ''}
     ${descManual > 0 ? `<div class="ticket-row"><span>Descuento:</span><span>-${sol(descManual)}</span></div>` : ''}
     <div class="ticket-row"><strong>TOTAL</strong><strong>${sol(venta.total)}</strong></div>
     <div class="ticket-line"></div>
@@ -993,7 +1112,7 @@ function mobSelectCat(catId, el) {
 }
 
 function renderMobPosGrid(prods) {
-   prods = prods || DB.productos.filter(p => (p.esCombo || stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
+   prods = prods || DB.productos.filter(p => (stockEnSede(p) > 0) && (!p.esCombo || p.promoActiva !== false));
   const grid = document.getElementById('mob-pos-grid');
   if (!grid) return;
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
@@ -1028,20 +1147,19 @@ function renderMobPosGrid(prods) {
 // ---- MOB CART ----
 function mobAddToCart(prodId) {
   const prod = DB.productos.find(p => p.id === prodId);
-  if (!prod || (!prod.esCombo && stockEnSede(prod) === 0)) return;
-  if (prod.esCombo && prod.componentes) {
-    for (const comp of prod.componentes) {
-      const cp = DB.productos.find(x => x.id === comp.prodId);
-      if (!cp || stockEnSede(cp) < comp.cant) {
-        alert(`Stock insuficiente de "${cp?.nombre || 'componente'}" para armar este pack`);
-        return;
-      }
-    }
-  }
+  if (!prod || stockEnSede(prod) === 0) return;
   const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && _promoAplicaSede(p, currentUserSedeId || 'principal'));
   const promo = promoActivas.find(pr => !pr.packProdId && pr.prod1 == prodId && !pr.prod2);
-  const precio = promo ? promo.precioPromo : prod.precio;
+  const esPromoCantidadM2 = promo && (promo.tipo === '2x1' || promo.tipo === '3x2');
+  const precio = (promo && !esPromoCantidadM2) ? promo.precioPromo : prod.precio;
   const existing = cart.find(i => i.prodId === prodId);
+  if (prod.esCombo) {
+    const promoPack = promoActivas.find(pr => pr.packProdId === prodId);
+    if (promoPack && promoPack.maxPorVenta > 0 && (existing ? existing.cant : 0) >= promoPack.maxPorVenta) {
+      alert(`Máximo ${promoPack.maxPorVenta} unidad(es) de este pack por venta.`);
+      return;
+    }
+  }
   if (existing) {
     if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
