@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.11-1030</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.11-1500</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.11-1030</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.11-1500</div>
   </div>
 
 </div>
@@ -880,16 +880,6 @@ window.addEventListener('error', function(e) {
             <button type="button" class="btn btn-primary" onclick="guardarSueldos()">Guardar sueldos</button>
           </div>
           <div class="card">
-            <div class="card-title">🔗 Conexión Google Sheets</div>
-            <div class="form-group"><label>ID del Spreadsheet</label><input type="text" class="form-control" id="cfg-sheet-id" value="1qCEgjIf22W3LuyPo0i33XIINjRMyMCcP4T29ZhlrEME" /></div>
-            <div class="form-group"><label>Credenciales JSON (service account)</label><textarea class="form-control" id="cfg-sheet-json" rows="4" placeholder="Pega aquí el contenido del JSON"></textarea></div>
-            <div style="display:flex;gap:0.5rem">
-              <button type="button" class="btn btn-outline" onclick="testSheets()">🧪 Probar conexión</button>
-              <button type="button" class="btn btn-primary" onclick="guardarSheets()">Guardar</button>
-            </div>
-            <div id="sheets-status" style="margin-top:0.5rem;font-size:0.8rem"></div>
-          </div>
-          <div class="card">
             <div class="card-title">🎨 Preferencias del ticket</div>
             <div class="form-group"><label>Mensaje de pie de ticket</label><input type="text" class="form-control" id="cfg-ticket-msg" value="¡Gracias por su compra!" /></div>
             <div class="form-group"><label>Días alerta vencimiento</label><input type="number" class="form-control" id="cfg-dias-venc" value="7" /></div>
@@ -1473,21 +1463,33 @@ window.addEventListener('error', function(e) {
             <option value="3x2">3x2</option>
           </select>
         </div>
-        <div class="form-group">
+        <div class="form-group" style="position:relative">
           <label>Producto 1 *</label>
-          <select class="form-control" id="promo-prod1" onchange="onPromoProductoChange()"></select>
+          <input type="text" id="promo-prod1-buscar" class="form-control" placeholder="🔍 Buscar producto..." autocomplete="off"
+            oninput="_promoProdBuscar(1)" onfocus="_promoProdBuscar(1)"
+            onblur="setTimeout(()=>{const s=document.getElementById('promo-prod1-sugerencias');if(s)s.style.display='none';},150)" />
+          <select id="promo-prod1" style="display:none" onchange="onPromoProductoChange()"></select>
+          <div id="promo-prod1-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
         </div>
-        <div id="promo-prod2-wrap" class="form-group">
+        <div id="promo-prod2-wrap" class="form-group" style="position:relative">
           <label>Producto 2 <span style="color:var(--gray-400)">(opcional)</span></label>
-          <select class="form-control" id="promo-prod2" onchange="onPromoProductoChange()">
+          <input type="text" id="promo-prod2-buscar" class="form-control" placeholder="🔍 Buscar producto..." autocomplete="off"
+            oninput="_promoProdBuscar(2)" onfocus="_promoProdBuscar(2)"
+            onblur="setTimeout(()=>{const s=document.getElementById('promo-prod2-sugerencias');if(s)s.style.display='none';},150)" />
+          <select id="promo-prod2" style="display:none" onchange="onPromoProductoChange()">
             <option value="">— Sin segundo producto —</option>
           </select>
+          <div id="promo-prod2-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
         </div>
-        <div id="promo-prod3-wrap" class="form-group">
+        <div id="promo-prod3-wrap" class="form-group" style="position:relative">
           <label>Producto 3 <span style="color:var(--gray-400)">(opcional)</span></label>
-          <select class="form-control" id="promo-prod3" onchange="onPromoProductoChange()">
+          <input type="text" id="promo-prod3-buscar" class="form-control" placeholder="🔍 Buscar producto..." autocomplete="off"
+            oninput="_promoProdBuscar(3)" onfocus="_promoProdBuscar(3)"
+            onblur="setTimeout(()=>{const s=document.getElementById('promo-prod3-sugerencias');if(s)s.style.display='none';},150)" />
+          <select id="promo-prod3" style="display:none" onchange="onPromoProductoChange()">
             <option value="">— Sin tercer producto —</option>
           </select>
+          <div id="promo-prod3-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
         </div>
         <div class="grid-2">
           <div class="form-group"><label>Válido desde</label><input type="date" class="form-control" id="promo-desde" /></div>
