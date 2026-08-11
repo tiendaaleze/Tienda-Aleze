@@ -34,11 +34,12 @@ function renderPosGrid(search = '') {
     const promoDelProducto = p.esCombo
       ? promoActivas.find(pr => pr.packProdId === p.id)
       : promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
-    const precioMostrar = p.esCombo ? p.precio : (promoDelProducto ? promoDelProducto.precioPromo : p.precio);
-    const precioOrigMostrar = promoDelProducto && promoDelProducto.precioOrig > precioMostrar ? promoDelProducto.precioOrig : null;
+    const esPromoCantidad = promoDelProducto && (promoDelProducto.tipo === '2x1' || promoDelProducto.tipo === '3x2');
+    const precioMostrar = (p.esCombo || esPromoCantidad) ? p.precio : (promoDelProducto ? promoDelProducto.precioPromo : p.precio);
+    const precioOrigMostrar = (!esPromoCantidad && promoDelProducto && promoDelProducto.precioOrig > precioMostrar) ? promoDelProducto.precioOrig : null;
     const pctDesc = precioOrigMostrar ? Math.round((1 - precioMostrar / precioOrigMostrar) * 100) : 0;
     const promoTag = promoDelProducto
-      ? `<span class="promo-tag">${pctDesc > 0 ? `-${pctDesc}%` : (p.esCombo ? 'OFERTA' : 'PROMO')}</span>`
+      ? `<span class="promo-tag">${esPromoCantidad ? promoDelProducto.tipo : (pctDesc > 0 ? `-${pctDesc}%` : (p.esCombo ? 'OFERTA' : 'PROMO'))}</span>`
       : '';
     const iconHtml = p.imagen
       ? `<div class="p-img-wrap"><img src="${p.imagen}" alt="${p.nombre}"></div>`
@@ -212,31 +213,50 @@ function getCatIcono(catId, size) {
 // número distinto al que realmente se cobró en la venta — el redondeo de productos por peso
 // se perdería en cualquier pantalla que no sea el carrito original. Se usa tanto en
 // procesarVenta() como en cobrarFiado(), ambas pasan por esta misma función.
-function aplicarPreciosProporcionales(cartRef, comboInfo) {
+function aplicarPreciosProporcionales(cartRef, comboInfo, cantidadInfo) {
   const result = cartRef.map(i => ({ ...i }));
-  if (!comboInfo || comboInfo.total === 0) {
-    result.forEach(i => { i.subtotalFinal = subtotalItemCarrito(i); });
-    return result;
+  if (comboInfo && comboInfo.total > 0) {
+    const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
+    promoActivas.forEach(promo => {
+      const idx1 = result.findIndex(i => i.prodId == promo.prod1);
+      const idx2 = result.findIndex(i => i.prodId == promo.prod2);
+      if (idx1 < 0 || idx2 < 0) return;
+      const sets = Math.min(result[idx1].cant, result[idx2].cant);
+      if (sets <= 0) return;
+      const p1 = DB.productos.find(p => p.id == promo.prod1);
+      const p2 = DB.productos.find(p => p.id == promo.prod2);
+      const r1 = p1 ? p1.precio : result[idx1].precio;
+      const r2 = p2 ? p2.precio : result[idx2].precio;
+      const sumR = r1 + r2;
+      if (sumR === 0) return;
+      const comboP1 = Math.round((r1/sumR) * promo.precioPromo * 100) / 100;
+      const comboP2 = Math.round((promo.precioPromo - comboP1) * 100) / 100;
+      const blend = (base, comboP, cant) => Math.round((comboP * sets + base * (cant - sets)) / cant * 100) / 100;
+      result[idx1] = { ...result[idx1], precio: blend(r1, comboP1, result[idx1].cant), precioOriginal: r1, enCombo: true };
+      result[idx2] = { ...result[idx2], precio: blend(r2, comboP2, result[idx2].cant), precioOriginal: r2, enCombo: true };
+    });
   }
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
-  promoActivas.forEach(promo => {
-    const idx1 = result.findIndex(i => i.prodId == promo.prod1);
-    const idx2 = result.findIndex(i => i.prodId == promo.prod2);
-    if (idx1 < 0 || idx2 < 0) return;
-    const sets = Math.min(result[idx1].cant, result[idx2].cant);
-    if (sets <= 0) return;
-    const p1 = DB.productos.find(p => p.id == promo.prod1);
-    const p2 = DB.productos.find(p => p.id == promo.prod2);
-    const r1 = p1 ? p1.precio : result[idx1].precio;
-    const r2 = p2 ? p2.precio : result[idx2].precio;
-    const sumR = r1 + r2;
-    if (sumR === 0) return;
-    const comboP1 = Math.round((r1/sumR) * promo.precioPromo * 100) / 100;
-    const comboP2 = Math.round((promo.precioPromo - comboP1) * 100) / 100;
-    const blend = (base, comboP, cant) => Math.round((comboP * sets + base * (cant - sets)) / cant * 100) / 100;
-    result[idx1] = { ...result[idx1], precio: blend(r1, comboP1, result[idx1].cant), precioOriginal: r1, enCombo: true };
-    result[idx2] = { ...result[idx2], precio: blend(r2, comboP2, result[idx2].cant), precioOriginal: r2, enCombo: true };
-  });
+  if (cantidadInfo && cantidadInfo.total > 0) {
+    // 2x1/3x2: por cada grupo completo de "cantidadRequerida" unidades del MISMO producto,
+    // "cantidadRequerida - cantidadAPagar" son gratis. El precio final por item es un
+    // promedio ponderado (blend) entre unidades pagadas y gratis, para que precio*cant de
+    // exactamente el total correcto — mismo criterio ya usado arriba para el combo de 2 productos.
+    const promoCantidad = DB.promociones.filter(p =>
+      p.activa && p.hasta >= today() && (p.tipo === '2x1' || p.tipo === '3x2') &&
+      p.cantidadRequerida > 1 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
+    promoCantidad.forEach(promo => {
+      const idx = result.findIndex(i => i.prodId == promo.prod1);
+      if (idx < 0) return;
+      const cant = result[idx].cant;
+      const grupos = Math.floor(cant / promo.cantidadRequerida);
+      if (grupos <= 0) return;
+      const prod = DB.productos.find(p => p.id == promo.prod1);
+      const precioNormal = prod ? prod.precio : result[idx].precio;
+      const unidadesPagadas = cant - grupos * (promo.cantidadRequerida - promo.cantidadAPagar);
+      const precioBlend = Math.round((unidadesPagadas * precioNormal) / cant * 100) / 100;
+      result[idx] = { ...result[idx], precio: precioBlend, precioOriginal: precioNormal, enPromoCantidad: true };
+    });
+  }
   result.forEach(i => { i.subtotalFinal = subtotalItemCarrito(i); });
   return result;
 }
@@ -403,47 +423,29 @@ function _programarChequeoMedianoche() {
   }, msHasta);
 }
 
-function calcComboDescuento(cartRef) {
-  // Returns { total: number, lineas: [{nombre, sets, descuento}] }
-  cartRef = cartRef || cart;
-  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, currentUserSedeId || 'principal'));
-  let totalDesc = 0;
-  const lineas = [];
-  promoActivas.forEach(promo => {
-    const item1 = cartRef.find(i => i.prodId == promo.prod1);
-    const item2 = cartRef.find(i => i.prodId == promo.prod2);
-    if (!item1 || !item2) return;
-    const sets = Math.min(item1.cant, item2.cant);
-    if (sets <= 0) return;
-    // Price without combo: sum of regular prices × sets
-    const prod1 = DB.productos.find(p => p.id == promo.prod1);
-    const prod2 = DB.productos.find(p => p.id == promo.prod2);
-    const precioSinCombo = ((prod1 ? prod1.precio : item1.precio) + (prod2 ? prod2.precio : item2.precio)) * sets;
-    const precioConCombo = promo.precioPromo * sets;
-    const descuento = Math.max(0, precioSinCombo - precioConCombo);
-    if (descuento > 0) {
-      totalDesc += descuento;
-      lineas.push({ nombre: promo.nombre, sets, descuento });
-    }
-  });
-  return { total: totalDesc, lineas };
-}
-
 function calcTotal() {
   const sub = cart.reduce((s, i) => s + subtotalItemCarrito(i), 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const combo = calcComboDescuento(cart);
-  const total = Math.max(0, sub - desc - combo.total);
+  const cantidad = calcDescuentoCantidad(cart);
+  const total = Math.max(0, sub - desc - combo.total - cantidad.total);
   // Render combo discount lines
   const comboEl = document.getElementById('cart-combo-desc');
   if (comboEl) {
-    if (combo.total > 0) {
-      comboEl.style.display = '';
-      comboEl.innerHTML = combo.lineas.map(l =>
+    const _lineasHtml =
+      combo.lineas.map(l =>
         `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:var(--accent-light);border-radius:6px;padding:.25rem .5rem;margin-bottom:.2rem">
           <span style="color:var(--accent-dark)">🎁 Combo: ${l.nombre}${l.sets > 1 ? ' ×'+l.sets : ''}</span>
           <span style="font-weight:700;color:var(--accent-dark)">-${sol(l.descuento)}</span>
+        </div>`).join('') +
+      cantidad.lineas.map(l =>
+        `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:var(--accent-light);border-radius:6px;padding:.25rem .5rem;margin-bottom:.2rem">
+          <span style="color:var(--accent-dark)">🏷️ ${l.nombre}${l.grupos > 1 ? ' ×'+l.grupos : ''}</span>
+          <span style="font-weight:700;color:var(--accent-dark)">-${sol(l.descuento)}</span>
         </div>`).join('');
+    if (combo.total > 0 || cantidad.total > 0) {
+      comboEl.style.display = '';
+      comboEl.innerHTML = _lineasHtml;
     } else {
       comboEl.style.display = 'none';
     }
@@ -520,11 +522,12 @@ async function procesarVenta() {
   const sub = cart.reduce((s, i) => s + subtotalItemCarrito(i), 0);
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const comboInfo = calcComboDescuento(cart);
+  const cantidadInfo = calcDescuentoCantidad(cart);
   const comboDesc = comboInfo.total;
   const total = Math.max(0, sub - desc - comboDesc);
   const metodo = document.getElementById('pos-metodo-pago').value;
   const clienteId = parseInt(document.getElementById('pos-cliente').value) || null;
-  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
+  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo, cantidadInfo);
 
   const firma = _firmaCarrito(cart, metodo, clienteId);
   let venta;
@@ -676,9 +679,10 @@ async function cobrarFiado() {
   const sub = Math.round(cart.reduce((s, i) => s + subtotalItemCarrito(i), 0) * 100) / 100;
   const desc = parseFloat(document.getElementById('pos-descuento').value) || 0;
   const comboInfo = calcComboDescuento(cart);
+  const cantidadInfo = calcDescuentoCantidad(cart);
   const comboDesc = comboInfo.total;
   const total = Math.round(Math.max(0, sub - desc - comboDesc) * 100) / 100;
-  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo);
+  const itemsConPrecioReal = aplicarPreciosProporcionales(cart, comboInfo, cantidadInfo);
 
   const firma = _firmaCarrito(cart, 'FIADO', clienteId);
   let fiado;
@@ -997,11 +1001,12 @@ function renderMobPosGrid(prods) {
     const promoDelProducto = p.esCombo
       ? promoActivas.find(pr => pr.packProdId === p.id)
       : promoActivas.find(pr => !pr.packProdId && pr.prod1 == p.id && !pr.prod2);
-    const precio = p.esCombo ? p.precio : (promoDelProducto ? promoDelProducto.precioPromo : p.precio);
-    const precioOrigM = promoDelProducto && promoDelProducto.precioOrig > precio ? promoDelProducto.precioOrig : null;
+    const esPromoCantidadM = promoDelProducto && (promoDelProducto.tipo === '2x1' || promoDelProducto.tipo === '3x2');
+    const precio = (p.esCombo || esPromoCantidadM) ? p.precio : (promoDelProducto ? promoDelProducto.precioPromo : p.precio);
+    const precioOrigM = (!esPromoCantidadM && promoDelProducto && promoDelProducto.precioOrig > precio) ? promoDelProducto.precioOrig : null;
     const pctDescM = precioOrigM ? Math.round((1 - precio / precioOrigM) * 100) : 0;
     const tag = promoDelProducto
-      ? `<span class="promo-tag" style="position:absolute;top:4px;right:4px;font-size:.68rem">${pctDescM > 0 ? `-${pctDescM}%` : (p.esCombo ? 'OFERTA' : 'PROMO')}</span>`
+      ? `<span class="promo-tag" style="position:absolute;top:4px;right:4px;font-size:.68rem">${esPromoCantidadM ? promoDelProducto.tipo : (pctDescM > 0 ? `-${pctDescM}%` : (p.esCombo ? 'OFERTA' : 'PROMO'))}</span>`
       : '';
     const stockBajo = stockEnSede(p) <= p.stockMin;
     const iconHtml = p.imagen
