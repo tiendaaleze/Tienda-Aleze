@@ -262,7 +262,43 @@ function onPromoProductoChange() {
   calcPromo();
 }
 
+// Muestra/oculta los campos del formulario segun el tipo de promocion elegido — evita la
+// confusion real que ya paso: seleccionar 2-3 productos sin haber cambiado el tipo a "Pack"
+// (que se queda en "Descuento directo" por defecto) guardaba la promocion sin crear nunca el
+// producto combo, aunque el nombre sugiriera que involucraba varios productos.
+function actualizarVisibilidadTipoPromo() {
+  const tipo = document.getElementById('promo-tipo-sel').value;
+  const esPack = tipo === 'pack';
+  const esCantidad = tipo === '2x1' || tipo === '3x2';
+  document.getElementById('promo-prod2-wrap').style.display = esPack ? 'block' : 'none';
+  document.getElementById('promo-prod3-wrap').style.display = esPack ? 'block' : 'none';
+  document.getElementById('promo-margen-wrap').style.display = esCantidad ? 'none' : 'block';
+  document.getElementById('promo-precioofer-wrap').style.display = esCantidad ? 'none' : 'block';
+  document.getElementById('promo-preciorig-wrap').style.display = esCantidad ? 'none' : 'block';
+  document.getElementById('promo-cantidad-wrap').style.display = esCantidad ? 'block' : 'none';
+  // Limpia campos ocultos — evita que queden seleccionados pero invisibles y se guarden igual.
+  if (!esPack) {
+    document.getElementById('promo-prod2').value = '';
+    document.getElementById('promo-prod3').value = '';
+  }
+  calcPromo();
+}
+
 function calcPromo() {
+  const tipo = document.getElementById('promo-tipo-sel').value;
+  const prod1Id = parseInt(document.getElementById('promo-prod1').value) || null;
+  const prod1 = prod1Id ? DB.productos.find(p => p.id === prod1Id) : null;
+  if (tipo === '2x1' || tipo === '3x2') {
+    if (!prod1) {
+      document.getElementById('promo-cantidad-detalle').textContent = 'Selecciona el producto';
+      return;
+    }
+    const [_req, _pag] = tipo === '2x1' ? [2, 1] : [3, 2];
+    document.getElementById('promo-cantidad-detalle').innerHTML =
+      `<div>Por cada <strong>${_req} unidades</strong> de "${prod1.nombre}" que el cliente lleve, paga solo <strong>${_pag}</strong> — la diferencia (${_req-_pag} unidad${_req-_pag>1?'es':''}) es gratis.</div>
+       <div style="margin-top:.4rem;color:var(--gray-500)">Precio de venta normal: ${sol(prod1.precio)} — se sigue vendiendo a ese precio, el descuento se aplica solo al alcanzar la cantidad completa.</div>`;
+    return;
+  }
   const ids = ['promo-prod1','promo-prod2','promo-prod3']
     .map(id => parseInt(document.getElementById(id)?.value) || null);
   const prods = ids.map(id => id ? DB.productos.find(p => p.id === id) : null).filter(Boolean);
@@ -389,7 +425,7 @@ function editarPromocion(id) {
   document.getElementById('promo-margen-num').value = Math.max(0, margen);
   document.getElementById('promo-margen-slider').value = Math.max(0, margen);
   document.getElementById('promo-aviso').textContent = '';
-  calcPromo();
+  actualizarVisibilidadTipoPromo();
   document.getElementById('promo-precio-promo').value = pr.precioPromo;
   const imgData = pr.imagen || '';
   document.getElementById('promo-img-data').value = imgData;
@@ -417,6 +453,7 @@ function abrirModalPromocion() {
   document.getElementById('promo-desde').value = hoy;
   document.getElementById('promo-hasta').value = en7.toISOString().split('T')[0];
   document.getElementById('promo-nombre').value = '';
+  document.getElementById('promo-tipo-sel').value = 'descuento';
   document.getElementById('promo-margen-num').value = 20;
   document.getElementById('promo-margen-slider').value = 20;
   document.getElementById('promo-precio-orig').value = '';
@@ -426,6 +463,7 @@ function abrirModalPromocion() {
   document.getElementById('promo-limite').value = 100;
   document.getElementById('promo-img-data').value = '';
   document.getElementById('promo-img-file').value = '';
+  actualizarVisibilidadTipoPromo();
   const preview = document.getElementById('promo-img-preview');
   if (preview) { preview.innerHTML = '🏷️'; preview.style.fontSize = '1.8rem'; }
   document.getElementById('promo-qr-wrap').style.display = 'none';
@@ -445,9 +483,14 @@ function guardarPromocion() {
   const limite = parseInt(document.getElementById('promo-limite').value) || 0;
   const imagen = document.getElementById('promo-img-data').value || '';
   const tipo = document.getElementById('promo-tipo-sel').value;
+  const esCantidad = tipo === '2x1' || tipo === '3x2';
   if (!nombre || !prod1Id) { alert('Completa nombre y producto 1'); return; }
   const costoTotal = (prod1?.costo||0) + (prod2?.costo||0) + (prod3?.costo||0);
-  if (precioPromo < costoTotal && !confirm('El precio oferta está por debajo del costo. ¿Continuar?')) return;
+  if (!esCantidad && precioPromo < costoTotal && !confirm('El precio oferta está por debajo del costo. ¿Continuar?')) return;
+  // Cantidades explicitas para 2x1/3x2 (compra N, paga M) — mas robusto que interpretar el
+  // texto "2x1"/"3x2" cada vez que se necesite calcular un descuento.
+  const cantidadRequerida = tipo === '2x1' ? 2 : (tipo === '3x2' ? 3 : null);
+  const cantidadAPagar    = tipo === '2x1' ? 1 : (tipo === '3x2' ? 2 : null);
   const espack = tipo === 'pack' && (prod2Id || prod3Id);
   let packProdId = editingPromoId ? (DB.promociones.find(x=>x.id===editingPromoId)?.packProdId || null) : null;
   let packCodigo = editingPromoId ? (DB.promociones.find(x=>x.id===editingPromoId)?.packCodigo || null) : null;
@@ -527,6 +570,7 @@ function guardarPromocion() {
     prod2: prod2Id, prod2nombre: prod2?.nombre || null,
     prod3: prod3Id, prod3nombre: prod3?.nombre || null,
     precioOrig, precioPromo,
+    cantidadRequerida, cantidadAPagar,
     desde: document.getElementById('promo-desde').value,
     hasta: document.getElementById('promo-hasta').value,
     activa: true, limite, vendidos: 0,
