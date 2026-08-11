@@ -228,8 +228,8 @@ function renderPromociones() {
     <td><strong>${p.nombre}</strong>${p.sedeId ? `<div style="font-size:.68rem;color:var(--warning);font-weight:600">📍 Solo ${p.sedeId}</div>` : ''}</td>
     <td><span class="badge badge-${p.tipo==='combo'?'blue':'purple'}">${p.tipo}</span></td>
     <td style="font-size:0.8rem">${p.prod1nombre||''}${p.prod2nombre?' + '+p.prod2nombre:''}</td>
-    <td>${sol(p.precioOrig)}</td>
-    <td style="color:var(--accent);font-weight:700">${sol(p.precioPromo)}</td>
+    <td>${(p.tipo==='2x1'||p.tipo==='3x2') ? '—' : sol(p.precioOrig)}</td>
+    <td style="color:var(--accent);font-weight:700">${(p.tipo==='2x1'||p.tipo==='3x2') ? `Compra ${p.cantidadRequerida} paga ${p.cantidadAPagar}` : sol(p.precioPromo)}</td>
     <td style="font-size:0.8rem">${formatDate(p.desde)} - ${formatDate(p.hasta)}</td>
     <td><span class="badge badge-${p.activa && p.hasta>=today()?'green':'gray'}">${p.activa && p.hasta>=today()?'Activa':'Inactiva'}</span></td>
     <td style="white-space:nowrap">
@@ -280,6 +280,12 @@ function actualizarVisibilidadTipoPromo() {
   if (!esPack) {
     document.getElementById('promo-prod2').value = '';
     document.getElementById('promo-prod3').value = '';
+  }
+  const _ayudaMax = document.getElementById('promo-max-venta-ayuda');
+  if (_ayudaMax) {
+    _ayudaMax.textContent = esPack
+      ? 'Al llegar a este máximo de packs en una misma venta, no se puede agregar más — se avisa al cajero/cliente.'
+      : 'Al llegar a este máximo en una misma venta, las unidades adicionales se cobran al precio normal (sin el descuento).';
   }
   calcPromo();
 }
@@ -421,6 +427,7 @@ function editarPromocion(id) {
   document.getElementById('promo-desde').value = pr.desde;
   document.getElementById('promo-hasta').value = pr.hasta;
   document.getElementById('promo-limite').value = pr.limite || 100;
+  document.getElementById('promo-max-venta').value = pr.maxPorVenta || '';
   const margen = pr.precioOrig > 0 ? Math.round((pr.precioPromo/pr.precioOrig-1)*100) : 20;
   document.getElementById('promo-margen-num').value = Math.max(0, margen);
   document.getElementById('promo-margen-slider').value = Math.max(0, margen);
@@ -461,6 +468,7 @@ function abrirModalPromocion() {
   document.getElementById('promo-calc-detalle').textContent = 'Selecciona al menos un producto';
   document.getElementById('promo-aviso').textContent = '';
   document.getElementById('promo-limite').value = 100;
+  document.getElementById('promo-max-venta').value = '';
   document.getElementById('promo-img-data').value = '';
   document.getElementById('promo-img-file').value = '';
   actualizarVisibilidadTipoPromo();
@@ -481,6 +489,7 @@ function guardarPromocion() {
   const precioOrig = parseFloat(document.getElementById('promo-precio-orig').value) || 0;
   const precioPromo = parseFloat(document.getElementById('promo-precio-promo').value) || 0;
   const limite = parseInt(document.getElementById('promo-limite').value) || 0;
+  const maxPorVenta = parseInt(document.getElementById('promo-max-venta').value) || 0; // 0 = sin límite
   const imagen = document.getElementById('promo-img-data').value || '';
   const tipo = document.getElementById('promo-tipo-sel').value;
   const esCantidad = tipo === '2x1' || tipo === '3x2';
@@ -564,6 +573,12 @@ function guardarPromocion() {
       setTimeout(() => { _fbEscribiendo = false; }, 300);
     }
   }
+  // CRITICO: vendidos NUNCA debe reiniciarse al editar una promocion existente — si esta
+  // linea tuviera "vendidos: 0" incondicional, cada vez que se guarda una edicion (cambiar el
+  // nombre, el precio, la fecha) borraria el conteo real ya acumulado de ventas, permitiendo
+  // que el limite global se vuelva a superar sin darse cuenta. Se preserva explicitamente lo
+  // que ya existia, y solo se inicializa en 0 para una promocion realmente nueva.
+  const _vendidosPrevios = editingPromoId ? (DB.promociones.find(x=>x.id===editingPromoId)?.vendidos || 0) : 0;
   const data = {
     nombre, tipo,
     prod1: prod1Id, prod1nombre: prod1?.nombre || null,
@@ -573,7 +588,7 @@ function guardarPromocion() {
     cantidadRequerida, cantidadAPagar,
     desde: document.getElementById('promo-desde').value,
     hasta: document.getElementById('promo-hasta').value,
-    activa: true, limite, vendidos: 0,
+    activa: true, limite, vendidos: _vendidosPrevios, maxPorVenta,
     imagen, packProdId, packCodigo
   };
   // CRITICO: promociones ahora tiene su propia coleccion (mismo criterio que ventas,
