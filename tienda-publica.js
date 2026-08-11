@@ -1014,9 +1014,13 @@ let prods = (DB.productos||[]).filter(p => {
   // el ID de cada producto, así el orden se mantiene ESTABLE durante toda la visita (entrar a
   // un detalle y volver no reordena todo de nuevo) — recién cambia al cerrar y reabrir la
   // tienda (nueva sessionStorage).
-  if (!_ordenSel) {
-    const destacados = prods.filter(p => p.esCombo || !!_getPromoTienda(p));
-    const resto = prods.filter(p => !p.esCombo && !_getPromoTienda(p));
+if (!_ordenSel) {
+    // "Agotado" real: mismo criterio que agotado/badge en el resto del catálogo — combo
+    // desactivado, o stock <= 0 para producto normal.
+    const _estaAgotado = p => p.esCombo ? (p.promoActiva === false) : stockTotal(p) <= 0;
+    const destacados = prods.filter(p => !_estaAgotado(p) && (p.esCombo || !!_getPromoTienda(p)));
+    const resto = prods.filter(p => !_estaAgotado(p) && !p.esCombo && !_getPromoTienda(p));
+    const agotados = prods.filter(_estaAgotado);
     const claveSesion = 'tnd_orden_' + (_tndCatActiva || 'todos') + '_' + (buscar || '');
     let ordenGuardado = null;
     try { ordenGuardado = JSON.parse(sessionStorage.getItem(claveSesion) || 'null'); } catch(e) {}
@@ -1035,7 +1039,9 @@ let prods = (DB.productos||[]).filter(p => {
       }
       try { sessionStorage.setItem(claveSesion, JSON.stringify(restoOrdenado.map(p => p.id))); } catch(e) {}
     }
-    prods = [...destacados, ...restoOrdenado];
+    // Agotados: siempre al final, sin mezclar con los que sí tienen stock — ordenados por
+    // nombre para que al menos entre ellos no salten de posición en cada render.
+    prods = [...destacados, ...restoOrdenado, ...agotados.slice().sort((a,b) => (a.nombre||'').localeCompare(b.nombre||''))];
   }
   if (_ordenSel === 'precio-asc') prods = prods.slice().sort((a,b) => a.precio - b.precio);
   else if (_ordenSel === 'precio-desc') prods = prods.slice().sort((a,b) => b.precio - a.precio);
