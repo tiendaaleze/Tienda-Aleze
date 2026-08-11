@@ -66,6 +66,14 @@ async function _ejecutarBackup() {
   // Guarda una coleccion completa como uno o mas documentos satelite, dividida por tamaño
   // real — nunca un solo documento gigante sin importar cuanto crezca la coleccion.
   async function _guardarColeccionChunkeada(nombre, items) {
+    // CRITICO: Firestore rechaza con error cualquier campo con valor undefined literal
+    // (distinto de null) — un documento ya guardado en Firestore nunca podria tenerlo (se
+    // habria rechazado al escribirse), pero datos en memoria como DB.productos, construidos
+    // por logica JS a lo largo de toda la app, si pueden llegar a tener algun campo
+    // undefined sin que nadie lo note hasta este momento especifico. JSON.stringify() omite
+    // automaticamente cualquier clave con valor undefined — mismo criterio ya usado para el
+    // documento principal del backup (mas arriba), faltaba aplicarlo tambien aca.
+    items = JSON.parse(JSON.stringify(items));
     const chunks = _dividirPorTamano(items);
     _chunksPorColeccion[nombre] = chunks.length || 1; // al menos 1 aunque este vacia, para que restaurar sepa que existio
     if (chunks.length === 0) {
@@ -206,7 +214,7 @@ async function restaurarBackup(id) {
         for (let i = 0; i < productos.length; i += 450) {
           const batch = writeBatchM(dbModular);
           productos.slice(i, i + 450).forEach(p => {
-            batch.set(docM(dbModular, 'productos', String(p.id)), p);
+            batch.set(docM(dbModular, 'productos', String(p.id)), JSON.parse(JSON.stringify(p)));
           });
           await batch.commit();
         }
@@ -218,7 +226,7 @@ async function restaurarBackup(id) {
         const batch = writeBatchM(dbModular);
         items.slice(i, i + 450).forEach(item => {
           const { _id, ...resto } = item;
-          batch.set(docM(dbModular, col, String(_id)), resto);
+          batch.set(docM(dbModular, col, String(_id)), JSON.parse(JSON.stringify(resto)));
         });
         await batch.commit();
       }
