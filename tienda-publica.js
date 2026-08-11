@@ -661,11 +661,22 @@ function _renderTienda() {
     <div id="tnd-cats-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
     <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-cats-riel',1)" aria-label="Categorías siguientes">›</button>
   </div>
+  <div class="tnd-cats" id="tnd-marcas" style="display:none;position:relative;margin-top:.4rem">
+    <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-marcas-riel',-1)" aria-label="Marcas anteriores">‹</button>
+    <div id="tnd-marcas-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
+    <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-marcas-riel',1)" aria-label="Marcas siguientes">›</button>
+  </div>
+  <div class="tnd-cats" id="tnd-precios" style="display:none;position:relative;margin-top:.4rem">
+    <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-precios-riel',-1)" aria-label="Rangos anteriores">‹</button>
+    <div id="tnd-precios-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
+    <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-precios-riel',1)" aria-label="Rangos siguientes">›</button>
+  </div>
   <div id="tnd-orden-wrap" style="display:none;margin-bottom:.75rem">
     <select id="tnd-orden" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndFiltrar()">
       <option value="">Ordenar por...</option>
       <option value="precio-asc">Precio: menor a mayor</option>
       <option value="precio-desc">Precio: mayor a menor</option>
+      <option value="recientes">Más recientes</option>
     </select>
   </div>
   <div class="tnd-grid" id="tnd-grid"></div>
@@ -714,6 +725,8 @@ function _renderTienda() {
   }
 }
 let _tndCatActiva = '';
+let _tndMarcaActiva = '';
+let _tndRangoPrecioActivo = null; // {min, max} o null
 let _tndVista = 'home'; // 'home' | 'catalogo'
 // ── Iconos ilustrados a medida por categoria, con su propio color — reemplazan el emoji
 // generico. Se empareja por palabra clave normalizada (sin tildes, minuscula) contra el
@@ -749,6 +762,8 @@ function _tndRenderHome() {
   if (!grid) return;
   grid.style.cssText = 'display:block';
   if (cats) cats.style.display = 'none';
+  const _marcasHome = document.getElementById('tnd-marcas'); if (_marcasHome) _marcasHome.style.display = 'none';
+  const _preciosHome = document.getElementById('tnd-precios'); if (_preciosHome) _preciosHome.style.display = 'none';
   if (back) back.style.display = 'none';
   // ── Banner (carrusel real si hay 2+, uno solo si hay 1, gradiente de marca si no hay ninguno) ──
   // Migracion defensiva: si el admin todavia no abrio Configuracion desde que se paso a
@@ -972,12 +987,16 @@ function tndSetCat(id) {
 function _tndIrHome() {
   _tndVista = 'home';
   _tndCatActiva = '';
+  _tndMarcaActiva = '';
+  _tndRangoPrecioActivo = null;
   const back = document.getElementById('tnd-back-home');
   const cats = document.getElementById('tnd-cats');
   const search = document.getElementById('tnd-search');
   const ordenWrap = document.getElementById('tnd-orden-wrap');
   if (back) back.style.display = 'none';
   if (cats) cats.style.display = 'none';
+  const _marcasHome2 = document.getElementById('tnd-marcas'); if (_marcasHome2) _marcasHome2.style.display = 'none';
+  const _preciosHome2 = document.getElementById('tnd-precios'); if (_preciosHome2) _preciosHome2.style.display = 'none';
   if (ordenWrap) ordenWrap.style.display = 'none';
   if (search) search.value = '';
   _tndRenderHome();
@@ -985,6 +1004,70 @@ function _tndIrHome() {
 }
 function _tndActualizarBottomBar() {
   document.querySelectorAll('.tnd-bb-item').forEach((b,i) => b.classList.toggle('active', i === (_tndVista==='home'?0:1)));
+}
+
+// Redondea un precio a un numero "limpio" segun su magnitud (S/7.34 -> S/5 o S/10, nunca un
+// decimal raro) — el paso de redondeo crece con la magnitud para que siga siendo un corte
+// razonable tanto en un catalogo de a S/1-S/10 como en uno de a S/50-S/500.
+function _tndRedondearPrecioBonito(n) {
+  if (n < 10) return Math.round(n);
+  if (n < 50) return Math.round(n / 5) * 5;
+  if (n < 200) return Math.round(n / 10) * 10;
+  return Math.round(n / 50) * 50;
+}
+// Riel de marcas — mismo patron visual y de interaccion que categorias. Se recalcula en cada
+// filtrado (no es estatico como categorias) porque las marcas relevantes cambian segun la
+// categoria/busqueda activa — nunca se muestran marcas que no tengan ningun producto visible
+// en el contexto actual. Con menos de 2 marcas distintas no aporta nada elegir, se oculta.
+function _tndRenderRielMarcas(prodsBase) {
+  const wrap = document.getElementById('tnd-marcas');
+  const riel = document.getElementById('tnd-marcas-riel');
+  if (!wrap || !riel) return;
+  const marcas = [...new Set(prodsBase.map(p => p.marca).filter(Boolean))].sort();
+  if (_tndMarcaActiva && !marcas.includes(_tndMarcaActiva)) _tndMarcaActiva = ''; // ya no aplica a este contexto
+  if (marcas.length < 2) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  riel.innerHTML = `<span class="tnd-cat-tag ${!_tndMarcaActiva?'active':''}" onclick="tndSetMarca('')">Todas las marcas</span>` +
+    marcas.map(m => `<span class="tnd-cat-tag ${_tndMarcaActiva===m?'active':''}" onclick="tndSetMarca('${m.replace(/'/g,"\\'")}')">${m}</span>`).join('');
+}
+function tndSetMarca(marca) {
+  _tndMarcaActiva = marca;
+  tndFiltrar();
+}
+// Riel de rango de precio — 3 tramos calculados dinamicamente sobre el precio real minimo y
+// maximo de lo que se esta viendo (nunca del catalogo entero), redondeados a numeros limpios.
+// Rangos fijos ("Menos de S/5") no tendrian sentido en todas las categorias — una de
+// productos caros quedaria toda en un solo tramo, inutil. Si el rango de precios visible es
+// insignificante (todo cuesta casi lo mismo), se oculta — no aporta nada filtrar ahi.
+function _tndRenderRielPrecios(prodsBase) {
+  const wrap = document.getElementById('tnd-precios');
+  const riel = document.getElementById('tnd-precios-riel');
+  if (!wrap || !riel) return;
+  const precios = prodsBase.map(p => p.precio).filter(v => typeof v === 'number' && !isNaN(v));
+  if (!precios.length) { wrap.style.display = 'none'; _tndRangoPrecioActivo = null; return; }
+  const min = Math.min(...precios), max = Math.max(...precios);
+  if (max - min < 1) { wrap.style.display = 'none'; _tndRangoPrecioActivo = null; return; }
+  let corte1 = _tndRedondearPrecioBonito(min + (max - min) / 3);
+  let corte2 = _tndRedondearPrecioBonito(min + (max - min) * 2 / 3);
+  if (corte1 <= min) corte1 = Math.ceil(min) + 1;
+  if (corte2 <= corte1) corte2 = corte1 + 1;
+  if (corte2 >= max) corte2 = Math.floor(max) - 1;
+  if (corte1 >= corte2 || corte1 <= min) { wrap.style.display = 'none'; _tndRangoPrecioActivo = null; return; } // rango muy chico para 3 tramos utiles
+  const rangos = [
+    { min: 0, max: corte1, etiqueta: `Menos de S/${corte1}` },
+    { min: corte1, max: corte2, etiqueta: `S/${corte1} - S/${corte2}` },
+    { min: corte2, max: Infinity, etiqueta: `Más de S/${corte2}` },
+  ];
+  if (_tndRangoPrecioActivo && !rangos.some(r => r.min === _tndRangoPrecioActivo.min && r.max === _tndRangoPrecioActivo.max)) {
+    _tndRangoPrecioActivo = null; // ya no aplica a este contexto
+  }
+  wrap.style.display = 'flex';
+  riel.innerHTML = `<span class="tnd-cat-tag ${!_tndRangoPrecioActivo?'active':''}" onclick="tndSetRangoPrecio(null,null)">Todos los precios</span>` +
+    rangos.map(r => `<span class="tnd-cat-tag ${_tndRangoPrecioActivo && _tndRangoPrecioActivo.min===r.min && _tndRangoPrecioActivo.max===r.max?'active':''}" onclick="tndSetRangoPrecio(${r.min},${r.max===Infinity?'null':r.max})">${r.etiqueta}</span>`).join('');
+}
+function tndSetRangoPrecio(min, max) {
+  _tndRangoPrecioActivo = (min === null && max === null) ? null : { min: min || 0, max: max === null ? Infinity : max };
+  tndFiltrar();
 }
 
 function tndFiltrar() {
@@ -1007,6 +1090,22 @@ let prods = (DB.productos||[]).filter(p => {
     if (p.esCombo && p.promoActiva === false) return false; // ocultar combos desactivados
     return true;
   });
+
+  // ── Marca: el riel se calcula sobre la base ya filtrada por categoria+busqueda, ANTES de
+  // aplicar el filtro de marca mismo — asi siempre muestra TODAS las marcas disponibles en
+  // este contexto, permitiendo cambiar libremente entre ellas en vez de reducirse a una sola
+  // opcion apenas se elige una. Se combina (AND) con categoria/busqueda, nunca las reemplaza.
+  _tndRenderRielMarcas(prods);
+  if (_tndMarcaActiva) prods = prods.filter(p => p.marca === _tndMarcaActiva);
+
+  // ── Precio: el riel se calcula sobre categoria+busqueda+marca ya aplicados, para que los
+  // rangos sean relevantes a lo que realmente se esta viendo en este momento (los precios
+  // varian segun la marca elegida, no tendria sentido mostrar rangos de todo el catalogo).
+  _tndRenderRielPrecios(prods);
+  if (_tndRangoPrecioActivo) {
+    const { min, max } = _tndRangoPrecioActivo;
+    prods = prods.filter(p => p.precio >= min && p.precio <= max);
+  }
 
   const _ordenSel = document.getElementById('tnd-orden')?.value || '';
   // Catálogo no estático: sin orden manual elegido, se mezcla — pero los destacados (combos
@@ -1045,6 +1144,7 @@ if (!_ordenSel) {
   }
   if (_ordenSel === 'precio-asc') prods = prods.slice().sort((a,b) => a.precio - b.precio);
   else if (_ordenSel === 'precio-desc') prods = prods.slice().sort((a,b) => b.precio - a.precio);
+  else if (_ordenSel === 'recientes') prods = prods.slice().sort((a,b) => b.id - a.id);
 
   const grid = document.getElementById('tnd-grid');
   if (!grid) return;
