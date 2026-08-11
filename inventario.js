@@ -1234,7 +1234,37 @@ function abrirInventarioMensual() {
   document.getElementById('inv-mens-fecha').value = today();
   invMensualData = DB.productos.map(p => ({ prodId: p.id, contado: null, verificado: false, motivo: '' }));
   renderInvMensualTable();
+  const _catSel = document.getElementById('inv-mens-cat');
+  if (_catSel) {
+    _catSel.innerHTML = '<option value="">Todas las categorías</option>' +
+      (DB.categorias||[]).map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+  }
+  const _buscarEl = document.getElementById('inv-mens-buscar');
+  if (_buscarEl) _buscarEl.value = '';
+  const _soloSinVerif = document.getElementById('inv-mens-solo-sin-verificar');
+  if (_soloSinVerif) _soloSinVerif.checked = false;
   abrirModal('modal-inv-mensual');
+}
+
+// Filtro puramente visual — oculta/muestra filas ya renderizadas segun busqueda, categoria y
+// estado de verificacion. NUNCA reordena ni reconstruye la tabla, ni toca invMensualData —
+// cada fila conserva su data-idx original, que es lo unico que guardarInventarioMensual()
+// usa realmente para saber a que producto corresponde cada dato.
+function filtrarInvMensualTabla() {
+  const _texto = (document.getElementById('inv-mens-buscar')?.value || '').trim().toLowerCase();
+  const _catId = document.getElementById('inv-mens-cat')?.value || '';
+  const _soloSinVerificar = document.getElementById('inv-mens-solo-sin-verificar')?.checked || false;
+  document.querySelectorAll('#inv-mens-tbody tr[data-idx]').forEach(tr => {
+    const idx = parseInt(tr.dataset.idx);
+    const p = DB.productos[idx];
+    const d = invMensualData[idx];
+    if (!p) { tr.style.display = 'none'; return; }
+    let visible = true;
+    if (_texto && !p.nombre.toLowerCase().includes(_texto)) visible = false;
+    if (_catId && String(p.cat) !== _catId) visible = false;
+    if (_soloSinVerificar && d?.verificado) visible = false;
+    tr.style.display = visible ? '' : 'none';
+  });
 }
 
 function renderInvMensualTable() {
@@ -1244,7 +1274,7 @@ function renderInvMensualTable() {
     const diff = d.contado !== null && d.contado !== '' ? parseFloat(d.contado) - _stockAqui : null;
     const diffColor = diff === null ? '' : diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--warning)' : 'var(--accent)';
     const rowBg = d.verificado ? (diff === 0 || diff === null ? 'background:var(--accent-light)' : 'background:var(--danger-light)') : '';
-    return `<tr style="${rowBg}">
+    return `<tr data-idx="${i}" style="${rowBg}">
       <td><strong>${p.nombre}</strong></td>
       <td style="font-size:.78rem">${getCategoriaNombre(p.cat)}</td>
       <td><strong>${_stockAqui} ${p.unidad}</strong></td>
@@ -1300,6 +1330,9 @@ function actualizarInvMensual(i, campo, valor) {
     cell.style.color = color;
     cell.textContent = (diff > 0 ? '+' : '') + diff.toFixed(2);
   }
+  // Efecto puramente visual: si el filtro "solo sin verificar" esta activo, la fila
+  // desaparece al marcarse como verificada — no toca ningun dato, solo re-aplica el filtro ya vigente.
+  if (campo === 'verificado' && typeof filtrarInvMensualTabla === 'function') filtrarInvMensualTabla();
 }
 
 async function sincronizarMermasInventario() {
