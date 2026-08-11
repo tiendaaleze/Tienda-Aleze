@@ -9,7 +9,13 @@ function _uploadConfigImg(fileInput, targetFieldId, storagePath) {
   reader.onload = function(ev) {
     const img = new Image();
     img.onload = function() {
-      const MAX = 800;
+      // Limite de resolucion para CUALQUIER imagen subida desde Configuracion (banners
+      // mobile/PC/servicios, e imagen de tienda externa) — los 4 casos se muestran a ancho
+      // amplio en la practica (width:100% de su contenedor), ninguno es un icono chico. El
+      // limite anterior (800px) reducia a la mitad la resolucion recomendada para el banner
+      // PC (1750px), causando falta de nitidez visible al mostrarse estirado en pantallas
+      // anchas o de alta densidad de pixeles.
+      const MAX = 1800;
       const ratio = Math.min(MAX/img.width, MAX/img.height);
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(img.width * ratio);
