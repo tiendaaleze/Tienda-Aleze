@@ -20,39 +20,87 @@ async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
   }
 }
 
+// Divide un array de items en grupos que quepan holgadamente bajo el limite real de 1 MB por
+// documento de Firestore — por TAMAÑO real en bytes serializados, no por una cantidad fija de
+// items. Una cantidad fija fallaria igual con el tiempo: una coleccion de items grandes (ej.
+// boletas con muchos productos cada una) podria seguir superando 1 MB con pocos items, y una
+// de items chicos desperdiciaria espacio de sobra. 700 KB de margen bajo el limite real deja
+// espacio para el resto de campos del documento sin arriesgar el limite duro de Firestore.
+function _dividirPorTamano(items, maxBytesPorChunk = 700000) {
+  const chunks = [];
+  let actual = [];
+  let tamanoActual = 2; // "[]"
+  for (const item of items) {
+    const tamanoItem = JSON.stringify(item).length + 1; // +1 por la coma de separacion
+    if (actual.length > 0 && tamanoActual + tamanoItem > maxBytesPorChunk) {
+      chunks.push(actual);
+      actual = [];
+      tamanoActual = 2;
+    }
+    actual.push(item);
+    tamanoActual += tamanoItem;
+  }
+  if (actual.length > 0) chunks.push(actual);
+  return chunks;
+}
+
 async function _ejecutarBackup() {
   if (!dbModular || !currentUser) return; // [SDK modular]
   const ahora = new Date();
   const key = 'backup_' + ahora.toISOString().replace(/[:.]/g, '-').substring(0, 16);
   const hace30dias = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  // Documento principal: aleze/db (legado) + catálogo completo — todo esto es chico, cabe en uno.
+  // Documento principal: aleze/db (legado) + config — chico, cabe en uno sin riesgo. El
+  // catalogo (productos/categorias) YA NO vive aca — se guarda como colecciones satelite
+  // chunkeadas, igual que el resto, para que crecer con el tiempo (mas productos,
+  // descripciones mas largas) nunca vuelva a acercarse al limite de 1 MB de este documento.
   const payload = JSON.parse(JSON.stringify(DB));
   delete payload.productos; delete payload.categorias; delete payload.pedidosOnline; delete payload.caja;
-  payload._productos = DB.productos;
-  payload._categorias = DB.categorias;
   payload.cajas = DB._cajas; // ambas sedes, no solo la de quien está logueado
   payload._backupTs = ahora.toISOString();
   payload._backupUser = currentUser;
-  payload._backupColecciones = [..._BACKUP_COLECCIONES_COMPLETAS, ..._BACKUP_COLECCIONES_30DIAS];
+  payload._backupColecciones = ['productos', 'categorias', ..._BACKUP_COLECCIONES_COMPLETAS, ..._BACKUP_COLECCIONES_30DIAS];
 
   const _fallos = [];
+  const _chunksPorColeccion = {};
+  // Guarda una coleccion completa como uno o mas documentos satelite, dividida por tamaño
+  // real — nunca un solo documento gigante sin importar cuanto crezca la coleccion.
+  async function _guardarColeccionChunkeada(nombre, items) {
+    const chunks = _dividirPorTamano(items);
+    _chunksPorColeccion[nombre] = chunks.length || 1; // al menos 1 aunque este vacia, para que restaurar sepa que existio
+    if (chunks.length === 0) {
+      await setDocM(docM(dbModular, 'aleze_backups', key + '__' + nombre + '__0'), { items: [] });
+      return;
+    }
+    for (let i = 0; i < chunks.length; i++) {
+      await setDocM(docM(dbModular, 'aleze_backups', key + '__' + nombre + '__' + i), { items: chunks[i] });
+    }
+  }
+
+  try {
+    // Productos y categorias ya estan sincronizados en vivo en memoria — no hace falta
+    // releerlos de Firestore, a diferencia de las demas colecciones de abajo.
+    await _guardarColeccionChunkeada('productos', DB.productos || []);
+    await _guardarColeccionChunkeada('categorias', DB.categorias || []);
+  } catch (e) {
+    _fallos.push({ parte: 'catálogo (productos/categorías)', codigo: e.code || '', mensaje: e.message || String(e) });
+  }
   try {
     await setDocM(docM(dbModular, 'aleze_backups', key), payload);
   } catch (e) {
-    _fallos.push({ parte: 'documento principal (config + catálogo)', codigo: e.code || '', mensaje: e.message || String(e) });
+    _fallos.push({ parte: 'documento principal (config)', codigo: e.code || '', mensaje: e.message || String(e) });
   }
-  // Un documento aparte por cada colección propia — evita el límite de 1 MB por documento.
-  // Cada uno reporta su propio resultado individualmente (allSettled, no Promise.all) — así
-  // se identifica con certeza CUAL parte especifica fallo y por que, en vez de solo saber que
-  // "algo" fallo en algun lugar del lote completo.
+  // Un conjunto de documentos aparte por cada colección propia — nunca un solo documento sin
+  // importar cuanto crezca. Cada colección reporta su propio resultado individualmente
+  // (allSettled, no Promise.all) — así se identifica con certeza CUAL parte especifica fallo
+  // y por que, en vez de solo saber que "algo" fallo en algun lugar del lote completo.
   const _trabajos = [
     ..._BACKUP_COLECCIONES_COMPLETAS.map(col => ({ col, filtro: null })),
     ..._BACKUP_COLECCIONES_30DIAS.map(col => ({ col, filtro: hace30dias })),
   ];
   const _resultados = await Promise.allSettled(_trabajos.map(async ({ col, filtro }) => {
     const items = await _leerColeccionParaBackup(col, filtro);
-    await setDocM(docM(dbModular, 'aleze_backups', key + '__' + col), { items });
+    await _guardarColeccionChunkeada(col, items);
   }));
   _resultados.forEach((r, i) => {
     if (r.status === 'rejected') {
@@ -60,6 +108,14 @@ async function _ejecutarBackup() {
       _fallos.push({ parte: 'colección "' + _trabajos[i].col + '"', codigo: e?.code || '', mensaje: e?.message || String(e) });
     }
   });
+  // El mapa de cuantos chunks tiene cada coleccion se guarda AL FINAL, en un update aparte —
+  // asi el documento principal (chico, va primero) no depende de esperar a que termine todo
+  // el resto para poder guardarse; si algo de lo demas falla, igual queda un principal usable.
+  try {
+    await setDocM(docM(dbModular, 'aleze_backups', key), { _chunksPorColeccion }, { merge: true });
+  } catch (e) {
+    _fallos.push({ parte: 'mapa de fragmentos del respaldo', codigo: e.code || '', mensaje: e.message || String(e) });
+  }
 
   if (_fallos.length === 0) {
     console.log('[Backup] Guardado completo:', key);
@@ -99,10 +155,39 @@ async function restaurarBackup(id) {
     const doc = await getDocM(docM(dbModular, 'aleze_backups', id)); // [SDK modular]
     if (!doc.exists()) { alert('Respaldo no encontrado.'); return; } // en modular, exists es un METODO
     const data = doc.data();
-    const colecciones = data._backupColecciones || [];
-    delete data._backupTs; delete data._backupUser; delete data._backupColecciones;
-    const productos = data._productos || [];
-    const categorias = data._categorias || [];
+    // _chunksPorColeccion solo existe en respaldos guardados con el formato nuevo (varios
+    // documentos numerados por coleccion) — null/undefined significa que es un respaldo viejo
+    // (un solo documento por coleccion, sin numerar), y se lee con el criterio anterior.
+    const _chunksPorColeccion = data._chunksPorColeccion || null;
+    const colecciones = (data._backupColecciones || []).filter(c => c !== 'productos' && c !== 'categorias');
+    delete data._backupTs; delete data._backupUser; delete data._backupColecciones; delete data._chunksPorColeccion;
+
+    // Lee todos los fragmentos de una coleccion del respaldo, sea el formato nuevo (varios
+    // documentos "__0", "__1", ...) o el viejo (un solo documento sin numerar).
+    async function _leerColeccionDelBackup(nombre) {
+      if (_chunksPorColeccion && _chunksPorColeccion[nombre] != null) {
+        const n = _chunksPorColeccion[nombre];
+        let items = [];
+        for (let i = 0; i < n; i++) {
+          const satDoc = await getDocM(docM(dbModular, 'aleze_backups', id + '__' + nombre + '__' + i));
+          if (satDoc.exists()) items = items.concat(satDoc.data().items || []);
+        }
+        return items;
+      }
+      const satDoc = await getDocM(docM(dbModular, 'aleze_backups', id + '__' + nombre));
+      return satDoc.exists() ? (satDoc.data().items || []) : [];
+    }
+
+    // Formato nuevo: productos/categorias viven como colecciones satelite, igual que el
+    // resto. Formato viejo: vivian dentro del propio payload principal, en _productos/_categorias.
+    let productos, categorias;
+    if (_chunksPorColeccion) {
+      productos = await _leerColeccionDelBackup('productos');
+      categorias = await _leerColeccionDelBackup('categorias');
+    } else {
+      productos = data._productos || [];
+      categorias = data._categorias || [];
+    }
     delete data._productos; delete data._categorias;
 
     _fbLastWriteTs = Date.now();
@@ -128,17 +213,14 @@ async function restaurarBackup(id) {
         continue;
       }
       await _vaciarColeccion(col);
-      const satDoc = await getDocM(docM(dbModular, 'aleze_backups', id + '__' + col));
-      if (satDoc.exists()) { // en modular, exists es un METODO
-        const items = satDoc.data().items || [];
-        for (let i = 0; i < items.length; i += 450) {
-          const batch = writeBatchM(dbModular);
-          items.slice(i, i + 450).forEach(item => {
-            const { _id, ...resto } = item;
-            batch.set(docM(dbModular, col, String(_id)), resto);
-          });
-          await batch.commit();
-        }
+      const items = await _leerColeccionDelBackup(col);
+      for (let i = 0; i < items.length; i += 450) {
+        const batch = writeBatchM(dbModular);
+        items.slice(i, i + 450).forEach(item => {
+          const { _id, ...resto } = item;
+          batch.set(docM(dbModular, col, String(_id)), resto);
+        });
+        await batch.commit();
       }
     }
 
