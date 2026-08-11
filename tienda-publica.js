@@ -1458,7 +1458,7 @@ if (_tndStep === 'cart') {
         const _impulsoProds = _tndProductosImpulso();
         if (!_impulsoProds.length) return '';
         return `<div style="margin-top:.75rem">
-          <div style="font-size:.78rem;font-weight:700;color:#6b7280;margin-bottom:.4rem">🍫 Antes de continuar...</div>
+          <div style="font-size:.78rem;font-weight:700;color:#6b7280;margin-bottom:.4rem">😋 ¿Te provoca algo más?</div>
           <div style="display:flex;gap:.5rem;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:.25rem">
             ${_impulsoProds.map(p => `<div style="flex-shrink:0;width:88px;background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden;position:relative">
               <div style="width:100%;height:70px;background:#F3F4F6;display:flex;align-items:center;justify-content:center">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:100%;object-fit:contain">`:'<span style="font-size:1.6rem">🍫</span>'}</div>
