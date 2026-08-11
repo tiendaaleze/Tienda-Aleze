@@ -753,8 +753,8 @@ function getClienteNombre(id) { const c = DB.clientes.find(c => c.id == id); ret
 function getMesActual() { return today().substring(0,7); }
 function precioSugerido(costo, margen) { return Math.ceil(costo*(1+margen/100)*10)/10; }
 
-function getAlertas() {
-  const ignoradas = DB.config.alertasIgnoradas || {};
+function getAlertas(_incluirIgnoradas) {
+  const ignoradas = _incluirIgnoradas ? {} : (DB.config.alertasIgnoradas || {});
   const alertas = [];
   const diasVenc = parseInt(DB.config.diasVenc) || 7;
   DB.productos.forEach(p => {
@@ -819,6 +819,32 @@ function ignorarAlerta(key) {
   fbGuardarProductos();
   showAlerts();
   updateAlertCount();
+}
+
+// ── Limpieza de alertas ignoradas obsoletas ──
+// Una alerta ignorada queda guardada con una clave fija (ej. "stock_123") — si la condicion
+// que la origino se resuelve (stock se restituye, vencimiento se actualiza, fiado se paga) y
+// vuelve a ocurrir en el futuro como un episodio NUEVO, la clave sigue "ignorada" para
+// siempre, y esa alerta nueva nunca se muestra. Esto tambien hace crecer DB.config sin limite
+// con el tiempo (impacta tanto el documento de configuracion como el respaldo, que incluye
+// config completo). Se ejecuta como maximo 1 vez al dia (no en cada cambio, para no generar
+// lecturas/escrituras de mas) — compara las claves ignoradas contra las alertas que
+// realmente aplicarian ahora mismo sin ningun filtro, y descarta las que ya no corresponden
+// a ninguna condicion vigente.
+function limpiarAlertasIgnoradasSiCorresponde() {
+  const hoy = today();
+  if (DB.config._ultimaLimpiezaAlertas === hoy) return; // ya se hizo hoy
+  DB.config._ultimaLimpiezaAlertas = hoy;
+  const ignoradas = DB.config.alertasIgnoradas || {};
+  const keysIgnoradas = Object.keys(ignoradas);
+  if (keysIgnoradas.length === 0) { fbGuardar(); return; }
+  const keysVigentes = new Set(getAlertas(true).map(a => a.key));
+  let huboLimpieza = false;
+  keysIgnoradas.forEach(key => {
+    if (!keysVigentes.has(key)) { delete ignoradas[key]; huboLimpieza = true; }
+  });
+  fbGuardar();
+  if (huboLimpieza) updateAlertCount();
 }
 
 function abrirModal(id) { document.getElementById(id).classList.add('open'); }
