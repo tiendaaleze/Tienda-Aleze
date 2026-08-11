@@ -359,6 +359,10 @@ function _renderTienda() {
 }
 .tnd-cart-count.tnd-bump { animation:tndCartBump .35s ease; }
 @keyframes tndCartBump { 0%{transform:scale(1);} 40%{transform:scale(1.45);} 100%{transform:scale(1);} }
+@media (max-width:380px) {
+  .tnd-cart-label { display:none; }
+  .tnd-cart-btn { padding:.5rem .65rem; }
+}
 .tnd-main { max-width:1400px;margin:0 auto;padding:1.25rem; }
 /* Buscador sticky: queda anclado justo debajo del header al hacer scroll — fondo sólido
    propio para que el contenido que pasa detrás no se transparente. */
@@ -596,14 +600,15 @@ function _renderTienda() {
   display:flex; align-items:center; justify-content:center; padding:0 2px;
 }
 #tienda-publica { padding-bottom:64px; }
-/* En móvil, el header oculta ⭐ y 🛒 (ya cubiertos por la barra inferior), y se oculta el
-   botón "Ver todo el catálogo" del Home (mismo destino que "Catálogo" de la barra). En
-   escritorio no cambia nada — quedan visibles como siempre, ya que ahí la barra está oculta. */
-.tnd-header .tnd-cart-btn, #tnd-ver-catalogo-btn { display:none; }
+/* En móvil, el header oculta ⭐ Puntos (ya cubierto por su propio botón en la barra inferior)
+   y el botón "Ver todo el catálogo" del Home (mismo destino que "Catálogo" de la barra). El
+   carrito SÍ se muestra siempre en el header — misma ubicación familiar que la mayoría de
+   apps, en vez de vivir solo en la barra inferior. En escritorio no cambia nada. */
+.tnd-header .tnd-puntos-btn, #tnd-ver-catalogo-btn { display:none; }
 @media (min-width:900px) {
   #tnd-bottombar { display:none; }
   #tienda-publica { padding-bottom:0; }
-  .tnd-header .tnd-cart-btn, #tnd-ver-catalogo-btn { display:inline-flex; }
+  .tnd-header .tnd-puntos-btn, #tnd-ver-catalogo-btn { display:inline-flex; }
 }
 #tnd-wa-fab {
   display:none; /* oculto en mobile — se integra como boton de la bottom bar en su lugar */
@@ -657,12 +662,12 @@ function _renderTienda() {
   <div class="tnd-brand" onclick="_tndIrHome()" style="cursor:pointer"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.5rem;align-items:center">
     <span id="sync-badge-tienda" style="display:none;align-items:center;gap:.2rem;background:#EDE9FE;border-radius:12px;padding:.15rem .4rem;font-size:.66rem;color:#7C3AED;white-space:nowrap;flex-shrink:0"></span>
-    <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐${(() => {
+    <button class="tnd-cart-btn tnd-puntos-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐${(() => {
       const _cidHeader = tndGetClienteIdReal();
       return _cidHeader ? ' ' + Math.floor(estadoFidelizacion(_cidHeader).saldo) : '';
     })()}</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
-      🛒 Carrito
+      🛒 <span class="tnd-cart-label">Carrito</span>
       <span class="tnd-cart-count" id="tnd-cart-count">0</span>
     </button>
   </div>
@@ -704,7 +709,7 @@ function _renderTienda() {
 <!-- WhatsApp flotante (solo desktop, sin bottom bar) — icono generico de burbuja de chat en
      el verde de marca, no el logo oficial (protegido como marca registrada de Meta). -->
 <a href="https://wa.me/51${waNum}" target="_blank" id="tnd-wa-fab" aria-label="Escríbenos por WhatsApp">
-  <svg viewBox="0 0 24 24" width="26" height="26" fill="white"><path d="M12 2C6.48 2 2 6.19 2 11.36c0 2.92 1.44 5.53 3.7 7.24L5 22l3.76-1.24A10.4 10.4 0 0012 21.5c5.52 0 10-4.19 10-9.36S17.52 2 12 2z"/></svg>
+  <svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
 </a>
 <!-- Barra de navegación inferior fija -->
 <nav id="tnd-bottombar">
@@ -714,14 +719,11 @@ function _renderTienda() {
   <button type="button" class="tnd-bb-item ${_tndVista==='catalogo'?'active':''}" onclick="tndSetCat('')">
     <span class="tnd-bb-icon">📦</span><span class="tnd-bb-label">Catálogo</span>
   </button>
-  <button type="button" class="tnd-bb-item" onclick="tndAbrirCarrito()">
-    <span class="tnd-bb-icon" style="position:relative">🛒<span class="tnd-bb-badge" id="tnd-bb-cart-count">0</span></span><span class="tnd-bb-label">Carrito</span>
-  </button>
   <button type="button" class="tnd-bb-item" onclick="tndAbrirMisPuntos()">
     <span class="tnd-bb-icon">⭐</span><span class="tnd-bb-label">Puntos</span>
   </button>
   <a href="https://wa.me/51${waNum}" target="_blank" class="tnd-bb-item" style="text-decoration:none">
-    <span class="tnd-bb-icon" style="color:#25D366"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="vertical-align:-4px"><path d="M12 2C6.48 2 2 6.19 2 11.36c0 2.92 1.44 5.53 3.7 7.24L5 22l3.76-1.24A10.4 10.4 0 0012 21.5c5.52 0 10-4.19 10-9.36S17.52 2 12 2z"/></svg></span><span class="tnd-bb-label">WhatsApp</span>
+    <span class="tnd-bb-icon" style="color:#25D366"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="vertical-align:-3px"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span><span class="tnd-bb-label">WhatsApp</span>
   </a>
 </nav>
 <!-- Panel lateral (carrito / checkout) -->
@@ -1288,8 +1290,6 @@ function tndUpdateCartBadge() {
     void el.offsetWidth;
     el.classList.add('tnd-bump');
   }
-  const elBB = document.getElementById('tnd-bb-cart-count');
-  if (elBB) elBB.textContent = total;
 }
 
 function tndAbrirCarrito() {
