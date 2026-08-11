@@ -874,6 +874,40 @@ function _tndIniciarCarruselServicios(cantidad) {
 }
 let _tndMetodo = 'Yape';
 let _tndEntrega = 'recojo';
+// Revalida stock real del SERVIDOR (nunca cache) justo antes de confirmar o pagar un pedido —
+// el carrito persiste en localStorage y puede quedar abierto horas o dias, tiempo suficiente
+// para que ese mismo stock se venda por otro lado (POS, otro cliente). Sin esto, un pedido
+// podia confirmarse — o peor, pagarse en linea de forma irreversible — sin stock real de
+// respaldo. Cubre tambien los componentes reales de un pack, no solo el producto combo.
+async function _tndRevalidarStock() {
+  if (!dbModular) return true; // sin conexion no se puede verificar — se deja pasar
+  for (const item of _tiendaCart) {
+    const p = DB.productos.find(x => x.id === item.prodId);
+    if (!p) continue;
+    if (p.esCombo && p.componentes) {
+      for (const comp of p.componentes) {
+        try {
+          const snap = await getDocDelServidorM(docM(dbModular, 'productos', String(comp.prodId)));
+          const stockReal = snap.exists() ? (snap.data().stock || 0) : 0;
+          if (stockReal < (comp.cant || 1) * item.cant) {
+            alert(`⚠️ "${p.nombre}" ya no tiene stock suficiente para armar este pack. Ajusta la cantidad en tu carrito e intenta de nuevo.`);
+            return false;
+          }
+        } catch (e) { console.warn('No se pudo revalidar stock de componente ' + comp.prodId, e); }
+      }
+    } else {
+      try {
+        const snap = await getDocDelServidorM(docM(dbModular, 'productos', String(item.prodId)));
+        const stockReal = snap.exists() ? (snap.data().stock || 0) : 0;
+        if (stockReal < item.cant) {
+          alert(`⚠️ "${item.nombre}" ya no tiene stock suficiente (quedan ${stockReal}). Ajusta la cantidad en tu carrito e intenta de nuevo.`);
+          return false;
+        }
+      } catch (e) { console.warn('No se pudo revalidar stock de ' + item.prodId, e); }
+    }
+  }
+  return true;
+}
 let _tndStep = 'cart'; // cart | datos | pago | confirmacion
 // Total real del carrito de tienda publica, con descuentos de combo (2 productos distintos)
 // y de cantidad (2x1/3x2 sobre el mismo producto) ya aplicados — mismo mecanismo que POS.
@@ -883,8 +917,9 @@ function _tndCalcularTotal() {
   const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
   const combo = calcComboDescuento(_tiendaCart, 'principal');
   const cantidad = calcDescuentoCantidad(_tiendaCart, 'principal');
+  const recargo = calcRecargoPorLimitePromo(_tiendaCart, 'principal');
   const descuento = combo.total + cantidad.total;
-  return { subtotal, descuento, total: Math.max(0, subtotal - descuento), lineasCombo: combo.lineas, lineasCantidad: cantidad.lineas };
+  return { subtotal, descuento, total: Math.max(0, subtotal - descuento + recargo.total), lineasCombo: combo.lineas, lineasCantidad: cantidad.lineas, lineasRecargo: recargo.lineas };
 }
 
 function tndRenderCats() {
@@ -1008,7 +1043,7 @@ let prods = (DB.productos||[]).filter(p => {
   const grid = document.getElementById('tnd-grid');
   if (!grid) return;
   grid.innerHTML = prods.map(p => {
-    const agotado = p.esCombo ? (p.promoActiva === false) : stockTotal(p) <= 0;
+    const agotado = (p.promoActiva === false) || stockTotal(p) <= 0;
     const cat = (DB.categorias||[]).find(c => c.id === p.cat);
    const icon = p.imagen
       ? `<img src="${p.imagen}" alt="${p.nombre}">`
@@ -1064,12 +1099,17 @@ function tndMostrarToast(mensaje) {
 }
 function tndAgregarCarrito(prodId) {
   const p = DB.productos.find(x => x.id === prodId);
-  if (!p || (p.esCombo ? p.promoActiva === false : stockTotal(p) <= 0)) return;
+  if (!p || p.promoActiva === false || stockTotal(p) <= 0) return;
   if (p.venc && p.venc < today()) { alert('Este producto ya no está disponible.'); tndFiltrar(); return; }
   const promo = _getPromoTienda(p);
   const precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
   const cat = (DB.categorias||[]).find(c => c.id === p.cat);
   const existing = _tiendaCart.find(i => i.prodId === prodId);
+  // Pack: limite por venta es un bloqueo directo, mismo criterio que POS.
+  if (p.esCombo && promo && promo.maxPorVenta > 0 && (existing ? existing.cant : 0) >= promo.maxPorVenta) {
+    alert(`Máximo ${promo.maxPorVenta} unidad(es) de este pack por compra.`);
+    return;
+  }
   // Productos por peso (granel) se agregan de a bloques de 250g (0.25 kg) por click — tanto el
   // primer click como los siguientes, siempre el mismo paso. Mismo bug que ya se corrigió en
   // POS: si el primero usa un valor distinto al de los siguientes clicks, la suma queda mal.
@@ -1150,8 +1190,13 @@ function tndDetalleAgregarCarrito() {
   // CRITICO — la validacion anterior solo miraba la cantidad nueva, no la suma con lo que ya
   // estuviera en el carrito — permitia superar el stock real si el producto ya estaba agregado.
   const cantTotalTrasAgregar = (existing ? existing.cant : 0) + cant;
-  if (!p.esCombo && cantTotalTrasAgregar > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
+  if (cantTotalTrasAgregar > stockTotal(p)) { alert('No hay suficiente stock disponible.'); return; }
   const promo = _getPromoTienda(p);
+  // Pack: limite por venta es un bloqueo directo, mismo criterio que POS.
+  if (p.esCombo && promo && promo.maxPorVenta > 0 && ((existing ? existing.cant : 0) + cant) > promo.maxPorVenta) {
+    alert(`Máximo ${promo.maxPorVenta} unidad(es) de este pack por compra.`);
+    return;
+  }
   let precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
   const mayor = _tndDetalleData?.precioMayor;
   if (mayor && mayor.cantidadMin > 0 && cant >= mayor.cantidadMin) precio = mayor.precio;
@@ -1195,7 +1240,7 @@ function tndRenderPanel() {
   const footer = document.getElementById('tnd-panel-footer');
 if (_tndStep === 'cart') {
     titulo.textContent = '🛒 Tu carrito';
-    const { subtotal, total, lineasCombo: _comboTnd, lineasCantidad: _cantidadTnd } = _tndCalcularTotal();
+    const { subtotal, total, lineasCombo: _comboTnd, lineasCantidad: _cantidadTnd, lineasRecargo: _recargoTnd } = _tndCalcularTotal();
     if (_tiendaCart.length === 0) {
       body.innerHTML = '<div style="text-align:center;padding:2rem;color:#9ca3af">🛒 Tu carrito está vacío<br><span style="font-size:.82rem">Agrega productos del catálogo</span></div>';
       footer.innerHTML = '<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>';
@@ -1214,10 +1259,11 @@ if (_tndStep === 'cart') {
         <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},1)">+</button>
         <button class="tnd-cart-trash" onclick="tndEliminarDelCarrito(${item.prodId})" title="Eliminar" aria-label="Eliminar producto">🗑️</button>
       </div>`).join('')}
-      ${(_comboTnd.length || _cantidadTnd.length) ? `
+      ${(_comboTnd.length || _cantidadTnd.length || _recargoTnd.length) ? `
       <div style="margin-top:.5rem">
         ${_comboTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#F5F3FF;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#5B21B6">🎁 Combo: ${l.nombre}${l.sets>1?' ×'+l.sets:''}</span><span style="font-weight:700;color:#5B21B6">-S/ ${l.descuento.toFixed(2)}</span></div>`).join('')}
         ${_cantidadTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#F5F3FF;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#5B21B6">🏷️ ${l.nombre}${l.grupos>1?' ×'+l.grupos:''}</span><span style="font-weight:700;color:#5B21B6">-S/ ${l.descuento.toFixed(2)}</span></div>`).join('')}
+        ${_recargoTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#FEF3C7;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#92400E">⚠️ ${l.unidadesExceso} unid. de "${l.nombre}" superan el máx. por compra</span><span style="font-weight:700;color:#92400E">+S/ ${l.recargo.toFixed(2)}</span></div>`).join('')}
       </div>` : ''}
       <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem">
         <div style="display:flex;justify-content:space-between;font-size:.85rem;color:#6b7280;margin-bottom:.3rem">
@@ -1281,7 +1327,7 @@ if (_tndStep === 'cart') {
       const extra = _tndDetalleData?.imagenesExtra || [];
       const desc = _tndDetalleData?.descripcion || '';
       const mayor = _tndDetalleData?.precioMayor;
-      const agotado = p.esCombo ? (p.promoActiva === false) : stockTotal(p) <= 0;
+      const agotado = (p.promoActiva === false) || stockTotal(p) <= 0;
       // CRITICO: esta vista mostraba p.precio directo, sin chequear nunca si el producto tenia
       // una promo individual activa — el carrito SI aplicaba el descuento correctamente al
       // agregar (tndDetalleAgregarCarrito ya usa _getPromoTienda), pero el precio que se veia
@@ -1414,6 +1460,7 @@ async function tndPagarEnLinea() {
   const { total: subtotal } = _tndCalcularTotal();
   if (subtotal <= 0) { alert('Tu carrito está vacío.'); return; }
   if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
+  if (!(await _tndRevalidarStock())) return;
 
   try {
     // El pedido tiene que existir en Firestore ANTES de iniciar el pago — crearSesionPago
@@ -1547,6 +1594,7 @@ async function tndEnviarPedido() {
   if (!subtotal || subtotal <= 0) {
     alert('El total del pedido no es válido'); return;
   }
+  if (!(await _tndRevalidarStock())) return;
 
   // ── Verificación SMS (dormida mientras el flag esté apagado) — si hace falta y
   // todavía no se hizo en este equipo, se muestra y se vuelve a llamar esta misma
