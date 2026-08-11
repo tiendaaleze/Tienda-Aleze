@@ -1120,6 +1120,16 @@ function tndAgregarCarrito(prodId) {
   // primer click como los siguientes, siempre el mismo paso. Mismo bug que ya se corrigió en
   // POS: si el primero usa un valor distinto al de los siguientes clicks, la suma queda mal.
   const paso = p.tipo === 'granel' ? 0.25 : 1;
+  // Descuento directo y 2x1/3x2: no se bloquea, pero se avisa de forma clara e inmediata en
+  // el momento exacto en que la unidad agregada ya no lleva el descuento — mismo criterio que
+  // POS. Se compara "antes/despues" en vez de igualdad exacta porque el paso puede ser
+  // fraccionario (granel, bloques de 0.25 kg), donde nunca se pisa un valor entero exacto.
+  if (!p.esCombo && promo && promo.maxPorVenta > 0) {
+    const _cantAntes = existing ? existing.cant : 0;
+    if (_cantAntes < promo.maxPorVenta && (_cantAntes + paso) > promo.maxPorVenta) {
+      alert(`⚠️ Ya se alcanzó el máximo de ${promo.maxPorVenta} unidad(es) con precio promocional de "${p.nombre}". Las siguientes se cobran al precio normal (S/ ${p.precio.toFixed(2)}).`);
+    }
+  }
   if (existing) {
     if (existing.cant + paso > stockTotal(p)) { alert('No hay más stock disponible'); return; }
     existing.cant = Math.round((existing.cant + paso) * 1000) / 1000;
@@ -1204,6 +1214,13 @@ function tndDetalleAgregarCarrito() {
     return;
   }
   let precio = promo && promo.precioPromo ? promo.precioPromo : p.precio;
+  // Descuento directo y 2x1/3x2: no se bloquea, pero se avisa de forma clara e inmediata si
+  // la cantidad agregada hace que el total supere el maximo por venta — mismo criterio que
+  // el resto del sistema, aca la cantidad puede saltar de golpe (el usuario escribe un
+  // numero), no de a un paso por click.
+  if (!p.esCombo && promo && promo.maxPorVenta > 0 && ((existing ? existing.cant : 0) + cant) > promo.maxPorVenta) {
+    alert(`⚠️ Con esta cantidad, algunas unidades de "${p.nombre}" superan el máximo de ${promo.maxPorVenta} con precio promocional — esas se cobran al precio normal (S/ ${p.precio.toFixed(2)}).`);
+  }
   const mayor = _tndDetalleData?.precioMayor;
   if (mayor && mayor.cantidadMin > 0 && cant >= mayor.cantidadMin) precio = mayor.precio;
   const cat = (DB.categorias||[]).find(c => c.id === p.cat);
