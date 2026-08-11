@@ -666,7 +666,11 @@ function calcDescuentoCantidad(cartRef, sede) {
   promoActivas.forEach(promo => {
     const item = cartRef.find(i => i.prodId == promo.prod1);
     if (!item) return;
-    const grupos = Math.floor(item.cant / promo.cantidadRequerida);
+    // Maximo por venta: las unidades mas alla de este tope se cobran a precio normal — no
+    // entran en el calculo de grupos en absoluto, como si el cliente solo hubiera llevado
+    // esa cantidad tope para efectos de la promo.
+    const cantParaPromo = promo.maxPorVenta > 0 ? Math.min(item.cant, promo.maxPorVenta) : item.cant;
+    const grupos = Math.floor(cantParaPromo / promo.cantidadRequerida);
     if (grupos <= 0) return;
     const prod = DB.productos.find(p => p.id == promo.prod1);
     const precioUnit = prod ? prod.precio : item.precio;
@@ -678,6 +682,39 @@ function calcDescuentoCantidad(cartRef, sede) {
     }
   });
   return { total: totalDesc, lineas };
+}
+// ── Recargo por exceso del maximo por venta — SOLO aplica a "descuento directo" ──
+// A diferencia de 2x1/3x2 (donde el descuento se calcula aparte, sumando grupos), en
+// descuento directo TODAS las unidades del item ya llevan el precio promo asignado desde que
+// se agregaron al carrito (ver addToCart) — asi que el "sub" ya viene con el descuento
+// aplicado a todo. Este recargo corrige eso: por cada unidad que excede el maximo por venta,
+// se SUMA la diferencia hasta el precio normal, para que esas unidades terminen costando lo
+// que deberian. Pack no usa esto — para pack el limite es un bloqueo directo en el carrito,
+// nunca se llega a tener unidades "de mas" que cobrar distinto.
+function calcRecargoPorLimitePromo(cartRef, sede) {
+  // Returns { total: number, lineas: [{nombre, unidadesExceso, recargo}] } — total es POSITIVO,
+  // se SUMA al total (a diferencia de calcComboDescuento/calcDescuentoCantidad, que restan).
+  cartRef = cartRef || cart;
+  sede = sede || currentUserSedeId || 'principal';
+  const promoActivas = DB.promociones.filter(p =>
+    p.activa && p.hasta >= today() && p.tipo === 'descuento' && p.maxPorVenta > 0 && _promoAplicaSede(p, sede)
+  );
+  let totalRecargo = 0;
+  const lineas = [];
+  promoActivas.forEach(promo => {
+    const item = cartRef.find(i => i.prodId == promo.prod1);
+    if (!item) return;
+    const unidadesExceso = Math.max(0, item.cant - promo.maxPorVenta);
+    if (unidadesExceso <= 0) return;
+    const prod = DB.productos.find(p => p.id == promo.prod1);
+    const precioNormal = prod ? prod.precio : item.precio;
+    const recargo = Math.max(0, unidadesExceso * (precioNormal - item.precio));
+    if (recargo > 0) {
+      totalRecargo += recargo;
+      lineas.push({ nombre: promo.nombre, unidadesExceso, recargo });
+    }
+  });
+  return { total: totalRecargo, lineas };
 }
 function subtotalItemCarrito(item) {
   if (item.subtotalFinal != null) return item.subtotalFinal;
