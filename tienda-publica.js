@@ -203,7 +203,7 @@ function tndLoadCart() {
         const prod = (DB.productos || []).find(p => p.id === item.prodId);
         if (!prod || stockTotal(prod) <= 0) return null; // producto sin stock (consolidado, tienda pública)
         if (prod.venc && prod.venc < today()) return null; // producto vencido
-        return { ...item, precio: prod.precio, nombre: prod.nombre }; // precio actualizado
+        return { ...item, precio: prod.precio, nombre: prod.nombre, imagen: prod.imagen||'' }; // precio/imagen actualizados
       })
       .filter(Boolean);
     tndSaveCart(); // limpia entradas inválidas
@@ -1124,7 +1124,7 @@ function tndAgregarCarrito(prodId) {
     if (existing.cant + paso > stockTotal(p)) { alert('No hay más stock disponible'); return; }
     existing.cant = Math.round((existing.cant + paso) * 1000) / 1000;
   } else {
-    _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: paso, icon: cat?.emoji||'📦', tipo: p.tipo });
+_tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: paso, icon: cat?.emoji||'📦', imagen: p.imagen||'', tipo: p.tipo });
   }
 tndSaveCart(); // persistir en localStorage
   tndUpdateCartBadge();
@@ -1211,7 +1211,7 @@ function tndDetalleAgregarCarrito() {
     existing.cant += cant;
     existing.precio = precio;
   } else {
-    _tiendaCart.push({ prodId: p.id, nombre: p.nombre, precio, cant, icon: cat?.emoji||'📦', tipo: p.tipo });
+  _tiendaCart.push({ prodId: p.id, nombre: p.nombre, precio, cant, icon: cat?.emoji||'📦', imagen: p.imagen||'', tipo: p.tipo });
   }
 tndSaveCart();
   tndUpdateCartBadge();
@@ -1254,8 +1254,8 @@ if (_tndStep === 'cart') {
     }
     body.innerHTML = `
       ${_tiendaCart.map(item => `
-      <div class="tnd-cart-item">
-        <div class="tnd-cart-item-icon">${item.icon}</div>
+     <div class="tnd-cart-item">
+        <div class="tnd-cart-item-icon">${item.imagen ? `<img src="${item.imagen}" style="width:100%;height:100%;object-fit:contain;border-radius:6px">` : item.icon}</div>
         <div class="tnd-cart-item-info">
           <div class="tnd-cart-item-name">${item.nombre}</div>
           <div class="tnd-cart-item-price">S/ ${item.precio.toFixed(2)} ${item.tipo==='granel'?'/kg':'c/u'}</div>
