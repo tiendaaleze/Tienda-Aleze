@@ -96,11 +96,33 @@ if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.c
 // siempre leian 0 y volvian a sumar desde cero. No era cache, no eran reglas, no era la red.
 function stockEnSede(prod) {
   if (!prod) return 0;
+  if (prod.esCombo) return _stockComboDisponible(prod);
   return prod.stock || 0;
 }
 function stockTotal(prod) {
   if (!prod) return 0;
+  if (prod.esCombo) return _stockComboDisponible(prod);
   return prod.stock || 0;
+}
+// Cuantos packs son realmente armables AHORA MISMO, segun el stock real de sus componentes —
+// reemplaza el numero fijo artificial (999) que se guardaba antes, que nunca reflejaba
+// disponibilidad real. Al calcularse en vivo desde DB.productos (nunca un valor cacheado),
+// toda la validacion de stock que ya existe para productos normales (la que sí compara
+// correctamente contra lo que ya hay en el carrito) empieza a funcionar tambien para combos,
+// sin necesitar chequeos especiales duplicados en cada punto de entrada del sistema.
+function _stockComboDisponible(prod) {
+  if (!prod.componentes || !prod.componentes.length) return prod.stock || 0; // dato incompleto — respaldo seguro
+  let minDisponible = Infinity;
+  for (const comp of prod.componentes) {
+    const cp = DB.productos.find(p => p.id === comp.prodId);
+    // Componente eliminado del catalogo, o (caso extremo que la interfaz ya bloquea al crear,
+    // pero blindado igual por si el dato llega corrupto de otra forma) el componente es a su
+    // vez otro combo — no soportado, se trata como sin stock en vez de recursar.
+    if (!cp || cp.esCombo) return 0;
+    const disponiblePorEsteComponente = Math.floor((cp.stock || 0) / (comp.cant || 1));
+    if (disponiblePorEsteComponente < minDisponible) minDisponible = disponiblePorEsteComponente;
+  }
+  return minDisponible === Infinity ? 0 : minDisponible;
 }
 // ── Incremento atómico de stock — directamente sobre el documento del producto ──
 function fbIncrementarStock(prodId, delta) {
