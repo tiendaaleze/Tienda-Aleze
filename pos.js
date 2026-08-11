@@ -126,6 +126,13 @@ function addToCart(prodId) {
       return;
     }
   }
+  // Descuento directo y 2x1/3x2: no se bloquea (el cliente puede seguir comprando), pero se
+  // avisa de forma clara e inmediata en el momento exacto en que la unidad agregada ya no
+  // lleva el descuento — nunca dejar que el cliente crea que sigue llevando promo cuando ya
+  // no es asi. Se muestra solo una vez, justo al cruzar el umbral, no en cada click siguiente.
+  if (promo && promo.maxPorVenta > 0 && existing && existing.cant === promo.maxPorVenta) {
+    alert(`⚠️ Ya se alcanzó el máximo de ${promo.maxPorVenta} unidad(es) con precio promocional de "${prod.nombre}". Las siguientes se cobran al precio normal (${sol(prod.precio)}).`);
+  }
   if (existing) {
     if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
     existing.cant++;
@@ -1159,6 +1166,9 @@ function mobAddToCart(prodId) {
       alert(`Máximo ${promoPack.maxPorVenta} unidad(es) de este pack por venta.`);
       return;
     }
+  }
+  if (promo && promo.maxPorVenta > 0 && existing && existing.cant === promo.maxPorVenta) {
+    alert(`⚠️ Ya se alcanzó el máximo de ${promo.maxPorVenta} unidad(es) con precio promocional de "${prod.nombre}". Las siguientes se cobran al precio normal (${sol(prod.precio)}).`);
   }
   if (existing) {
     if (existing.cant >= stockEnSede(prod)) { alert('Stock insuficiente'); return; }
