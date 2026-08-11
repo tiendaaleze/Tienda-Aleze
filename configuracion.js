@@ -61,6 +61,7 @@ function renderConfigTienda() {
   }
   if (!cfg.banners) cfg.banners = [];
   const el = document.getElementById('cfg-eslogan'); if (el) el.value = cfg.eslogan || '';
+  const dm = document.getElementById('cfg-delivery-minimo'); if (dm) dm.value = cfg.deliveryMinimo || 20;
   const bv = document.getElementById('cfg-banner-visible'); if (bv) bv.checked = cfg.bannerVisible !== false;
   // Banners — carrusel: lista de tarjetas, cada una con su propia imagen y link opcional.
   const bl2 = document.getElementById('cfg-banners-lista');
@@ -145,6 +146,7 @@ function guardarConfigTienda(_silencioso) {
   if (currentRole !== 'admin') return;
   const cfg = DB.config;
   cfg.eslogan    = document.getElementById('cfg-eslogan')?.value.trim() || 'Todo lo que necesitas, cerca de ti';
+  cfg.deliveryMinimo = parseFloat(document.getElementById('cfg-delivery-minimo')?.value) || 20;
   cfg.bannerVisible = document.getElementById('cfg-banner-visible')?.checked !== false;
 (cfg.banners || []).forEach((b, i) => {
     b.url        = document.getElementById(`cfg-ban-img-${i}`)?.value.trim() || '';
