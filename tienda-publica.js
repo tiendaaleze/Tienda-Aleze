@@ -518,7 +518,7 @@ function _renderTienda() {
   display:flex;align-items:center;gap:.6rem;
   padding:.6rem;background:#f9fafb;border-radius:10px;margin-bottom:.5rem;
 }
-.tnd-cart-item-icon { font-size:1.5rem; }
+.tnd-cart-item-icon { font-size:1.5rem; width:44px; height:44px; flex-shrink:0; display:flex; align-items:center; justify-content:center; overflow:hidden; }
 .tnd-cart-item-info { flex:1; }
 .tnd-cart-item-name { font-size:.82rem;font-weight:700;color:#1f2937; }
 .tnd-cart-item-price { font-size:.78rem;color:#7C3AED;font-weight:600; }
