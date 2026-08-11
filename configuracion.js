@@ -330,21 +330,6 @@ async function cambiarPassword() {
   }
 }
 
-function guardarSheets() {
-  const id   = document.getElementById('cfg-sheet-id').value;
-  const json = document.getElementById('cfg-sheet-json').value;
-  if (!id || !json) { alert('Completa ambos campos'); return; }
-  try { JSON.parse(json); } catch(e) { alert('El JSON no es válido'); return; }
-  document.getElementById('sheets-status').innerHTML = '<span style="color:var(--accent)">✅ Credenciales guardadas.</span>';
-}
-
-function testSheets() {
-  document.getElementById('sheets-status').innerHTML = '<span style="color:var(--gray-500)">🔄 Probando conexión...</span>';
-  setTimeout(() => {
-    document.getElementById('sheets-status').innerHTML = '<span style="color:var(--accent)">✅ Conexión exitosa con Google Sheets</span>';
-  }, 1500);
-}
-
 // ===================== RESET DE DATOS — SOLO ADMIN =====================
 
 // ── Vacía una colección completa via batches (Firestore no tiene "borrar todo" en una sola llamada) ──
