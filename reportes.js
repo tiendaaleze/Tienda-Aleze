@@ -1136,6 +1136,7 @@ function exportarExcelInventario() {
       'ID_SISTEMA':     p.id,
       'Codigo_Barras':  p.codigo || '',
       'Nombre':         p.nombre,
+      'Marca':          p.marca || '',
       'Categoria':      cat ? (cat.emoji + ' ' + cat.nombre) : '',
       'ID_Categoria':   p.cat || '',
       'Tipo':           p.tipo || 'unidad',
@@ -1155,7 +1156,7 @@ function exportarExcelInventario() {
 
   // Ancho de columnas
   ws['!cols'] = [
-    {wch:14},{wch:16},{wch:28},{wch:22},{wch:12},{wch:10},{wch:8},
+    {wch:14},{wch:16},{wch:28},{wch:16},{wch:22},{wch:12},{wch:10},{wch:8},
     {wch:11},{wch:12},{wch:13},{wch:12},{wch:13},{wch:12},{wch:22}
   ];
 
@@ -1329,6 +1330,7 @@ function procesarArchivoExcel(file) {
         const diffs = [];
         const mapCampos = [
           { key: 'nombre',   col: 'Nombre',         fmt: v => v.toString().trim() },
+          { key: 'marca',    col: 'Marca',          fmt: v => v.toString().trim() || null },
           { key: 'tipo',     col: 'Tipo',            fmt: v => v.toString().trim() },
           { key: 'unidad',   col: 'Unidad',          fmt: v => v.toString().trim() },
           { key: 'stockMin', col: 'Stock_Minimo',    fmt: v => parseFloat(v) || 0 },
@@ -1412,6 +1414,7 @@ function renderExcelReviewModal() {
           <span class="excel-change-pill">Costo: <span class="new">S/ ${parseFloat(c.fila['Precio_Costo']||0).toFixed(2)}</span></span>
           <span class="excel-change-pill">Venta: <span class="new">S/ ${parseFloat(c.fila['Precio_Venta']||0).toFixed(2)}</span></span>
           <span class="excel-change-pill">Tipo: <span class="new">${c.fila['Tipo'] || 'unidad'}</span></span>
+          ${c.fila['Marca'] ? `<span class="excel-change-pill">Marca: <span class="new">${c.fila['Marca']}</span></span>` : ''}
           ${c.fila['Vencimiento'] ? `<span class="excel-change-pill">Venc: <span class="new">${c.fila['Vencimiento']}</span></span>` : ''}
         </div>`;
     } else {
@@ -1507,6 +1510,7 @@ function aplicarCambiosExcel() {
       const nuevoProd = {
        id: _getUniqueId(),
         nombre:   f['Nombre'].toString().trim(),
+        marca:    f['Marca'] ? f['Marca'].toString().trim() : null,
         cat:      parseInt(f['ID_Categoria']) || (DB.categorias[0] ? DB.categorias[0].id : 1),
         tipo:     f['Tipo'] || 'unidad',
         unidad:   f['Unidad'] || 'und',
