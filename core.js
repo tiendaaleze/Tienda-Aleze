@@ -615,6 +615,70 @@ function costoMerma(m) {
 // aplicarPreciosProporcionales), se usa ese valor directo, sin recalcular — así Reportes,
 // Historial y cualquier pantalla que muestre una venta pasada coincide exacto con lo que
 // realmente se cobró, en vez de recalcular precio*cant y arriesgarse a un numero distinto.
+// ── Descuento por combo de 2 productos distintos (ej. vodka + doritos combinados) ──
+// Se agrega/quita cada producto por separado al carrito normal — el sistema detecta la
+// combinacion automaticamente al totalizar, sin necesitar un "producto pack" en el catalogo.
+// Compartida entre POS (pasa 'cart') y tienda publica (pasa '_tiendaCart') — SIEMPRE pasar
+// cartRef explicito desde tienda publica, el fallback a 'cart' solo tiene sentido en POS.
+function calcComboDescuento(cartRef, sede) {
+  // Returns { total: number, lineas: [{nombre, sets, descuento}] }
+  cartRef = cartRef || cart;
+  sede = sede || currentUserSedeId || 'principal';
+  const promoActivas = DB.promociones.filter(p => p.activa && p.hasta >= today() && p.prod2 && _promoAplicaSede(p, sede));
+  let totalDesc = 0;
+  const lineas = [];
+  promoActivas.forEach(promo => {
+    const item1 = cartRef.find(i => i.prodId == promo.prod1);
+    const item2 = cartRef.find(i => i.prodId == promo.prod2);
+    if (!item1 || !item2) return;
+    const sets = Math.min(item1.cant, item2.cant);
+    if (sets <= 0) return;
+    // Price without combo: sum of regular prices × sets
+    const prod1 = DB.productos.find(p => p.id == promo.prod1);
+    const prod2 = DB.productos.find(p => p.id == promo.prod2);
+    const precioSinCombo = ((prod1 ? prod1.precio : item1.precio) + (prod2 ? prod2.precio : item2.precio)) * sets;
+    const precioConCombo = promo.precioPromo * sets;
+    const descuento = Math.max(0, precioSinCombo - precioConCombo);
+    if (descuento > 0) {
+      totalDesc += descuento;
+      lineas.push({ nombre: promo.nombre, sets, descuento });
+    }
+  });
+  return { total: totalDesc, lineas };
+}
+// ── Descuento por cantidad sobre EL MISMO producto (2x1: compra 2 paga 1, 3x2: compra 3
+// paga 2) — distinto del combo de arriba, que combina productos DIFERENTES. Cada grupo
+// completo de "cantidadRequerida" unidades da un descuento de "cantidadRequerida -
+// cantidadAPagar" unidades gratis; cualquier unidad suelta que no complete un grupo se cobra
+// al precio normal. Compartida entre POS y tienda publica, mismo criterio que arriba.
+function calcDescuentoCantidad(cartRef, sede) {
+  // Returns { total: number, lineas: [{nombre, grupos, descuento}] }
+  cartRef = cartRef || cart;
+  sede = sede || currentUserSedeId || 'principal';
+  const promoActivas = DB.promociones.filter(p =>
+    p.activa && p.hasta >= today() &&
+    (p.tipo === '2x1' || p.tipo === '3x2') &&
+    p.cantidadRequerida > 1 &&
+    _promoAplicaSede(p, sede)
+  );
+  let totalDesc = 0;
+  const lineas = [];
+  promoActivas.forEach(promo => {
+    const item = cartRef.find(i => i.prodId == promo.prod1);
+    if (!item) return;
+    const grupos = Math.floor(item.cant / promo.cantidadRequerida);
+    if (grupos <= 0) return;
+    const prod = DB.productos.find(p => p.id == promo.prod1);
+    const precioUnit = prod ? prod.precio : item.precio;
+    const unidadesGratis = grupos * (promo.cantidadRequerida - promo.cantidadAPagar);
+    const descuento = Math.max(0, unidadesGratis * precioUnit);
+    if (descuento > 0) {
+      totalDesc += descuento;
+      lineas.push({ nombre: promo.nombre, grupos, descuento });
+    }
+  });
+  return { total: totalDesc, lineas };
+}
 function subtotalItemCarrito(item) {
   if (item.subtotalFinal != null) return item.subtotalFinal;
   const bruto = (item.precio || 0) * (item.cant || 0);
