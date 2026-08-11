@@ -151,7 +151,7 @@ function abrirModalProducto() {
   document.querySelector('#prod-stock-wrap label').textContent = 'Stock inicial *';
   document.getElementById('prod-stock-nota').style.display = 'none';
   // Solo inputs/selects — NO incluir divs como prod-margen-cat-label
-  ['prod-nombre','prod-costo','prod-precio','prod-stock','prod-venc','prod-codigo','prod-precio-sugerido'].forEach(id => {
+  ['prod-nombre','prod-marca','prod-costo','prod-precio','prod-stock','prod-venc','prod-codigo','prod-precio-sugerido'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = '';
   });
   // Limpiar el div de etiqueta de margen por separado
@@ -179,7 +179,18 @@ function abrirModalProducto() {
     if (p) p.innerHTML = '🖼️';
   });
   updateModalCats(); updateModalProvs();
+  _actualizarListaMarcas();
   abrirModal('modal-producto');
+}
+
+// Autocompletado nativo (datalist) con las marcas ya usadas en el catalogo — evita que la
+// misma marca termine escrita de formas distintas ("Gloria" / "gloria" / "GLORIA") por
+// tipeo libre, sin forzar una lista cerrada (el campo sigue siendo texto libre).
+function _actualizarListaMarcas() {
+  const dl = document.getElementById('prod-marca-lista');
+  if (!dl) return;
+  const marcas = [...new Set((DB.productos||[]).map(p => p.marca).filter(Boolean))].sort();
+  dl.innerHTML = marcas.map(m => `<option value="${m}"></option>`).join('');
 }
 
 function editarProducto(id) {
@@ -188,6 +199,7 @@ function editarProducto(id) {
   editingProductId = id;
   document.getElementById('modal-prod-titulo').textContent = 'Editar Producto';
   document.getElementById('prod-nombre').value = p.nombre;
+  document.getElementById('prod-marca').value = p.marca || '';
   document.getElementById('prod-tipo').value = p.tipo;
   document.getElementById('prod-unidad').value = p.unidad;
   document.getElementById('prod-costo').value = p.costo;
@@ -258,6 +270,7 @@ function editarProducto(id) {
       }
     }).catch(e => console.warn('No se pudo cargar el detalle:', e));
   }
+  _actualizarListaMarcas();
   abrirModal('modal-producto');
 }
 
@@ -632,6 +645,7 @@ function guardarProducto() {
   const prod = {
     id: editingProductId || getId(),
     nombre, cat,
+    marca: document.getElementById('prod-marca').value.trim() || null,
     tipo: document.getElementById('prod-tipo').value,
     unidad: document.getElementById('prod-unidad').value,
     costo, precio,
