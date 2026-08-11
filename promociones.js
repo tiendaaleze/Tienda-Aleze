@@ -250,6 +250,41 @@ function _llenarSelectsPromo() {
   });
 }
 
+// Buscador seleccionable para los 3 campos de producto — mismo patron que el buscador de
+// cliente en POS. El select oculto (mismo id de siempre) sigue siendo la fuente real que lee
+// guardarPromocion()/calcPromo()/etc, esto solo agrega una forma mas facil de establecer su
+// valor sin tener que recorrer una lista larga.
+function _promoProdBuscar(n) {
+  const q = (document.getElementById('promo-prod'+n+'-buscar')?.value || '').trim();
+  const sug = document.getElementById('promo-prod'+n+'-sugerencias');
+  if (!sug) return;
+  const prods = DB.productos.filter(p => !p.esCombo);
+  const matches = (q ? prods.filter(p => _norm(p.nombre).includes(_norm(q))) : prods).slice(0, 8);
+  if (!matches.length) {
+    sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
+  } else {
+    sug.innerHTML = matches.map(p => `<div onclick="_promoProdSeleccionar(${n}, ${p.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+        ${p.nombre} <span style="color:var(--gray-400);font-size:.75rem">(${sol(p.precio)})</span>
+       </div>`).join('');
+  }
+  sug.style.display = 'block';
+}
+function _promoProdSeleccionar(n, id) {
+  const p = DB.productos.find(x => x.id === id);
+  const sel = document.getElementById('promo-prod'+n);
+  const buscar = document.getElementById('promo-prod'+n+'-buscar');
+  if (sel) sel.value = id;
+  if (buscar) buscar.value = p ? p.nombre : '';
+  const sug = document.getElementById('promo-prod'+n+'-sugerencias'); if (sug) sug.style.display = 'none';
+  onPromoProductoChange();
+}
+// Limpia el campo visible de busqueda de un producto (sin tocar el select oculto, eso lo hace
+// quien llame a esto por separado) — usado al abrir el modal nuevo y al cambiar de tipo.
+function _resetPromoProdBuscador(n) {
+  const buscar = document.getElementById('promo-prod'+n+'-buscar');
+  if (buscar) buscar.value = '';
+}
+
 function onPromoProductoChange() {
   const ids = ['promo-prod1','promo-prod2','promo-prod3']
     .map(id => parseInt(document.getElementById(id)?.value) || null);
@@ -280,6 +315,8 @@ function actualizarVisibilidadTipoPromo() {
   if (!esPack) {
     document.getElementById('promo-prod2').value = '';
     document.getElementById('promo-prod3').value = '';
+    _resetPromoProdBuscador(2);
+    _resetPromoProdBuscador(3);
   }
   const _ayudaMax = document.getElementById('promo-max-venta-ayuda');
   if (_ayudaMax) {
@@ -424,6 +461,9 @@ function editarPromocion(id) {
   document.getElementById('promo-prod1').value = pr.prod1 || '';
   document.getElementById('promo-prod2').value = pr.prod2 || '';
   document.getElementById('promo-prod3').value = pr.prod3 || '';
+  document.getElementById('promo-prod1-buscar').value = pr.prod1nombre || '';
+  document.getElementById('promo-prod2-buscar').value = pr.prod2nombre || '';
+  document.getElementById('promo-prod3-buscar').value = pr.prod3nombre || '';
   document.getElementById('promo-desde').value = pr.desde;
   document.getElementById('promo-hasta').value = pr.hasta;
   document.getElementById('promo-limite').value = pr.limite || 100;
@@ -455,6 +495,15 @@ function abrirModalPromocion() {
   editingPromoId = null;
   document.getElementById('promo-modal-titulo').textContent = '🏷️ Nueva Promoción / Combo';
   _llenarSelectsPromo();
+  _resetPromoProdBuscador(2);
+  _resetPromoProdBuscador(3);
+  // Producto 1 no tiene opcion vacia — siempre queda el primero de la lista seleccionado por
+  // defecto (comportamiento previo a este cambio) — se sincroniza el campo visible con ese
+  // mismo valor real, para no mostrar el buscador vacio mientras el select oculto ya tiene algo.
+  const _prod1Sel = document.getElementById('promo-prod1');
+  const _prod1DefaultId = _prod1Sel ? parseInt(_prod1Sel.value) : null;
+  const _prod1Default = _prod1DefaultId ? DB.productos.find(p => p.id === _prod1DefaultId) : null;
+  document.getElementById('promo-prod1-buscar').value = _prod1Default ? _prod1Default.nombre : '';
   const hoy = today();
   const en7 = new Date(); en7.setDate(en7.getDate()+7);
   document.getElementById('promo-desde').value = hoy;
