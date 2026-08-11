@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.12-1000</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.12-1400</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.12-1000</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.12-1400</div>
   </div>
 
 </div>
@@ -892,6 +892,11 @@ window.addEventListener('error', function(e) {
               <label>Eslogan</label>
               <input type="text" class="form-control" id="cfg-eslogan" placeholder="Todo lo que necesitas, cerca de ti" />
             </div>
+            <div class="form-group">
+              <label>🚚 Pedido mínimo para delivery (S/)</label>
+              <input type="number" class="form-control" id="cfg-delivery-minimo" placeholder="20.00" min="0" step="0.50" />
+              <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem">Por debajo de este monto, el cliente solo puede elegir recojo en tienda</div>
+            </div>
             <div style="border-top:1px solid var(--gray-200);margin:1rem 0;padding-top:1rem">
               <div style="font-weight:700;font-size:.85rem;margin-bottom:.75rem">🖼️ Banners (carrusel)</div>
               <div id="cfg-banners-lista"></div>
@@ -1187,6 +1192,13 @@ window.addEventListener('error', function(e) {
         <span>🔍 Este producto necesita más información en la tienda pública</span>
       </label>
       <div style="font-size:.72rem;color:var(--gray-400);margin-top:.2rem">Para ropa, electrodomésticos, licores — algo que un cliente necesite ver en detalle antes de comprar. Un ajo suelto o una gaseosa no lo necesitan — déjalo apagado.</div>
+    </div>
+    <div class="form-group" style="border-top:1px solid var(--gray-200);padding-top:.75rem">
+      <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+        <input type="checkbox" id="prod-es-impulso" />
+        <span>🍫 Mostrar en compras por impulso (carrito de tienda pública)</span>
+      </label>
+      <div style="font-size:.72rem;color:var(--gray-400);margin-top:.2rem">Golosinas, bebidas heladas, cositas de aseo personal — algo tentador de último minuto. No es por precio bajo, es por qué tan atractivo es a la vista.</div>
     </div>
     <div id="prod-detalle-wrap" style="display:none;background:var(--gray-50);border-radius:8px;padding:.75rem;margin-top:.5rem">
       <div class="form-group">
