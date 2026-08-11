@@ -728,6 +728,14 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
     setTimeout(() => { _fbEscribiendo = false; }, 8000);
     renderPedidosOnline();
     try { renderDashboard(); } catch(e) {}
+    // Mismo motivo que en el caso "entregado" de mas arriba — el listener queda bloqueado
+    // 8s y es el unico lugar que actualizaba el badge, dejandolo desactualizado hasta que
+    // volviera a dispararse. Se actualiza aca directo, sin depender del listener bloqueado.
+    try {
+      const _pendAhora = DB.pedidosOnline.filter(x => x.estado === 'pendiente').length;
+      const _nb = document.getElementById('po-nav-badge');
+      if (_nb) { _nb.textContent = _pendAhora || ''; _nb.style.display = _pendAhora > 0 ? 'inline-block' : 'none'; }
+    } catch(e) {}
     return;
   }
   // Estados: procesado, cancelado — solo cambiar estado
