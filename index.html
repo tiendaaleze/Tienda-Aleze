@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.07-1000</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.10-1200</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.07-1000</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.10-1200</div>
   </div>
 
 </div>
@@ -1466,7 +1466,7 @@ window.addEventListener('error', function(e) {
         </div>
         <div class="form-group">
           <label>Tipo</label>
-          <select class="form-control" id="promo-tipo-sel" onchange="calcPromo()">
+          <select class="form-control" id="promo-tipo-sel" onchange="actualizarVisibilidadTipoPromo()">
             <option value="descuento">Descuento directo</option>
             <option value="pack">Pack 2-3 productos</option>
             <option value="2x1">2x1</option>
@@ -1477,13 +1477,13 @@ window.addEventListener('error', function(e) {
           <label>Producto 1 *</label>
           <select class="form-control" id="promo-prod1" onchange="onPromoProductoChange()"></select>
         </div>
-        <div class="form-group">
+        <div id="promo-prod2-wrap" class="form-group">
           <label>Producto 2 <span style="color:var(--gray-400)">(opcional)</span></label>
           <select class="form-control" id="promo-prod2" onchange="onPromoProductoChange()">
             <option value="">— Sin segundo producto —</option>
           </select>
         </div>
-        <div class="form-group">
+        <div id="promo-prod3-wrap" class="form-group">
           <label>Producto 3 <span style="color:var(--gray-400)">(opcional)</span></label>
           <select class="form-control" id="promo-prod3" onchange="onPromoProductoChange()">
             <option value="">— Sin tercer producto —</option>
@@ -1503,7 +1503,7 @@ window.addEventListener('error', function(e) {
           <div style="font-size:.8rem;font-weight:600;color:var(--gray-600);margin-bottom:.5rem">📊 Cálculo automático</div>
           <div style="font-size:.82rem" id="promo-calc-detalle">Selecciona al menos un producto</div>
         </div>
-        <div class="form-group">
+        <div id="promo-margen-wrap" class="form-group">
           <label>Margen de ganancia %</label>
           <div style="display:flex;gap:.5rem;align-items:center">
             <input type="range" id="promo-margen-slider" min="0" max="80" value="20"
@@ -1513,13 +1513,17 @@ window.addEventListener('error', function(e) {
             <span style="font-size:.82rem">%</span>
           </div>
         </div>
-        <div class="form-group">
+        <div id="promo-precioofer-wrap" class="form-group">
           <label>Precio oferta final (S/) — editable</label>
           <input type="number" class="form-control" id="promo-precio-promo" step="0.01" oninput="calcPromoDesdeManual()" />
         </div>
-        <div class="form-group">
+        <div id="promo-preciorig-wrap" class="form-group">
           <label>Precio normal referencia (S/)</label>
           <input type="number" class="form-control" id="promo-precio-orig" step="0.01" readonly style="background:var(--gray-50)" />
+        </div>
+        <div id="promo-cantidad-wrap" style="display:none;background:var(--gray-50);border-radius:10px;padding:1rem;margin-bottom:.75rem">
+          <div style="font-size:.8rem;font-weight:600;color:var(--gray-600);margin-bottom:.5rem">📊 Cómo funciona</div>
+          <div style="font-size:.82rem" id="promo-cantidad-detalle"></div>
         </div>
         <div id="promo-aviso" style="font-size:.78rem;color:var(--danger);margin-bottom:.5rem"></div>
         <div class="form-group">
