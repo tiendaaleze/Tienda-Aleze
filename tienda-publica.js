@@ -462,7 +462,10 @@ function _renderTienda() {
    producto en oferta, facil de pasar por alto al escanear rapido una grilla completa. Borde +
    fondo sutil hacen que la tarjeta entera destaque a la distancia, sin ser tan agresivo como
    para verse como un error o una alerta. */
-.tnd-prod-card.en-oferta { border-color:#FCA5A5;background:#FFF5F5; }
+/* Tarjetas con oferta activa — el badge de la esquina ya comunica la oferta con claridad;
+   una sombra mas marcada (en vez de borde rojo + fondo rosado) da un realce sutil a la
+   distancia sin competir visualmente con la foto del producto ni leerse como una alerta. */
+.tnd-prod-card.en-oferta { box-shadow:0 4px 14px rgba(124,58,237,.18); }
 .tnd-prod-card.en-oferta:hover:not(.agotado) { border-color:#7C3AED; }
 /* La imagen ocupa la mayor parte de la tarjeta — formato 4:5 (mas alta que ancha, no
    cuadrada) en vez de 1:1, para que el texto de abajo (nombre + precio) quede genuinamente
@@ -471,10 +474,22 @@ function _renderTienda() {
 .tnd-prod-img-wrap {
   width:100%;aspect-ratio:4/5;background:#F3F4F6;
   display:flex;align-items:center;justify-content:center;
-  padding:.85rem;box-sizing:border-box;
+  padding:.85rem;box-sizing:border-box;position:relative;
 }
 .tnd-prod-img-wrap img { width:100%;height:100%;object-fit:contain; }
 .tnd-prod-icon-emoji { font-size:3.6rem; }
+/* Boton de compra rapida — atajo de 1 toque, coexiste con el click en el resto de la
+   tarjeta (que sigue abriendo el detalle si el producto lo tiene). stopPropagation evita que
+   ambos comportamientos se disparen a la vez. */
+.tnd-prod-add-btn {
+  position:absolute;right:6px;bottom:6px;z-index:2;
+  background:#7C3AED;color:#fff;border:none;border-radius:50%;
+  width:30px;height:30px;font-size:1.1rem;font-weight:700;line-height:1;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 2px 6px rgba(124,58,237,.4);
+}
+.tnd-prod-add-btn.granel { width:auto;border-radius:14px;padding:0 .5rem;font-size:.68rem; }
+.tnd-prod-add-btn:active { transform:scale(0.92); }
 .tnd-prod-info { padding:.55rem .75rem .65rem;text-align:center; }
 .tnd-prod-name { font-size:.8rem;font-weight:700;color:#1f2937;margin-bottom:.2rem;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
 .tnd-prod-price { font-size:1.05rem;font-weight:800;color:#7C3AED; }
@@ -534,7 +549,7 @@ function _renderTienda() {
 .tnd-step { display:none; }
 .tnd-step.active { display:block; }
 .tnd-user-area { background:#EDE9FE;border-radius:10px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.85rem; }
-.tnd-delivery-box { background:#FEF3C7;border-radius:10px;padding:.75rem 1rem;margin:.75rem 0;font-size:.82rem;color:#92400E;border-left:4px solid #F59E0B; }
+.tnd-delivery-box { background:#ECFDF5;border-radius:10px;padding:.75rem 1rem;margin:.75rem 0;font-size:.82rem;color:#065F46;border-left:4px solid #10B981; }
 .tnd-form-group { margin-bottom:.75rem; }
 .tnd-form-group label { display:block;font-size:.78rem;font-weight:700;color:#4b5563;margin-bottom:.3rem; }
 .tnd-form-group input, .tnd-form-group select {
@@ -591,14 +606,15 @@ function _renderTienda() {
   .tnd-header .tnd-cart-btn, #tnd-ver-catalogo-btn { display:inline-flex; }
 }
 #tnd-wa-fab {
-  position:fixed; right:16px; bottom:80px; z-index:160;
+  display:none; /* oculto en mobile — se integra como boton de la bottom bar en su lugar */
+  position:fixed; right:16px; bottom:24px; z-index:160;
   width:52px; height:52px; border-radius:50%;
   background:#25D366; color:#fff; font-size:1.5rem;
-  display:flex; align-items:center; justify-content:center;
+  align-items:center; justify-content:center;
   text-decoration:none; box-shadow:0 4px 12px rgba(37,211,102,.4);
 }
 @media (min-width:900px) {
-  #tnd-wa-fab { bottom:24px; } /* sin barra inferior en PC, baja más cerca del borde */
+  #tnd-wa-fab { display:flex; } /* en desktop no hay bottom bar, vuelve a flotar */
 }
 </style>
 
@@ -641,7 +657,10 @@ function _renderTienda() {
   <div class="tnd-brand" onclick="_tndIrHome()" style="cursor:pointer"><img src="${_LOGO_B64}" alt="Aleze" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> ${nombre}</div>
   <div style="display:flex;gap:.5rem;align-items:center">
     <span id="sync-badge-tienda" style="display:none;align-items:center;gap:.2rem;background:#EDE9FE;border-radius:12px;padding:.15rem .4rem;font-size:.66rem;color:#7C3AED;white-space:nowrap;flex-shrink:0"></span>
-    <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐</button>
+    <button class="tnd-cart-btn" onclick="tndAbrirMisPuntos()" style="padding:.5rem .75rem">⭐${(() => {
+      const _cidHeader = tndGetClienteIdReal();
+      return _cidHeader ? ' ' + Math.floor(estadoFidelizacion(_cidHeader).saldo) : '';
+    })()}</button>
     <button class="tnd-cart-btn" onclick="tndAbrirCarrito()">
       🛒 Carrito
       <span class="tnd-cart-count" id="tnd-cart-count">0</span>
@@ -682,8 +701,11 @@ function _renderTienda() {
   <div class="tnd-grid" id="tnd-grid"></div>
 </div>
 <div id="tnd-toast">✅ <span id="tnd-toast-msg"></span></div>
-<!-- WhatsApp flotante — siempre accesible, sin importar el scroll -->
-<a href="https://wa.me/51${waNum}" target="_blank" id="tnd-wa-fab" aria-label="Escríbenos por WhatsApp">📲</a>
+<!-- WhatsApp flotante (solo desktop, sin bottom bar) — icono generico de burbuja de chat en
+     el verde de marca, no el logo oficial (protegido como marca registrada de Meta). -->
+<a href="https://wa.me/51${waNum}" target="_blank" id="tnd-wa-fab" aria-label="Escríbenos por WhatsApp">
+  <svg viewBox="0 0 24 24" width="26" height="26" fill="white"><path d="M12 2C6.48 2 2 6.19 2 11.36c0 2.92 1.44 5.53 3.7 7.24L5 22l3.76-1.24A10.4 10.4 0 0012 21.5c5.52 0 10-4.19 10-9.36S17.52 2 12 2z"/></svg>
+</a>
 <!-- Barra de navegación inferior fija -->
 <nav id="tnd-bottombar">
   <button type="button" class="tnd-bb-item ${_tndVista==='home'?'active':''}" onclick="_tndIrHome()">
@@ -698,6 +720,9 @@ function _renderTienda() {
   <button type="button" class="tnd-bb-item" onclick="tndAbrirMisPuntos()">
     <span class="tnd-bb-icon">⭐</span><span class="tnd-bb-label">Puntos</span>
   </button>
+  <a href="https://wa.me/51${waNum}" target="_blank" class="tnd-bb-item" style="text-decoration:none">
+    <span class="tnd-bb-icon" style="color:#25D366"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="vertical-align:-4px"><path d="M12 2C6.48 2 2 6.19 2 11.36c0 2.92 1.44 5.53 3.7 7.24L5 22l3.76-1.24A10.4 10.4 0 0012 21.5c5.52 0 10-4.19 10-9.36S17.52 2 12 2z"/></svg></span><span class="tnd-bb-label">WhatsApp</span>
+  </a>
 </nav>
 <!-- Panel lateral (carrito / checkout) -->
 <div class="tnd-panel-overlay" id="tnd-overlay" onclick="tndCerrarPanel()"></div>
@@ -802,7 +827,10 @@ function _tndRenderHome() {
       : (_pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
       : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : ''));
     const _badgeDetalleRail = p.tieneDetalle ? `<div class="tnd-badge-detalle" style="position:absolute;top:6px;right:6px;z-index:1">🔍 Detalle</div>` : '';
-    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${_badgeDetalleRail}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#6b7280;text-decoration:line-through">S/ ${(+_precioRefRail).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
+    const _botonAddRail = !((p.esCombo && p.promoActiva === false) || stockTotal(p) <= 0)
+      ? `<button type="button" onclick="event.stopPropagation();tndAgregarCarrito(${p.id})" aria-label="Agregar ${p.nombre} al carrito" style="position:absolute;top:96px;right:6px;z-index:2;background:#7C3AED;color:#fff;border:none;border-radius:50%;width:26px;height:26px;font-size:1rem;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 6px rgba(124,58,237,.4)">+</button>`
+      : '';
+    return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${_badgeDetalleRail}${_botonAddRail}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#6b7280;text-decoration:line-through">S/ ${(+_precioRefRail).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
 
   const hoy = new Date().toISOString().slice(0,10);
@@ -888,6 +916,7 @@ function _tndIniciarCarruselServicios(cantidad) {
   _tndIniciarCarrusel('tnd-servicios-track', '#tnd-servicios-dots .tnd-banner-dot', cantidad, '_tndServiciosInterval', 5200);
 }
 let _tndMetodo = 'Yape';
+let _tndMasMetodos = false;
 let _tndEntrega = 'recojo';
 // Revalida stock real del SERVIDOR (nunca cache) justo antes de confirmar o pagar un pedido —
 // el carrito persiste en localStorage y puede quedar abierto horas o dias, tiempo suficiente
@@ -1182,7 +1211,7 @@ if (!_ordenSel) {
         </div>
         <div>${_badgeVisible}</div>
       </div>
-      <div class="tnd-prod-img-wrap">${icon}</div>
+      <div class="tnd-prod-img-wrap">${icon}${!agotado ? `<button type="button" class="tnd-prod-add-btn ${p.tipo==='granel'?'granel':''}" onclick="event.stopPropagation();tndAgregarCarrito(${p.id})" aria-label="Agregar ${p.nombre} al carrito">${p.tipo==='granel'?'+250g':'+'}</button>` : ''}</div>
       <div class="tnd-prod-info">
         <div class="tnd-prod-name">${p.nombre}</div>
         ${precioOrig ? `<div class="tnd-prod-price-orig">S/ ${precioOrig.toFixed(2)}</div>` : ''}
@@ -1239,6 +1268,15 @@ _tiendaCart.push({ prodId, nombre: p.nombre, precio, cant: paso, icon: cat?.emoj
 tndSaveCart(); // persistir en localStorage
   tndUpdateCartBadge();
   tndMostrarToast(`${p.nombre} añadido al carrito`);
+}
+
+// Envoltorio para el boton + del carrusel de compras por impulso (vive dentro del panel del
+// carrito) — reutiliza tndAgregarCarrito() tal cual, sin duplicar nada, solo agrega el
+// refresco del panel que ese caso especifico necesita (agregar desde DENTRO del carrito ya
+// abierto, para que el producto desaparezca del carrusel y el subtotal se actualice en vivo).
+function tndAgregarDesdeImpulso(prodId) {
+  tndAgregarCarrito(prodId);
+  if (_tndStep === 'cart') tndRenderPanel();
 }
 
 function tndUpdateCartBadge() {
@@ -1361,6 +1399,34 @@ function tndRenderPanel() {
   const titulo = document.getElementById('tnd-panel-titulo');
   const body = document.getElementById('tnd-panel-body');
   const footer = document.getElementById('tnd-panel-footer');
+// Productos marcados como compra por impulso (checkbox en el modal de producto), con stock,
+// que no combo, y que todavia no esten en el carrito (no tiene sentido sugerir algo ya
+// agregado). Variable por visita, no en cada apertura del carrito — mismo mecanismo de
+// sessionStorage que ya usa el catalogo principal para el orden aleatorio estable.
+function _tndProductosImpulso() {
+  const candidatos = (DB.productos||[]).filter(p =>
+    p.esImpulso && !p.esCombo && stockTotal(p) > 0 && !_tiendaCart.some(i => i.prodId === p.id)
+  );
+  if (!candidatos.length) return [];
+  const claveSesion = 'tnd_impulso_orden';
+  let ordenGuardado = null;
+  try { ordenGuardado = JSON.parse(sessionStorage.getItem(claveSesion) || 'null'); } catch(e) {}
+  let ordenados;
+  if (ordenGuardado) {
+    const porId = new Map(candidatos.map(p => [p.id, p]));
+    ordenados = ordenGuardado.map(id => porId.get(id)).filter(Boolean);
+    candidatos.forEach(p => { if (!ordenGuardado.includes(p.id)) ordenados.push(p); });
+  } else {
+    ordenados = candidatos.slice();
+    for (let i = ordenados.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ordenados[i], ordenados[j]] = [ordenados[j], ordenados[i]];
+    }
+    try { sessionStorage.setItem(claveSesion, JSON.stringify(ordenados.map(p => p.id))); } catch(e) {}
+  }
+  return ordenados.slice(0, 10);
+}
+
 if (_tndStep === 'cart') {
     titulo.textContent = '🛒 Tu carrito';
     const { subtotal, total, lineasCombo: _comboTnd, lineasCantidad: _cantidadTnd, lineasRecargo: _recargoTnd } = _tndCalcularTotal();
@@ -1388,6 +1454,20 @@ if (_tndStep === 'cart') {
         ${_cantidadTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#F5F3FF;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#5B21B6">🏷️ ${l.nombre}${l.grupos>1?' ×'+l.grupos:''}</span><span style="font-weight:700;color:#5B21B6">-S/ ${l.descuento.toFixed(2)}</span></div>`).join('')}
         ${_recargoTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#FEF3C7;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#92400E">⚠️ ${l.unidadesExceso} unid. de "${l.nombre}" superan el máx. por compra</span><span style="font-weight:700;color:#92400E">+S/ ${l.recargo.toFixed(2)}</span></div>`).join('')}
       </div>` : ''}
+      ${(() => {
+        const _impulsoProds = _tndProductosImpulso();
+        if (!_impulsoProds.length) return '';
+        return `<div style="margin-top:.75rem">
+          <div style="font-size:.78rem;font-weight:700;color:#6b7280;margin-bottom:.4rem">🍫 Antes de continuar...</div>
+          <div style="display:flex;gap:.5rem;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:.25rem">
+            ${_impulsoProds.map(p => `<div style="flex-shrink:0;width:88px;background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden;position:relative">
+              <div style="width:100%;height:70px;background:#F3F4F6;display:flex;align-items:center;justify-content:center">${p.imagen?`<img src="${p.imagen}" style="width:100%;height:100%;object-fit:contain">`:'<span style="font-size:1.6rem">🍫</span>'}</div>
+              <div style="padding:.3rem"><div style="font-size:.68rem;font-weight:600;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="font-size:.72rem;font-weight:800;color:#7C3AED">S/ ${p.precio.toFixed(2)}</div></div>
+              <button type="button" onclick="tndAgregarDesdeImpulso(${p.id})" aria-label="Agregar ${p.nombre}" style="position:absolute;top:4px;right:4px;background:#7C3AED;color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:.85rem;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 5px rgba(124,58,237,.4)">+</button>
+            </div>`).join('')}
+          </div>
+        </div>`;
+      })()}
       <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem">
         <div style="display:flex;justify-content:space-between;font-size:.85rem;color:#6b7280;margin-bottom:.3rem">
           <span>Subtotal</span><span>S/ ${subtotal.toFixed(2)}</span>
@@ -1534,7 +1614,7 @@ if (_tndStep === 'cart') {
           <div class="tnd-metodo-opt ${_tndEntrega==='delivery'?'selected':''}" onclick="tndSetEntrega('delivery')" style="flex:1">🚚<br>Delivery</div>
         </div>
       </div>
-      ${_tndEntrega==='delivery'?`<div class="tnd-delivery-box">📍 <strong>Nota:</strong> El delivery puede tener un costo adicional según la distancia. Recorridos menores a 300 metros son <strong>gratuitos</strong>. El vendedor te confirmará el costo exacto por WhatsApp.</div>`:''}
+      ${_tndEntrega==='delivery'?`<div class="tnd-delivery-box">🚚 El delivery puede tener un costo adicional según la distancia y disponibilidad. Te lo confirmamos por WhatsApp antes de cerrar tu pedido.</div>`:''}
       ${_tndEntrega==='delivery'?`<div class="tnd-form-group"><label>Tu dirección</label><input type="text" id="tnd-inp-dir" placeholder="Calle, número, referencia..." /></div>`:''}
     `;
     footer.innerHTML = `
@@ -1545,20 +1625,30 @@ if (_tndStep === 'cart') {
   if (_tndStep === 'pago') {
     titulo.textContent = '💳 Método de pago';
     const { total: subtotal } = _tndCalcularTotal();
-    const metodos = [
-      {v:'Efectivo',e:'💵 Efectivo'},
+    // Los 3 de mayor uso quedan siempre visibles; el resto se colapsa bajo "Ver más opciones"
+    // para no presentar 8 botones con el mismo peso visual — si el metodo ya elegido esta
+    // entre los colapsados (de una visita anterior), esa seccion se muestra expandida desde
+    // el inicio, para que el cliente vea su seleccion actual sin tener que buscarla.
+    const metodosDestacados = [
       {v:'Yape',e:'💜 Yape'},
       {v:'Plin',e:'💚 Plin'},
+      {v:'Efectivo',e:'💵 Efectivo'},
+    ];
+    const metodosOtros = [
       {v:'QR',e:'📱 QR'},
       {v:'Link de pago',e:'🔗 Link de pago'},
       {v:'Tarjeta POS',e:'💳 Tarjeta POS'},
       {v:'Tarjeta POS Móvil',e:'📲 POS Móvil'},
       {v:'Transferencia',e:'🏦 Transferencia'},
     ];
+    if (metodosOtros.some(m => m.v === _tndMetodo)) _tndMasMetodos = true;
     body.innerHTML = `
       <div class="tnd-metodo-grid">
-        ${metodos.map(m=>`<div class="tnd-metodo-opt ${_tndMetodo===m.v?'selected':''}" onclick="tndSetMetodo('${m.v}')">${m.e}</div>`).join('')}
+        ${metodosDestacados.map(m=>`<div class="tnd-metodo-opt ${_tndMetodo===m.v?'selected':''}" onclick="tndSetMetodo('${m.v}')">${m.e}</div>`).join('')}
       </div>
+      ${_tndMasMetodos
+        ? `<div class="tnd-metodo-grid" style="margin-top:.5rem">${metodosOtros.map(m=>`<div class="tnd-metodo-opt ${_tndMetodo===m.v?'selected':''}" onclick="tndSetMetodo('${m.v}')">${m.e}</div>`).join('')}</div>`
+        : `<button type="button" onclick="_tndToggleMasMetodos()" style="width:100%;background:none;border:none;color:#7C3AED;font-size:.82rem;font-weight:600;padding:.6rem 0;cursor:pointer">Ver más opciones ▾</button>`}
       <div style="border-top:2px solid #e5e7eb;padding-top:.75rem;margin-top:.5rem">
         ${_tiendaCart.map(i=>`<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:.25rem 0"><span>${i.nombre} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant}</span><span>S/ ${subtotalItemCarrito(i).toFixed(2)}</span></div>`).join('')}
         <div style="display:flex;justify-content:space-between;margin-top:.5rem;font-size:1rem;font-weight:700;color:#7C3AED">
@@ -1570,7 +1660,7 @@ if (_tndStep === 'cart') {
     const _pasarelaActiva = DB.config.pasarelaPago && DB.config.pasarelaPago.activa;
     footer.innerHTML = `
       ${_pasarelaActiva ? `<button class="tnd-btn tnd-btn-primary" onclick="tndPagarEnLinea()">💳 Pagar ahora en línea</button>` : ''}
-      <button class="tnd-btn tnd-btn-accent" onclick="tndEnviarPedido()">📲 Hacer pedido por WhatsApp</button>
+      <button class="tnd-btn tnd-btn-accent" onclick="tndEnviarPedido()">📱 Confirmar y Enviar Pedido por WhatsApp</button>
       <button class="tnd-btn tnd-btn-outline" onclick="tndVolverDatos()">← Volver</button>`;
   }
 }
@@ -1582,6 +1672,10 @@ async function tndPagarEnLinea() {
   if (!_tiendaUser?.nombre || !_tiendaUser?.tel) { alert('Completa tus datos antes de pagar.'); tndVolverDatos(); return; }
   const { total: subtotal } = _tndCalcularTotal();
   if (subtotal <= 0) { alert('Tu carrito está vacío.'); return; }
+  if (_tndEntrega === 'delivery') {
+    const _minDelivery = (DB.config && DB.config.deliveryMinimo) || 20;
+    if (subtotal < _minDelivery) { alert(`🚚 El pedido mínimo para delivery es S/ ${_minDelivery.toFixed(2)}. Tu carrito cambió — ajústalo o elige recojo en tienda.`); return; }
+  }
   if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
   if (!(await _tndRevalidarStock())) return;
 
@@ -1617,6 +1711,14 @@ async function tndPagarEnLinea() {
 }
 
 function tndSetEntrega(tipo) {
+  if (tipo === 'delivery') {
+    const _minDelivery = (DB.config && DB.config.deliveryMinimo) || 20;
+    const { total: _totalActual } = _tndCalcularTotal();
+    if (_totalActual < _minDelivery) {
+      alert(`🚚 El pedido mínimo para delivery es S/ ${_minDelivery.toFixed(2)}. Te faltan S/ ${(_minDelivery - _totalActual).toFixed(2)} — agrega más productos, o elige recojo en tienda.`);
+      return;
+    }
+  }
   _tndEntrega = tipo;
   document.querySelectorAll('.tnd-metodo-opt').forEach(el => {
     const esEste = (tipo==='recojo' && el.textContent.includes('Recojo')) ||
@@ -1632,6 +1734,10 @@ function tndSetMetodo(m) {
   document.querySelectorAll('.tnd-metodo-grid .tnd-metodo-opt').forEach(el => {
     el.classList.toggle('selected', el.textContent.includes(m));
   });
+}
+function _tndToggleMasMetodos() {
+  _tndMasMetodos = true;
+  tndRenderPanel();
 }
 
 function tndCartCant(prodId, delta) {
@@ -1716,6 +1822,10 @@ async function tndEnviarPedido() {
  const { total: subtotal } = _tndCalcularTotal();
   if (!subtotal || subtotal <= 0) {
     alert('El total del pedido no es válido'); return;
+  }
+  if (_tndEntrega === 'delivery') {
+    const _minDelivery = (DB.config && DB.config.deliveryMinimo) || 20;
+    if (subtotal < _minDelivery) { alert(`🚚 El pedido mínimo para delivery es S/ ${_minDelivery.toFixed(2)}. Tu carrito cambió — ajústalo o elige recojo en tienda.`); return; }
   }
   if (!(await _tndRevalidarStock())) return;
 
