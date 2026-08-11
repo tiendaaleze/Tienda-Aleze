@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.10-1200</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.11-0900</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.10-1200</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.11-0900</div>
   </div>
 
 </div>
@@ -1496,6 +1496,11 @@ window.addEventListener('error', function(e) {
         <div class="form-group">
           <label>Límite de unidades <span style="font-size:.75rem;color:var(--gray-400)">(pausa automática al llegar)</span></label>
           <input type="number" class="form-control" id="promo-limite" value="100" min="1" step="1" />
+        </div>
+        <div class="form-group">
+          <label>Máx. unidades a precio promo por venta <span style="font-size:.75rem;color:var(--gray-400)">(vacío = sin límite)</span></label>
+          <input type="number" class="form-control" id="promo-max-venta" min="1" step="1" placeholder="Sin límite" />
+          <div id="promo-max-venta-ayuda" style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem"></div>
         </div>
       </div>
       <div>
