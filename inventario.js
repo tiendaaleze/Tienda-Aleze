@@ -167,6 +167,7 @@ function abrirModalProducto() {
   if (_prevImg) { _prevImg.innerHTML = '🖼️'; _prevImg.style.fontSize='2rem'; }
   // Resetear seccion de detalle
   document.getElementById('prod-tiene-detalle').checked = false;
+  document.getElementById('prod-es-impulso').checked = false;
   document.getElementById('prod-detalle-wrap').style.display = 'none';
   document.getElementById('prod-desc-extendida').value = '';
   document.getElementById('prod-tiene-mayor').checked = false;
@@ -240,6 +241,7 @@ function editarProducto(id) {
   }
   // Detalle: se lee de su colección propia solo si el producto la usa — no en cada carga del catálogo.
   document.getElementById('prod-tiene-detalle').checked = !!p.tieneDetalle;
+  document.getElementById('prod-es-impulso').checked = !!p.esImpulso;
   document.getElementById('prod-detalle-wrap').style.display = p.tieneDetalle ? 'block' : 'none';
   document.getElementById('prod-desc-extendida').value = '';
   document.getElementById('prod-tiene-mayor').checked = false;
@@ -646,6 +648,7 @@ function guardarProducto() {
     id: editingProductId || getId(),
     nombre, cat,
     marca: document.getElementById('prod-marca').value.trim() || null,
+    esImpulso: document.getElementById('prod-es-impulso')?.checked || false,
     tipo: document.getElementById('prod-tipo').value,
     unidad: document.getElementById('prod-unidad').value,
     costo, precio,
