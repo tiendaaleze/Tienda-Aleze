@@ -775,15 +775,17 @@ function _tndRenderHome() {
   // en ambas, para que la pagina se sienta de una sola pieza, no secciones inconexas.
   const _tarjetaProdRail = (p, _esNuevo) => {
     const _promoRail = _getPromoTienda(p);
+    const _esCantidadRail = _promoRail && (_promoRail.tipo === '2x1' || _promoRail.tipo === '3x2');
     // Para un combo, p.precio YA es el precio de oferta (se establecio asi al crearlo) —
     // comparar contra si mismo siempre daria 0% de descuento. El precio de referencia real
     // para calcular el ahorro es precioOrig de la promocion (la suma de los productos sueltos).
     const _precioRefRail = p.esCombo ? (_promoRail && _promoRail.precioOrig) : p.precio;
-    const _pctDesc = _promoRail && _promoRail.precioPromo && _precioRefRail && _promoRail.precioPromo < _precioRefRail
+    const _pctDesc = (!_esCantidadRail && _promoRail && _promoRail.precioPromo && _precioRefRail && _promoRail.precioPromo < _precioRefRail)
       ? Math.round((1 - _promoRail.precioPromo / _precioRefRail) * 100) : 0;
-    const _precioMostrar = p.esCombo ? p.precio : (_pctDesc > 0 ? _promoRail.precioPromo : p.precio);
-   const _badgeEsquina = _pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
-      : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : '');
+    const _precioMostrar = (p.esCombo || _esCantidadRail) ? p.precio : (_pctDesc > 0 ? _promoRail.precioPromo : p.precio);
+   const _badgeEsquina = _esCantidadRail ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">${_promoRail.tipo}</div>`
+      : (_pctDesc > 0 ? `<div style="position:absolute;top:6px;left:6px;background:#EF4444;color:#fff;font-size:.76rem;font-weight:800;padding:.22rem .5rem;border-radius:5px;z-index:1;box-shadow:0 1px 4px rgba(239,68,68,.4)">-${_pctDesc}%</div>`
+      : (_esNuevo ? `<div style="position:absolute;top:6px;left:6px;background:#10B981;color:#fff;font-size:.65rem;font-weight:800;padding:.15rem .4rem;border-radius:5px;z-index:1">🆕 Nuevo</div>` : ''));
     const _badgeDetalleRail = p.tieneDetalle ? `<div class="tnd-badge-detalle" style="position:absolute;top:6px;right:6px;z-index:1">🔍 Detalle</div>` : '';
     return `<div class="tnd-rail-card" onclick="${p.tieneDetalle ? `tndVerDetalle(${p.id})` : `tndAgregarCarrito(${p.id})`}" style="cursor:pointer;flex-shrink:0;width:140px;background:${_pctDesc>0?'#FFF5F5':'#fff'};border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);position:relative;${_pctDesc>0?'border:2px solid #FCA5A5':''}">${_badgeEsquina}${_badgeDetalleRail}${p.imagen?`<img src="${p.imagen}" style="width:100%;height:120px;object-fit:contain;background:#F3F4F6">`:`<div style="height:120px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:2rem">🏷️</div>`}<div style="padding:.5rem"><div style="font-size:.78rem;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div><div style="display:flex;align-items:baseline;gap:.35rem">${_pctDesc > 0 ? `<span style="font-size:.68rem;color:#6b7280;text-decoration:line-through">S/ ${(+_precioRefRail).toFixed(2)}</span>` : ''}<span style="font-size:.82rem;font-weight:900;color:#7C3AED">S/ ${(+_precioMostrar).toFixed(2)}</span></div></div></div>`;
   };
@@ -873,6 +875,17 @@ function _tndIniciarCarruselServicios(cantidad) {
 let _tndMetodo = 'Yape';
 let _tndEntrega = 'recojo';
 let _tndStep = 'cart'; // cart | datos | pago | confirmacion
+// Total real del carrito de tienda publica, con descuentos de combo (2 productos distintos)
+// y de cantidad (2x1/3x2 sobre el mismo producto) ya aplicados — mismo mecanismo que POS.
+// Centralizado aca para que el carrito en vivo, el resumen, el envio del pedido y el pago en
+// linea SIEMPRE calculen exactamente lo mismo, sin poder divergir entre si.
+function _tndCalcularTotal() {
+  const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
+  const combo = calcComboDescuento(_tiendaCart, 'principal');
+  const cantidad = calcDescuentoCantidad(_tiendaCart, 'principal');
+  const descuento = combo.total + cantidad.total;
+  return { subtotal, descuento, total: Math.max(0, subtotal - descuento), lineasCombo: combo.lineas, lineasCantidad: cantidad.lineas };
+}
 
 function tndRenderCats() {
   const el = document.getElementById('tnd-cats-riel');
@@ -1024,7 +1037,7 @@ let prods = (DB.productos||[]).filter(p => {
       <div class="tnd-badges-top">
         <div class="tnd-badges-left">
           ${p.tieneDetalle ? `<span class="tnd-badge-detalle">🔍 Detalle</span>` : ''}
-          ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">${pctDescCat > 0 ? `-${pctDescCat}%` : 'PROMO'}</span>` : ''}
+          ${p.esCombo ? `<span class="tnd-prod-promo" style="background:var(--accent)">OFERTA</span>` : promo ? `<span class="tnd-prod-promo">${(promo.tipo === '2x1' || promo.tipo === '3x2') ? promo.tipo : (pctDescCat > 0 ? `-${pctDescCat}%` : 'PROMO')}</span>` : ''}
         </div>
         <div>${_badgeVisible}</div>
       </div>
@@ -1182,7 +1195,7 @@ function tndRenderPanel() {
   const footer = document.getElementById('tnd-panel-footer');
 if (_tndStep === 'cart') {
     titulo.textContent = '🛒 Tu carrito';
-    const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
+    const { subtotal, total, lineasCombo: _comboTnd, lineasCantidad: _cantidadTnd } = _tndCalcularTotal();
     if (_tiendaCart.length === 0) {
       body.innerHTML = '<div style="text-align:center;padding:2rem;color:#9ca3af">🛒 Tu carrito está vacío<br><span style="font-size:.82rem">Agrega productos del catálogo</span></div>';
       footer.innerHTML = '<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>';
@@ -1201,6 +1214,11 @@ if (_tndStep === 'cart') {
         <button class="tnd-qty-btn" onclick="tndCartCant(${item.prodId},1)">+</button>
         <button class="tnd-cart-trash" onclick="tndEliminarDelCarrito(${item.prodId})" title="Eliminar" aria-label="Eliminar producto">🗑️</button>
       </div>`).join('')}
+      ${(_comboTnd.length || _cantidadTnd.length) ? `
+      <div style="margin-top:.5rem">
+        ${_comboTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#F5F3FF;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#5B21B6">🎁 Combo: ${l.nombre}${l.sets>1?' ×'+l.sets:''}</span><span style="font-weight:700;color:#5B21B6">-S/ ${l.descuento.toFixed(2)}</span></div>`).join('')}
+        ${_cantidadTnd.map(l => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;background:#F5F3FF;border-radius:6px;padding:.3rem .5rem;margin-bottom:.25rem"><span style="color:#5B21B6">🏷️ ${l.nombre}${l.grupos>1?' ×'+l.grupos:''}</span><span style="font-weight:700;color:#5B21B6">-S/ ${l.descuento.toFixed(2)}</span></div>`).join('')}
+      </div>` : ''}
       <div style="border-top:2px solid #e5e7eb;margin-top:.5rem;padding-top:.75rem">
         <div style="display:flex;justify-content:space-between;font-size:.85rem;color:#6b7280;margin-bottom:.3rem">
           <span>Subtotal</span><span>S/ ${subtotal.toFixed(2)}</span>
@@ -1210,7 +1228,7 @@ if (_tndStep === 'cart') {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px dashed #e5e7eb;padding-top:.5rem">
           <span style="font-size:.9rem;font-weight:700;color:#1f2937">Total estimado</span>
-          <strong style="font-size:1.2rem;color:#7C3AED">S/ ${subtotal.toFixed(2)}</strong>
+          <strong style="font-size:1.2rem;color:#7C3AED">S/ ${total.toFixed(2)}</strong>
         </div>
       </div>`;
     footer.innerHTML = `
@@ -1279,7 +1297,7 @@ if (_tndStep === 'cart') {
           ${imgPrincipal ? `<img src="${imgPrincipal}" style="width:100%;max-height:50vh;object-fit:contain;border-radius:8px">` : `<div style="font-size:4rem;padding:2rem 0">${cat?.emoji||'📦'}</div>`}
         </div>
         ${extra.length ? `<div style="display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem">${extra.map(u=>`<img src="${u}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb">`).join('')}</div>` : ''}
-        ${promo ? `<div style="text-align:center;margin-bottom:.35rem"><span class="tnd-prod-promo">${pctDescDet > 0 ? `-${pctDescDet}%` : 'PROMO'}</span></div>` : ''}
+        ${promo ? `<div style="text-align:center;margin-bottom:.35rem"><span class="tnd-prod-promo">${(promo.tipo === '2x1' || promo.tipo === '3x2') ? promo.tipo : (pctDescDet > 0 ? `-${pctDescDet}%` : 'PROMO')}</span></div>` : ''}
         ${precioOrigDetalle ? `<div style="text-align:center;font-size:.95rem;color:#9ca3af;text-decoration:line-through">S/ ${precioOrigDetalle.toFixed(2)}</div>` : ''}
         <div style="text-align:center;font-size:1.4rem;font-weight:800;color:#7C3AED;margin-bottom:.5rem">S/ ${precioMostrar.toFixed(2)}${p.tipo==='granel'?' <span style="font-size:.6em;font-weight:400">/kg</span>':''}</div>
         ${cargando ? '<p style="text-align:center;color:#9ca3af;font-size:.82rem">⏳ Cargando detalle...</p>' : ''}
@@ -1357,7 +1375,7 @@ if (_tndStep === 'cart') {
 
   if (_tndStep === 'pago') {
     titulo.textContent = '💳 Método de pago';
-    const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
+    const { total: subtotal } = _tndCalcularTotal();
     const metodos = [
       {v:'Efectivo',e:'💵 Efectivo'},
       {v:'Yape',e:'💜 Yape'},
@@ -1393,7 +1411,7 @@ if (_tndStep === 'cart') {
 // Sin ese despliegue, esta llamada falla con un error claro, no en silencio.
 async function tndPagarEnLinea() {
   if (!_tiendaUser?.nombre || !_tiendaUser?.tel) { alert('Completa tus datos antes de pagar.'); tndVolverDatos(); return; }
-  const subtotal = _tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0);
+  const { total: subtotal } = _tndCalcularTotal();
   if (subtotal <= 0) { alert('Tu carrito está vacío.'); return; }
   if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
 
@@ -1525,7 +1543,7 @@ async function tndEnviarPedido() {
   if (_tiendaCart.length === 0) {
     alert('Tu carrito está vacío'); return;
   }
- const subtotal = Math.round(_tiendaCart.reduce((s,i) => s+subtotalItemCarrito(i), 0) * 100) / 100;
+ const { total: subtotal } = _tndCalcularTotal();
   if (!subtotal || subtotal <= 0) {
     alert('El total del pedido no es válido'); return;
   }
