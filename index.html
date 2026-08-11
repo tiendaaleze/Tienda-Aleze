@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.11-0900</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.11-1030</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.11-0900</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.11-1030</div>
   </div>
 
 </div>
@@ -1616,6 +1616,15 @@ window.addEventListener('error', function(e) {
     <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--gray-100)">
       <button type="button" class="btn btn-outline btn-sm" onclick="cerrarModal('modal-inv-mensual')">Cerrar</button>
       <button type="button" class="btn btn-primary btn-sm" onclick="guardarInventarioMensual()">Guardar inventario</button>
+    </div>
+    <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem;flex-wrap:wrap;background:var(--gray-50);padding:.6rem .75rem;border-radius:8px">
+      <input type="text" class="form-control" id="inv-mens-buscar" placeholder="🔍 Buscar producto..." style="flex:1;min-width:160px" oninput="filtrarInvMensualTabla()" />
+      <select class="form-control" id="inv-mens-cat" style="width:180px" onchange="filtrarInvMensualTabla()">
+        <option value="">Todas las categorías</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:.35rem;font-size:.8rem;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" id="inv-mens-solo-sin-verificar" onchange="filtrarInvMensualTabla()" /> Solo sin verificar
+      </label>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Producto</th><th>Cat.</th><th>Stock sistema</th><th>Cantidad contada</th><th>Diferencia</th><th>Motivo faltante</th><th>✅ Verificado</th></tr></thead>
