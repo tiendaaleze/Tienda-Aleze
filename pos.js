@@ -609,6 +609,11 @@ async function procesarVenta() {
   if (_ventaPendiente && _ventaPendiente.firma === firma) {
     venta = _ventaPendiente.venta;
   } else {
+    // Comprobante electronico (SUNAT) — dormido hasta activarse en Configuracion, ver
+    // _asignarComprobante(). Se pide SOLO aca, al construir la venta por primera vez, nunca
+    // en un reintento con el mismo carrito (misma proteccion anti-doble-clic de arriba) —
+    // asi un reintento por problemas de red nunca desperdicia un numero correlativo nuevo.
+    const _comprobante = await _asignarComprobante('boleta');
     venta = {
       id: getId(), fecha: today(), hora: nowTime(), cajero: currentUser,
       items: itemsConPrecioReal.map(i => {
@@ -616,7 +621,8 @@ async function procesarVenta() {
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }), subtotal: sub,
       descuento: desc + comboDesc + cantidadDesc, descuentoManual: desc, descuentoCombo: comboDesc, descuentoCantidad: cantidadDesc,
-      total, metodo, clienteId, sedeId: sedeAdminEfectiva()
+      total, metodo, clienteId, sedeId: sedeAdminEfectiva(),
+      comprobante: _comprobante
     };
   }
   _ventaPendiente = { firma, venta };
@@ -796,6 +802,9 @@ async function cobrarFiado() {
   if (_fiadoPendiente && _fiadoPendiente.firma === firma) {
     fiado = _fiadoPendiente.fiado;
   } else {
+    // Comprobante electronico (SUNAT) — mismo criterio que procesarVenta(): se pide SOLO al
+    // construir el fiado por primera vez, nunca en un reintento con el mismo carrito.
+    const _comprobante = await _asignarComprobante('boleta');
     fiado = {
       id: getId(), clienteId,
       items: itemsConPrecioReal.map(i => {
@@ -803,7 +812,8 @@ async function cobrarFiado() {
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }),
       total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc, descuentoCantidad: cantidadDesc,
-      sedeId: sedeAdminEfectiva(), estado: 'pendiente'
+      sedeId: sedeAdminEfectiva(), estado: 'pendiente',
+      comprobante: _comprobante
     };
   }
   _fiadoPendiente = { firma, fiado };
