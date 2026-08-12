@@ -449,81 +449,94 @@ async function guardarGasto() {
   const metodo = document.getElementById('g-metodo')?.value || 'Efectivo';
   const sede = sedeAdminEfectiva();
 
-  // Paquete atomico: el gasto, el ajuste de caja y el movimiento viajan juntos — sin esto,
-  // podia salir plata de caja sin gasto que lo respalde, o quedar el gasto registrado sin
-  // que caja lo refleje.
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-  const batch = writeBatchM(dbModular);
-  let _gastoFinal, _movDesc, _movMonto, _movTipo, _cajaUpdate = {};
-  let _movData = null; // solo se crea un movimiento si realmente hay algo que registrar
+  await ensureCajaAbierta(); // antes de armar el lote/transaccion — ver nota en ensureCajaAbierta()
 
   if (_editingGastoId) {
-    const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
-    if (!old) return;
-    const diff = monto - old.monto;
-    _gastoFinal = { ...old, tipo, desc, monto, fecha, metodo };
-    batch.set(docM(dbModular, 'gastos', String(old.id)), _gastoFinal);
-    if (diff !== 0) {
-      if (diff > 0) {
-        _cajaUpdate.egresos = incrementM(diff);
-        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
-        _movTipo = 'egreso'; _movDesc = `Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`; _movMonto = diff;
-      } else {
-        _cajaUpdate.egresos = incrementM(diff); // diff negativo, resta
-        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
-        _cajaUpdate.ingresos = incrementM(Math.abs(diff));
-        _cajaUpdate.ingresosEfectivo = incrementM(Math.abs(diff));
-        _movTipo = 'ingreso'; _movDesc = `Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`; _movMonto = Math.abs(diff);
-      }
-      batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
-      const _movId = getId();
-      _movData = { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
-      batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+    // CRITICO: runTransaction — lee el gasto real del servidor antes de calcular el diff
+    // (diferencia entre el monto nuevo y el viejo), para no calcular mal el ajuste de caja si
+    // el gasto cambio por otro proceso justo antes de esta edicion.
+    const gastoRef = docM(dbModular, 'gastos', String(_editingGastoId));
+    let _r;
+    try {
+      _r = await runTransactionM(dbModular, async (tx) => {
+        const snap = await tx.get(gastoRef); // lectura garantizada real del servidor
+        if (!snap.exists()) throw new Error('Este gasto ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+        const oldServidor = snap.data();
+        const diff = Math.round((monto - (oldServidor.monto||0)) * 100) / 100;
+
+        tx.set(gastoRef, { tipo, desc, monto, fecha, metodo }, { merge: true });
+
+        let _movData = null;
+        if (diff !== 0) {
+          const _cajaUpdate = {};
+          let _movTipo, _movDesc, _movMonto;
+          if (diff > 0) {
+            _cajaUpdate.egresos = incrementM(diff);
+            if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
+            _movTipo = 'egreso'; _movDesc = `Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`; _movMonto = diff;
+          } else {
+            _cajaUpdate.egresos = incrementM(diff); // diff negativo, resta
+            if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
+            _cajaUpdate.ingresos = incrementM(Math.abs(diff));
+            _cajaUpdate.ingresosEfectivo = incrementM(Math.abs(diff));
+            _movTipo = 'ingreso'; _movDesc = `Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`; _movMonto = Math.abs(diff);
+          }
+          tx.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
+          const _movId = getId();
+          _movData = { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+          tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+        }
+        return { diff, _movData };
+      });
+    } catch (e) {
+      alert('⚠️ No se pudo guardar el gasto editado: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
+      return;
     }
+
+    // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
+    const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
+    if (old) { old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo; }
+    if (_r.diff !== 0) {
+      if (_r.diff > 0) {
+        DB.caja.egresos = (DB.caja.egresos||0) + _r.diff;
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + _r.diff;
+      } else {
+        DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + _r.diff);
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + _r.diff);
+        DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(_r.diff);
+        DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(_r.diff);
+      }
+    }
+    if (_r._movData) { if (!DB.movimientos) DB.movimientos = []; DB.movimientos.push(_r._movData); }
   } else {
-    _gastoFinal = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sede };
+    // Paquete atomico: el gasto, el ajuste de caja y el movimiento viajan juntos — mismo
+    // motivo de siempre, y sin riesgo de concurrencia (documento con ID recien generado).
+    const batch = writeBatchM(dbModular);
+    const _gastoFinal = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sede };
     batch.set(docM(dbModular, 'gastos', String(_gastoFinal.id)), _gastoFinal);
-    _cajaUpdate.egresos = incrementM(monto);
+    const _cajaUpdate = { egresos: incrementM(monto) };
     if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(monto);
     batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
     const _movId = getId();
-    _movData = { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
+    const _movData = { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
     batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-  }
 
-  _sincIniciar('gasto_lote', _gastoFinal.id);
-  try {
-    await batch.commit();
-    _sincTerminar('gasto_lote', _gastoFinal.id);
-  } catch (e) {
-    _sincError('gasto_lote', _gastoFinal.id, e, 'el gasto — no se aplicó nada');
-    return;
-  }
-
-  // Caja es un objeto plano — todo el bloque de abajo solo actualiza la copia local.
-  if (_editingGastoId) {
-    const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
-    const diff = monto - old.monto;
-    old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo;
-    if (diff !== 0) {
-      if (diff > 0) {
-        DB.caja.egresos = (DB.caja.egresos||0) + diff;
-        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + diff;
-      } else {
-        DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + diff);
-        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + diff);
-        DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(diff);
-        DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(diff);
-      }
+    _sincIniciar('gasto_lote', _gastoFinal.id);
+    try {
+      await batch.commit();
+      _sincTerminar('gasto_lote', _gastoFinal.id);
+    } catch (e) {
+      _sincError('gasto_lote', _gastoFinal.id, e, 'el gasto — no se aplicó nada');
+      return;
     }
-  } else {
+
     DB_EXT.gastos.push(_gastoFinal);
     DB.caja.egresos = (DB.caja.egresos||0) + monto;
     if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+    if (!DB.movimientos) DB.movimientos = [];
+    DB.movimientos.push(_movData);
   }
-  
-  if (_movData) { if (!DB.movimientos) DB.movimientos = []; DB.movimientos.push(_movData); }
 
   fbGuardar();
   cerrarModal('modal-gasto');
@@ -535,39 +548,47 @@ async function guardarGasto() {
 
 async function eliminarGasto(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar gastos. Puedes crear y editar, pero no borrar lo ya registrado.'); return; }
-  const gasto = DB_EXT.gastos.find(x => x.id === id);
+  const gastoLocal = DB_EXT.gastos.find(x => x.id === id);
   if (!confirm('¿Eliminar este gasto? Se devolverá el monto al efectivo disponible como corrección.')) return;
 
-  if (gasto && gasto.monto > 0) {
+  if (gastoLocal && gastoLocal.monto > 0) {
     if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-    await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
+    await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
     const sede = sedeAdminEfectiva();
-    // Paquete atomico: borrar el gasto, devolver el efectivo y registrar el movimiento juntos.
-    const batch = writeBatchM(dbModular);
-    batch.delete(docM(dbModular, 'gastos', String(id)));
-    batch.set(docM(dbModular, 'caja', sede), {
-      ingresos: incrementM(gasto.monto),
-      ingresosEfectivo: incrementM(gasto.monto)
-    }, { merge: true });
-    const _movId = getId();
-    const _movData = { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gasto.desc} (${gasto.tipo})`, monto: gasto.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede };
-    batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
 
-    _sincIniciar('elim_gasto_lote', id);
+    // CRITICO: runTransaction — lee el gasto real del servidor antes de borrarlo, para
+    // devolver a caja el monto correcto aunque el gasto haya sido editado justo antes sin
+    // reflejarse todavia en memoria local.
+    const gastoRef = docM(dbModular, 'gastos', String(id));
+    let _r;
     try {
-      await batch.commit();
-      _sincTerminar('elim_gasto_lote', id);
+      _r = await runTransactionM(dbModular, async (tx) => {
+        const snap = await tx.get(gastoRef); // lectura garantizada real del servidor
+        if (!snap.exists()) throw new Error('Este gasto ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+        const gastoServidor = snap.data();
+
+        tx.delete(gastoRef);
+        tx.set(docM(dbModular, 'caja', sede), {
+          ingresos: incrementM(gastoServidor.monto),
+          ingresosEfectivo: incrementM(gastoServidor.monto)
+        }, { merge: true });
+        const _movId = getId();
+        const _movData = { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gastoServidor.desc} (${gastoServidor.tipo})`, monto: gastoServidor.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede };
+        tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+        return { montoDevuelto: gastoServidor.monto, _movData };
+      });
     } catch (e) {
-      _sincError('elim_gasto_lote', id, e, 'la eliminación del gasto — no se aplicó nada');
+      alert('⚠️ No se pudo eliminar el gasto: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
       return;
     }
 
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
-    DB.caja.ingresos = (DB.caja.ingresos||0) + gasto.monto;
-    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + gasto.monto;
-  
+    DB.caja.ingresos = (DB.caja.ingresos||0) + _r.montoDevuelto;
+    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r.montoDevuelto;
+
     if (!DB.movimientos) DB.movimientos = [];
-    DB.movimientos.push(_movData);
+    DB.movimientos.push(_r._movData);
     fbGuardar();
   } else {
     DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
@@ -852,15 +873,25 @@ async function confirmarCerrarMes() {
   const mes   = document.getElementById('cm-mes').value;
   const monto = parseFloat(document.getElementById('cm-monto').value) || 0;
   if (!mes) { alert('Selecciona el mes'); return; }
-  // Evitar doble cierre del mismo mes
-  const yaExiste = DB.capitalMovimientos.some(h => h.tipo === 'ganancia' && h.fecha && h.fecha.startsWith(mes));
-  if (yaExiste) { alert('⚠️ Este mes ya fue cerrado. Revisa el historial.'); return; }
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  const _capMovId = getId();
+
+  // CRITICO: ID deterministico (no getId()) en vez de solo chequear duplicado por memoria
+  // local — si 2 cierres casi simultaneos del mismo mes ocurren, ambos apuntan al MISMO
+  // documento en vez de crear 2 registros distintos. Mismo patron ya probado en
+  // _migrarCapitalHistSiHaceFalta() (firebase-sync.js) para el mismo tipo de problema.
+  const _capMovId = 'ganancia_' + mes;
+  const _capMovRef = docM(dbModular, 'capital_movimientos', _capMovId);
+  try {
+    const snap = await getDocM(_capMovRef);
+    if (snap.exists()) { alert('⚠️ Este mes ya fue cerrado. Revisa el historial.'); return; } // en modular, exists es un METODO
+  } catch (e) {
+    console.warn('confirmarCerrarMes: no se pudo verificar si el mes ya está cerrado, continuando con el chequeo local', e);
+  }
+
   const _capMovData = { id:_capMovId, tipo:'ganancia', fecha: mes+'-01', desc: 'Ganancia mensual — '+mes, monto, usuario: currentUser, sedeId: sedeAdminEfectiva() };
   _sincIniciar('cerrar_mes', _capMovId);
   try {
-    await setDocM(docM(dbModular, 'capital_movimientos', String(_capMovId)), _capMovData);
+    await setDocM(_capMovRef, _capMovData);
     _sincTerminar('cerrar_mes', _capMovId);
   } catch (e) {
     _sincError('cerrar_mes', _capMovId, e, 'el cierre del mes — no se aplicó nada');
