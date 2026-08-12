@@ -620,6 +620,47 @@ function costoMerma(m) {
 // combinacion automaticamente al totalizar, sin necesitar un "producto pack" en el catalogo.
 // Compartida entre POS (pasa 'cart') y tienda publica (pasa '_tiendaCart') — SIEMPRE pasar
 // cartRef explicito desde tienda publica, el fallback a 'cart' solo tiene sentido en POS.
+// ── Comprobante electronico (SUNAT) — dormido hasta activarse, ver Configuracion ──
+// Asigna el bloque `comprobante` para una venta nueva. Usa una transaccion atomica para el
+// numero correlativo — Firestore garantiza que 2 ventas casi simultaneas nunca reciben el
+// mismo numero, reintentando sola la que pierde la carrera (mismo mecanismo ya probado en
+// ensureCajaAbierta() para el problema equivalente de apertura de caja).
+// CRITICO: nunca bloquea la venta. Si el sistema esta dormido (regimen o activa apagados),
+// devuelve null sin tocar nada — cero costo mientras no este en uso. Si esta activo pero algo
+// falla (sin conexion, serie no configurada, etc.), devuelve un bloque con estado 'error' —
+// la venta se guarda igual, el comprobante queda marcado para revisar/reintentar despues, sin
+// afectar stock, caja, ni el resto de la venta en ningun caso.
+async function _asignarComprobante(tipoSolicitado) {
+  const _ce = DB.config.comprobanteElectronico;
+  const _regimen = DB.config.regimenTributario;
+  if (!_ce || !_ce.activa || !_regimen) return null; // sistema dormido, nada que hacer
+
+  // RUS nunca puede emitir factura — bloqueo legal real, no solo de UI, por si algo llega a
+  // llamar esto sin pasar por el candado visual del POS/tienda publica.
+  let tipo = tipoSolicitado || 'boleta';
+  if (_regimen === 'RUS' && tipo === 'factura') tipo = 'boleta';
+
+  const serie = tipo === 'factura' ? _ce.serieFactura : _ce.serieBoleta;
+  if (!serie) return { tipo, serie: null, numero: null, estado: 'error', errorMsg: 'Serie de ' + tipo + ' no configurada' };
+  if (!dbModular) return { tipo, serie, numero: null, estado: 'error', errorMsg: 'Sin conexión con el sistema' }; // [SDK modular]
+
+  try {
+    const ref = docM(dbModular, 'aleze', 'comprobantes_correlativo');
+    const numero = await runTransactionM(dbModular, async (tx) => {
+      const snap = await tx.get(ref); // lectura garantizada real del servidor, nunca de cache
+      const data = snap.exists() ? snap.data() : {}; // en modular, exists es un METODO
+      const actual = (data[tipo] && data[tipo].numero) || 0;
+      const siguiente = actual + 1;
+      tx.set(ref, { [tipo]: { numero: siguiente } }, { merge: true });
+      return siguiente;
+    });
+    return { tipo, serie, numero, estado: 'pendiente', errorMsg: null };
+  } catch (e) {
+    console.warn('_asignarComprobante: no se pudo asignar número correlativo (venta se procesa igual):', e);
+    return { tipo, serie, numero: null, estado: 'error', errorMsg: e.message || 'Error al asignar número correlativo' };
+  }
+}
+
 function calcComboDescuento(cartRef, sede) {
   // Returns { total: number, lineas: [{nombre, sets, descuento}] }
   cartRef = cartRef || cart;
