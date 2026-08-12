@@ -503,192 +503,214 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       if (tipoPago === null) { _fbEscribiendo = false; return; }
       _esPagado = (tipoPago === 'cobrado');
       if (!dbModular) { _fbEscribiendo = false; alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-      await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
+      await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
 
-      // ── Matching / creación de cliente ────────────────────────────────────
       const telNorm = (p.telefono||p.clienteTel||'').replace(/\s/g,'');
-      let cli = telNorm ? DB.clientes.find(c=>(c.tel||'').replace(/\s/g,'')=== telNorm) : null;
-      let _esClienteNuevo = false;
-      if (!cli && (p.clienteNombre||'').length >= 2) {
-        cli = _envolverCliente({ id: getId(), nombre: p.clienteNombre, alias: p.clienteNombre,
-                tel: p.clienteTel||p.telefono||'', dir: p.clienteDir||'',
-                cumple: '', compras: 0, total: 0, deuda: 0 });
-        _esClienteNuevo = true;
-      }
-
-      const itemsFinales = (p.items||[]).filter(i=>i.cant>0&&!i.eliminado);
-
-      // ── Validar productos ANTES de tocar nada ───────────────────────────────
-      for (const item of itemsFinales) {
-        if (!DB.productos.find(x => x.id === item.prodId)) {
-          _fbEscribiendo = false;
-          alert('⚠️ No se pudo confirmar la entrega: "' + (item.nombre||item.prodId) + '" ya no existe en el catálogo.\n\nNo se aplicó nada. Revisa el pedido e intenta de nuevo.');
-          return;
-        }
-      }
-
-      // ── Paquete atomico: stock (todos los items), venta/fiado, cliente, caja,
-      // movimiento y el pedido marcado como entregado viajan juntos — todo o nada.
-      const batch = writeBatchM(dbModular);
-      const _deltasPorProducto = new Map();
-      const _acumular = (prod, delta) => {
-        const actual = _deltasPorProducto.get(prod.id);
-        if (actual) actual.delta += delta;
-        else _deltasPorProducto.set(prod.id, { prod, delta });
-      };
-      itemsFinales.forEach(item => {
-        const prod = DB.productos.find(x => x.id === item.prodId);
-        if (!prod.esCombo) _acumular(prod, -item.cant);
-        if (prod.esCombo && prod.componentes) {
-          prod.componentes.forEach(comp => {
-            const cp = DB.productos.find(x => x.id === comp.prodId);
-            if (cp) _acumular(cp, -(comp.cant * item.cant));
-          });
-        }
-      });
-      const _deltasStock = [];
-      _deltasPorProducto.forEach(({prod, delta}) => {
-        batch.set(docM(dbModular, 'productos', String(prod.id)),
-          { stock: incrementM(delta) }, { merge: true });
-        _deltasStock.push({ prod, delta });
-      });
+      const _sedeDespacho = 'principal';
 
       // Comprobante electronico (SUNAT) — dormido hasta activarse, ver _asignarComprobante()
-      // en core.js. Se pide UNA sola vez aca, antes de las 2 ramas de abajo (pagado/fiado) —
-      // un pedido online necesita comprobante independientemente de si se cobro al contado o
-      // quedo fiado, SUNAT lo exige igual en ambos casos, asi que ambas ramas reutilizan este
-      // mismo resultado en vez de pedir cada una el suyo por separado.
+      // en core.js. Se pide FUERA de la transaccion de abajo a proposito: _asignarComprobante
+      // ya usa su propia transaccion interna para el correlativo, y Firestore no permite
+      // transacciones anidadas. Se pide UNA sola vez, antes de las 2 ramas (pagado/fiado) —
+      // un pedido online necesita comprobante sea cual sea el resultado del pago.
       const _comprobante = await _asignarComprobante('boleta');
-      let _ventaOnline = null, _fiadoOnline = null, _puntosGanadosPedido = 0;
-      if (_esPagado) {
-        const _itemsConCosto = itemsFinales.map(i => {
-          const prod = DB.productos.find(x => x.id === i.prodId);
-          return { ...i, costoUnitario: prod ? prod.costo : 0 };
-        });
-        _ventaOnline = {
-          id: p.id, fecha: p.fecha, hora: p.hora,
-          cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
-          clienteNombre: p.clienteNombre, items: _itemsConCosto,
-          subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
-          descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
-          origen: 'online', estado: 'completado',
-          estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
-          sedeId: _sedeDespacho,
-          comprobante: _comprobante
-        };
-        batch.set(docM(dbModular, 'ventas', String(_ventaOnline.id)), _ventaOnline);
-        if (cli) {
-          // CRITICO: los pedidos online nunca otorgaban puntos — a diferencia de una venta
-          // normal en POS (ver pos.js), que si calcula y suma puntos al cliente en el mismo
-          // paquete atomico. Mismo criterio aplicado aca, usando la misma funcion.
-          _puntosGanadosPedido = calcularPuntosGanados(_itemsConCosto);
-          batch.set(docM(dbModular, 'clientes', String(cli.id)),
-            _esClienteNuevo
-              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: 0, puntos: _puntosGanadosPedido }
-              : { compras: incrementM(1), total: incrementM(p.total), puntos: incrementM(_puntosGanadosPedido) },
-            { merge: true });
-        }
-      } else {
-        if (cli) {
-          _fiadoOnline = {
-            id: p.id, clienteId: cli.id,
-            items: itemsFinales.map(i => {
-              const prod = DB.productos.find(x => x.id === i.prodId);
-              return { ...i, costoUnitario: prod ? prod.costo : 0 };
-            }),
-            total: p.total, pagado: 0, fecha: p.fecha,
-            descuentoCombo: p.descuento || 0, descuentoManual: 0,
-            origenOnline: true, sedeId: _sedeDespacho, estado: 'pendiente'
-          };
-          batch.set(docM(dbModular, 'fiados', String(_fiadoOnline.id)), _fiadoOnline);
-          // Mismo criterio que la rama pagada de arriba, y que la venta fiada normal de POS —
-          // los puntos se ganan al momento de la venta, sea fiada o pagada, no al cobrar.
-          _puntosGanadosPedido = calcularPuntosGanados(itemsFinales);
-          batch.set(docM(dbModular, 'clientes', String(cli.id)),
-            _esClienteNuevo
-              ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: p.total, deuda: p.total, puntos: _puntosGanadosPedido }
-              : { compras: incrementM(1), total: incrementM(p.total), deuda: incrementM(p.total), puntos: incrementM(_puntosGanadosPedido) },
-            { merge: true });
-        }
-        const _ventaOnlineFiado = {
-          id: p.id, fecha: p.fecha, hora: p.hora,
-          cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
-          clienteNombre: p.clienteNombre, items: itemsFinales,
-          subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
-          descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
-          origen: 'online', estado: 'fiado',
-          estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
-          sedeId: _sedeDespacho,
-          comprobante: _comprobante
-        };
-        batch.set(docM(dbModular, 'ventas', String(_ventaOnlineFiado.id)), _ventaOnlineFiado);
-        _ventaOnline = _ventaOnlineFiado; // usado abajo para empujar a historialVentas
-      }
 
-      const _movId = getId();
-      let _movData;
-      if (_esPagado) {
-        batch.set(docM(dbModular, 'caja', _sedeDespacho), {
-          ingresos: incrementM(p.total),
-          ...(p.metodo === 'Efectivo' ? { ingresosEfectivo: incrementM(p.total) } : {})
-        }, { merge: true });
-        _movData = { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
-        batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-      } else {
-        _movData = { id:_movId, tipo:'fiado', desc:`Fiado online — ${p.clienteNombre||'cliente'}`, monto: p.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
-        batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-      }
-
-      batch.update(docM(dbModular, 'pedidos_online', String(p.id)), {
-        estado: 'entregado', cajero: currentUser || 'admin',
-        fechaEntrega: today(), horaEntrega: nowTime()
-      });
-
-      _sincIniciar('entrega_pedido_lote', p.id);
+      // CRITICO: runTransaction en vez de writeBatch — antes, 2 confirmaciones casi
+      // simultaneas del MISMO pedido (2 vendedores viendo el mismo pendiente, o el mismo
+      // vendedor con doble-clic) pasaban ambas el chequeo de memoria local (p.estado !==
+      // 'entregado') sin saber una de la otra, duplicando stock descontado, venta creada y
+      // puntos otorgados. La transaccion lee el pedido REAL del servidor primero y rechaza de
+      // inmediato si ya esta entregado — la segunda confirmacion nunca alcanza a duplicar nada.
+      const pedidoRef = docM(dbModular, 'pedidos_online', String(p.id));
+      let _r;
       try {
-        await batch.commit();
-        _sincTerminar('entrega_pedido_lote', p.id);
+        _r = await runTransactionM(dbModular, async (tx) => {
+          // FASE 1 — lecturas: el pedido real, cada producto involucrado, y los componentes
+          // de cualquier combo entre ellos. Todo antes de cualquier escritura (regla de
+          // Firestore para transacciones).
+          const pedidoSnap = await tx.get(pedidoRef);
+          if (!pedidoSnap.exists()) throw new Error('Este pedido ya no existe.'); // en modular, exists es un METODO
+          const pServidor = pedidoSnap.data();
+          if (pServidor.estado === 'entregado') {
+            throw new Error('Este pedido ya fue confirmado como entregado — probablemente por otro vendedor o desde otro dispositivo, justo ahora.');
+          }
+
+          const itemsFinales = (pServidor.items||[]).filter(i=>i.cant>0&&!i.eliminado);
+          const _prodSnaps = [];
+          for (const item of itemsFinales) {
+            const prodRef = docM(dbModular, 'productos', String(item.prodId));
+            const prodSnap = await tx.get(prodRef);
+            if (!prodSnap.exists()) throw new Error('"' + (item.nombre||item.prodId) + '" ya no existe en el catálogo. No se aplicó nada.');
+            _prodSnaps.push({ item, ref: prodRef, data: prodSnap.data() });
+          }
+          const _compSnaps = new Map(); // prodId componente -> {ref, data}
+          for (const { data: prodData } of _prodSnaps) {
+            if (prodData.esCombo && prodData.componentes) {
+              for (const comp of prodData.componentes) {
+                if (!_compSnaps.has(comp.prodId)) {
+                  const compRef = docM(dbModular, 'productos', String(comp.prodId));
+                  const compSnap = await tx.get(compRef);
+                  if (compSnap.exists()) _compSnaps.set(comp.prodId, { ref: compRef, data: compSnap.data() });
+                }
+              }
+            }
+          }
+
+          let cli = telNorm ? DB.clientes.find(c=>(c.tel||'').replace(/\s/g,'')=== telNorm) : null;
+          let _esClienteNuevo = false;
+          if (!cli && (pServidor.clienteNombre||'').length >= 2) {
+            cli = _envolverCliente({ id: getId(), nombre: pServidor.clienteNombre, alias: pServidor.clienteNombre,
+                    tel: pServidor.clienteTel||pServidor.telefono||'', dir: pServidor.clienteDir||'',
+                    cumple: '', compras: 0, total: 0, deuda: 0 });
+            _esClienteNuevo = true;
+          }
+
+          // FASE 2 — escrituras, todas juntas.
+          const _deltasPorProducto = new Map();
+          const _acumular = (prodId, delta) => {
+            const actual = _deltasPorProducto.get(prodId);
+            if (actual) actual.delta += delta;
+            else _deltasPorProducto.set(prodId, { prodId, delta });
+          };
+          _prodSnaps.forEach(({item, data: prodData}) => {
+            if (!prodData.esCombo) _acumular(item.prodId, -item.cant);
+            if (prodData.esCombo && prodData.componentes) {
+              prodData.componentes.forEach(comp => {
+                if (_compSnaps.has(comp.prodId)) _acumular(comp.prodId, -(comp.cant * item.cant));
+              });
+            }
+          });
+          const _deltasStock = [];
+          _deltasPorProducto.forEach(({prodId, delta}) => {
+            tx.set(docM(dbModular, 'productos', String(prodId)), { stock: incrementM(delta) }, { merge: true });
+            _deltasStock.push({ prodId, delta });
+          });
+
+          let _ventaOnline = null, _fiadoOnline = null, _puntosGanadosPedido = 0;
+          if (_esPagado) {
+            const _itemsConCosto = itemsFinales.map(i => {
+              const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
+              return { ...i, costoUnitario: pd ? pd.data.costo : 0 };
+            });
+            _ventaOnline = {
+              id: pServidor === p ? p.id : p.id, fecha: pServidor.fecha, hora: pServidor.hora,
+              cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
+              clienteNombre: pServidor.clienteNombre, items: _itemsConCosto,
+              subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
+              descuento: pServidor.descuento || 0, total: pServidor.total, metodo: pServidor.metodo,
+              origen: 'online', estado: 'completado',
+              estadoStock: 'descontado', notaAdmin: pServidor.notaAdmin || '',
+              sedeId: _sedeDespacho,
+              comprobante: _comprobante
+            };
+            tx.set(docM(dbModular, 'ventas', String(_ventaOnline.id)), _ventaOnline);
+            if (cli) {
+              _puntosGanadosPedido = calcularPuntosGanados(_itemsConCosto);
+              tx.set(docM(dbModular, 'clientes', String(cli.id)),
+                _esClienteNuevo
+                  ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: pServidor.total, deuda: 0, puntos: _puntosGanadosPedido }
+                  : { compras: incrementM(1), total: incrementM(pServidor.total), puntos: incrementM(_puntosGanadosPedido) },
+                { merge: true });
+            }
+          } else {
+            if (cli) {
+              _fiadoOnline = {
+                id: p.id, clienteId: cli.id,
+                items: itemsFinales.map(i => {
+                  const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
+                  return { ...i, costoUnitario: pd ? pd.data.costo : 0 };
+                }),
+                total: pServidor.total, pagado: 0, fecha: pServidor.fecha,
+                descuentoCombo: pServidor.descuento || 0, descuentoManual: 0,
+                origenOnline: true, sedeId: _sedeDespacho, estado: 'pendiente'
+              };
+              tx.set(docM(dbModular, 'fiados', String(_fiadoOnline.id)), _fiadoOnline);
+              _puntosGanadosPedido = calcularPuntosGanados(itemsFinales);
+              tx.set(docM(dbModular, 'clientes', String(cli.id)),
+                _esClienteNuevo
+                  ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: pServidor.total, deuda: pServidor.total, puntos: _puntosGanadosPedido }
+                  : { compras: incrementM(1), total: incrementM(pServidor.total), deuda: incrementM(pServidor.total), puntos: incrementM(_puntosGanadosPedido) },
+                { merge: true });
+            }
+            const _ventaOnlineFiado = {
+              id: p.id, fecha: pServidor.fecha, hora: pServidor.hora,
+              cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
+              clienteNombre: pServidor.clienteNombre, items: itemsFinales,
+              subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
+              descuento: pServidor.descuento || 0, total: pServidor.total, metodo: pServidor.metodo,
+              origen: 'online', estado: 'fiado',
+              estadoStock: 'descontado', notaAdmin: pServidor.notaAdmin || '',
+              sedeId: _sedeDespacho,
+              comprobante: _comprobante
+            };
+            tx.set(docM(dbModular, 'ventas', String(_ventaOnlineFiado.id)), _ventaOnlineFiado);
+            _ventaOnline = _ventaOnlineFiado;
+          }
+
+          const _movId = getId();
+          let _movData;
+          if (_esPagado) {
+            tx.set(docM(dbModular, 'caja', _sedeDespacho), {
+              ingresos: incrementM(pServidor.total),
+              ...(pServidor.metodo === 'Efectivo' ? { ingresosEfectivo: incrementM(pServidor.total) } : {})
+            }, { merge: true });
+            _movData = { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${pServidor.clienteNombre||'cliente'}`, monto: pServidor.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
+            tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+          } else {
+            _movData = { id:_movId, tipo:'fiado', desc:`Fiado online — ${pServidor.clienteNombre||'cliente'}`, monto: pServidor.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
+            tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+          }
+
+          tx.set(pedidoRef, {
+            estado: 'entregado', cajero: currentUser || 'admin',
+            fechaEntrega: today(), horaEntrega: nowTime()
+          }, { merge: true });
+
+          return { pServidor, itemsFinales, _deltasStock, _ventaOnline, _fiadoOnline, _puntosGanadosPedido, _movData, cli, _esClienteNuevo };
+        });
       } catch (e) {
-        _sincError('entrega_pedido_lote', p.id, e, 'la entrega del pedido — no se aplicó nada, ni stock ni venta ni cliente');
         _fbEscribiendo = false;
+        alert('⚠️ No se pudo confirmar la entrega: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
         return;
       }
 
-      // El lote ya fue aceptado — recien ahora se refleja todo en memoria local.
-      _deltasStock.forEach(({prod, delta}) => {
-        prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
+      // La transaccion ya fue aceptada — recien ahora se refleja todo en memoria local.
+      _r._deltasStock.forEach(({prodId, delta}) => {
+        const prod = DB.productos.find(x => x.id === prodId);
+        if (prod) prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
       });
-      if (_esClienteNuevo && cli) DB.clientes.push(cli);
+      const cli = _r.cli;
+      if (_r._esClienteNuevo && cli) DB.clientes.push(cli);
       if (!DB.historialVentas) DB.historialVentas = [];
-      DB.historialVentas.push(_ventaOnline);
+      DB.historialVentas.push(_r._ventaOnline);
       // El lote ya escribió el cliente en Firestore — el interruptor evita que el Proxy
-      // dispare su propia escritura encima (mismo riesgo ya corregido en las otras 5 funciones).
+      // dispare su propia escritura encima (mismo riesgo ya corregido en las otras funciones).
       _clienteProxySkipSync = true;
       try {
         if (_esPagado) {
-          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+p.total; cli.puntos = (cli.puntos||0) + _puntosGanadosPedido; }
+          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+_r.pServidor.total; cli.puntos = (cli.puntos||0) + _r._puntosGanadosPedido; }
         } else {
-          if (_fiadoOnline) {
+          if (_r._fiadoOnline) {
             if (!DB.fiados) DB.fiados = [];
-            DB.fiados.push(_fiadoOnline);
+            DB.fiados.push(_r._fiadoOnline);
           }
           if (cli) {
-            _aplicarDeudaLocal(cli, p.total);
+            _aplicarDeudaLocal(cli, _r.pServidor.total);
             cli.compras = (cli.compras||0) + 1;
-            cli.total   = (cli.total||0)   + p.total;
-            cli.puntos  = (cli.puntos||0)  + _puntosGanadosPedido;
+            cli.total   = (cli.total||0)   + _r.pServidor.total;
+            cli.puntos  = (cli.puntos||0)  + _r._puntosGanadosPedido;
           }
         }
       } finally { _clienteProxySkipSync = false; }
       p.estado = 'entregado';
       if (_esPagado) {
         // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
-        DB.caja.ingresos += p.total;
-        if (p.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + p.total;
+        DB.caja.ingresos += _r.pServidor.total;
+        if (_r.pServidor.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r.pServidor.total;
       
       }
       if (!DB.movimientos) DB.movimientos = [];
-      DB.movimientos.push(_movData);
+      DB.movimientos.push(_r._movData);
 
       fbGuardar();
       setTimeout(() => { _fbEscribiendo = false; }, 8000);
