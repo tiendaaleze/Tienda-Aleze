@@ -99,49 +99,54 @@ if (!prod) { alert('Producto no encontrado. Recarga el inventario.'); return; }
   // el stock podia descontarse sin que la merma quedara registrada (perdida sin motivo ni
   // rastro), o la merma quedar registrada sin el descuento real (inventario desincronizado).
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  const batch = writeBatchM(dbModular);
 
 if (editingMermaId) {
-    const old = DB.mermas.find(x => x.id === editingMermaId);
-    const oldProd = DB.productos.find(p => p.id === old.prodId);
-    const oldCant = old.cant;
-    // Verificar disponibilidad simulando la restauracion, sin tocar nada todavia
-    const stockSimulado = stockEnSede(prod) + (oldProd && oldProd.id === prod.id ? oldCant : 0);
-    if (cant > stockSimulado) { alert('La cantidad supera el stock disponible en esa sede'); return; }
-
-    const _deltasPorProducto = new Map();
-    const _acumular = (p, delta) => {
-      const actual = _deltasPorProducto.get(p.id);
-      if (actual) actual.delta += delta; else _deltasPorProducto.set(p.id, { prod: p, delta });
-    };
-    if (oldProd) _acumular(oldProd, oldCant); // restaurar stock viejo
-    _acumular(prod, -cant); // aplicar el nuevo descuento
-    const _deltasStock = [];
-    _deltasPorProducto.forEach(({prod: p, delta}) => {
-      batch.set(docM(dbModular, 'productos', String(p.id)),
-        { stock: incrementM(delta) }, { merge: true });
-      _deltasStock.push({ prod: p, delta });
-    });
-
-    const _mermaActualizada = { ...old, prodId, cant, motivo, obs, sedeId: _sede, costoUnitario: prod.costo };
-    batch.set(docM(dbModular, 'mermas', String(old.id)), _mermaActualizada);
-
-    _sincIniciar('merma_lote', old.id);
+    // CRITICO: runTransaction en vez de writeBatch — lee la merma vieja real del servidor
+    // antes de calcular cuanto stock restaurar y cuanto descontar de nuevo, para no calcular
+    // mal si 2 ediciones casi simultaneas tocan la misma merma.
+    const mermaRef = docM(dbModular, 'mermas', String(editingMermaId));
+    let _r;
     try {
-      await batch.commit();
-      _sincTerminar('merma_lote', old.id);
+      _r = await runTransactionM(dbModular, async (tx) => {
+        const snap = await tx.get(mermaRef); // lectura garantizada real del servidor
+        if (!snap.exists()) throw new Error('Esta merma ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+        const oldServidor = snap.data();
+        const oldProd = DB.productos.find(p => p.id === oldServidor.prodId);
+        const oldCant = oldServidor.cant;
+        const stockSimulado = stockEnSede(prod) + (oldProd && oldProd.id === prod.id ? oldCant : 0);
+        if (cant > stockSimulado) throw new Error('La cantidad supera el stock disponible en esa sede.');
+
+        const _deltasPorProducto = new Map();
+        const _acumular = (p, delta) => {
+          const actual = _deltasPorProducto.get(p.id);
+          if (actual) actual.delta += delta; else _deltasPorProducto.set(p.id, { prod: p, delta });
+        };
+        if (oldProd) _acumular(oldProd, oldCant); // restaurar stock viejo
+        _acumular(prod, -cant); // aplicar el nuevo descuento
+        const _deltasStock = [];
+        _deltasPorProducto.forEach(({prod: p, delta}) => {
+          tx.set(docM(dbModular, 'productos', String(p.id)), { stock: incrementM(delta) }, { merge: true });
+          _deltasStock.push({ prod: p, delta });
+        });
+
+        tx.set(mermaRef, { prodId, cant, motivo, obs, sedeId: _sede, costoUnitario: prod.costo }, { merge: true });
+        return { _deltasStock };
+      });
     } catch (e) {
-      _sincError('merma_lote', old.id, e, 'la merma editada — no se aplicó nada');
+      alert('⚠️ No se pudo guardar la merma editada: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
       return;
     }
-    _deltasStock.forEach(({prod: p, delta}) => {
+
+    const old = DB.mermas.find(x => x.id === editingMermaId);
+    _r._deltasStock.forEach(({prod: p, delta}) => {
       p.stock = Math.max(0, Math.round(((p.stock||0)+delta)*1000)/1000);
     });
-    old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede; old.costoUnitario = prod.costo;
+    if (old) { old.prodId = prodId; old.cant = cant; old.motivo = motivo; old.obs = obs; old.sedeId = _sede; old.costoUnitario = prod.costo; }
     fbGuardar();
   } else {
     if (cant > stockEnSede(prod)) { alert('La cantidad supera el stock disponible'); return; }
     const nuevaMerma = { id: getId(), prodId, cant, motivo, obs, fecha: today(), usuario: currentUser, sedeId: _sede, costoUnitario: prod.costo };
+    const batch = writeBatchM(dbModular);
     batch.set(docM(dbModular, 'productos', String(prod.id)),
       { stock: incrementM(-cant) }, { merge: true });
     batch.set(docM(dbModular, 'mermas', String(nuevaMerma.id)), nuevaMerma);
@@ -622,12 +627,13 @@ function guardarPromocion() {
       setTimeout(() => { _fbEscribiendo = false; }, 300);
     }
   }
-  // CRITICO: vendidos NUNCA debe reiniciarse al editar una promocion existente — si esta
-  // linea tuviera "vendidos: 0" incondicional, cada vez que se guarda una edicion (cambiar el
-  // nombre, el precio, la fecha) borraria el conteo real ya acumulado de ventas, permitiendo
-  // que el limite global se vuelva a superar sin darse cuenta. Se preserva explicitamente lo
-  // que ya existia, y solo se inicializa en 0 para una promocion realmente nueva.
-  const _vendidosPrevios = editingPromoId ? (DB.promociones.find(x=>x.id===editingPromoId)?.vendidos || 0) : 0;
+  // CRITICO: vendidos NUNCA debe tocarse al editar una promocion existente — antes se leia de
+  // memoria local y se re-escribia, lo que perdia el incremento de una venta concurrente con
+  // esa misma promocion justo mientras se guardaba la edicion (mismo tipo de bug ya corregido
+  // en fiados/boletas/ventas). Ahora directamente se EXCLUYE del payload al editar, con
+  // merge:true — el campo nunca se toca en absoluto, queda siempre con su valor real del
+  // servidor. Solo se inicializa explicitamente en 0 al crear una promocion nueva, donde el
+  // documento no existe todavia y necesita algun valor inicial.
   const data = {
     nombre, tipo,
     prod1: prod1Id, prod1nombre: prod1?.nombre || null,
@@ -637,21 +643,23 @@ function guardarPromocion() {
     cantidadRequerida, cantidadAPagar,
     desde: document.getElementById('promo-desde').value,
     hasta: document.getElementById('promo-hasta').value,
-    activa: true, limite, vendidos: _vendidosPrevios, maxPorVenta,
+    activa: true, limite, maxPorVenta,
     imagen, packProdId, packCodigo
   };
   // CRITICO: promociones ahora tiene su propia coleccion (mismo criterio que ventas,
   // clientes, etc.) — ya no depende de guardarse como parte de aleze/db via fbGuardar().
-  let _promoFinal;
+  let _promoFinal, _payloadEscritura;
   if (editingPromoId) {
     const idx = DB.promociones.findIndex(x => x.id === editingPromoId);
     if (idx >= 0) DB.promociones[idx] = { ...DB.promociones[idx], ...data };
     _promoFinal = DB.promociones[idx];
+    _payloadEscritura = data; // sin vendidos — nunca se toca al editar
   } else {
-    _promoFinal = { id: getId(), ...data };
+    _promoFinal = { id: getId(), ...data, vendidos: 0 };
     DB.promociones.push(_promoFinal);
+    _payloadEscritura = { ...data, vendidos: 0 }; // se inicializa explicitamente al crear
   }
-  if (dbModular) setDocM(docM(dbModular, 'promociones', String(_promoFinal.id)), _promoFinal).catch(e => console.warn('No se pudo guardar promociones/'+_promoFinal.id, e)); // [SDK modular]
+  if (dbModular) setDocM(docM(dbModular, 'promociones', String(_promoFinal.id)), _payloadEscritura, { merge: true }).catch(e => console.warn('No se pudo guardar promociones/'+_promoFinal.id, e)); // [SDK modular]
   cerrarModal('modal-promocion');
   renderPromociones();
   try { renderPosGrid(); } catch(e) {}
