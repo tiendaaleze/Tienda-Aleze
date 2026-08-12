@@ -240,9 +240,38 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
   if (pedido.estado !== "pendiente") return;
 
   const tokensSnap = await db.collection("staff_tokens").get();
-  const tokens = tokensSnap.docs.map((d) => d.id); // el ID del documento ES el token
-  if (tokens.length === 0) {
+  if (tokensSnap.empty) {
     logger.info("Pedido nuevo, pero no hay dispositivos registrados para avisar.");
+    return;
+  }
+
+  // Capa de seguridad de privacidad: un dispositivo que cerro sesion normalmente ya se borro
+  // de staff_tokens al hacer logout (ver doLogout() en auth.js) — pero si alguien desinstala
+  // la app o borra datos SIN cerrar sesion primero, ese borrado nunca llega a ejecutarse y el
+  // registro queda huerfano para siempre. Como red de seguridad adicional, cualquier token sin
+  // actividad reciente (no volvio a iniciar sesion como staff en mas de 45 dias, o nunca
+  // registro fecha) se trata como abandonado: no recibe el aviso, y se limpia de una vez.
+  const UMBRAL_INACTIVIDAD_MS = 45 * 24 * 60 * 60 * 1000;
+  const ahora = Date.now();
+  const tokens = [];
+  const tokensAbandonados = [];
+  tokensSnap.docs.forEach((d) => {
+    const ultimaActividad = d.data().ultimaActividad;
+    const ts = ultimaActividad && typeof ultimaActividad.toMillis === "function" ? ultimaActividad.toMillis() : 0;
+    if (!ts || (ahora - ts) > UMBRAL_INACTIVIDAD_MS) {
+      tokensAbandonados.push(d.id);
+    } else {
+      tokens.push(d.id); // el ID del documento ES el token
+    }
+  });
+  if (tokensAbandonados.length > 0) {
+    const batchAbandonados = db.batch();
+    tokensAbandonados.forEach((t) => batchAbandonados.delete(db.collection("staff_tokens").doc(t)));
+    await batchAbandonados.commit();
+    logger.info(`Limpiados ${tokensAbandonados.length} dispositivo(s) sin actividad reciente (>45 dias).`);
+  }
+  if (tokens.length === 0) {
+    logger.info("Pedido nuevo, pero no hay dispositivos activos para avisar.");
     return;
   }
 
