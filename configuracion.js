@@ -198,6 +198,7 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
   document.getElementById('cfg-serie-boleta').value = _ce.serieBoleta || '';
   document.getElementById('cfg-serie-factura').value = _ce.serieFactura || '';
   document.getElementById('cfg-comprobante-detalle').style.display = _ce.activa ? 'block' : 'none';
+  _cargarComprobantesConError();
   renderConfigTienda();
   renderUsuariosStaff();
   renderCfgUserSelect();
@@ -226,6 +227,59 @@ function guardarConfigComprobante() {
   };
   fbGuardar();
   alert('✅ Configuración guardada.' + (DB.config.comprobanteElectronico.activa ? '\n\nRecuerda: esto solo funciona si ya desplegaste las Cloud Functions del repositorio y configuraste el Token del proveedor como Secret — activar el interruptor no hace eso solo.' : ''));
+}
+
+// Comprobantes que el proveedor no pudo emitir (caído, dato mal configurado, etc.) — la
+// venta en si ya esta guardada de todas formas, esto es solo un panel de seguimiento para
+// que el admin decida cuando reintentar. Vive en 2 colecciones (ventas y fiados), asi que se
+// consultan ambas y se muestran juntas.
+async function _cargarComprobantesConError() {
+  const cont = document.getElementById('comprobantes-error-lista');
+  if (!cont) return;
+  if (!dbModular) { cont.textContent = 'Sin conexión con el sistema en este momento.'; return; }
+  try {
+    const [ventasSnap, fiadosSnap] = await Promise.all([
+      getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('comprobante.estado', '==', 'error'))),
+      getDocsM(queryM(collectionM(dbModular, 'fiados'), whereM('comprobante.estado', '==', 'error')))
+    ]);
+    const items = [
+      ...ventasSnap.docs.map(d => ({ id: d.id, coleccion: 'ventas', ...d.data() })),
+      ...fiadosSnap.docs.map(d => ({ id: d.id, coleccion: 'fiados', ...d.data() }))
+    ];
+    if (items.length === 0) {
+      cont.innerHTML = '<div style="color:var(--gray-400)">✅ Sin comprobantes pendientes de revisar.</div>';
+      return;
+    }
+    cont.innerHTML = items.map(v => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.5rem 0;border-bottom:1px solid var(--gray-100)">
+        <div>
+          <div><strong>${v.clienteNombre || 'Cliente'}</strong> — ${sol(v.total||0)} — ${v.fecha||''}</div>
+          <div style="color:var(--danger);font-size:.72rem">${(v.comprobante && v.comprobante.errorMsg) || 'Error desconocido'}</div>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" onclick="reintentarComprobante('${v.coleccion}','${v.id}', this)">🔄 Reintentar</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    cont.innerHTML = '<div style="color:var(--danger)">No se pudo cargar la lista: ' + (e.message||'error desconocido') + '</div>';
+  }
+}
+
+// Pide al servidor que vuelva a intentar emitir un comprobante puntual — solo staff
+// autenticado puede llamar esto (verificado del lado del servidor también, ver
+// reintentarComprobante() en functions/index.js). La venta ya existe de antes; esto nunca la
+// toca, solo reintenta la parte de SUNAT.
+async function reintentarComprobante(coleccion, id, btnEl) {
+  if (!fbFunctions) { alert('Las Cloud Functions no están desplegadas todavía — no hay nada que reintentar.'); return; }
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳...'; }
+  try {
+    const fn = fbFunctions.httpsCallable('reintentarComprobante');
+    await fn({ coleccion, id });
+    alert('✅ Reintento enviado. Actualizando la lista...');
+    _cargarComprobantesConError();
+  } catch (e) {
+    alert('⚠️ No se pudo reintentar: ' + (e.message || 'error desconocido'));
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '🔄 Reintentar'; }
+  }
 }
 
 function guardarConfig() {
