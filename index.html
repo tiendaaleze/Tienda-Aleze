@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.13-1000</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.13-1130</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.13-1000</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.13-1130</div>
   </div>
 
 </div>
@@ -864,6 +864,11 @@ window.addEventListener('error', function(e) {
             <div style="font-size:.75rem;color:var(--warning);background:#FFFBEB;border-radius:6px;padding:.5rem .6rem">⚠️ El Token del proveedor de facturación NUNCA va acá — se carga directo en Firebase como Secret, nunca en el sistema ni en Firestore.</div>
           </div>
           <button type="button" class="btn btn-primary btn-sm" style="margin-top:.75rem" onclick="guardarConfigComprobante()">Guardar configuración</button>
+          <div style="margin-top:1rem;border-top:1px solid var(--gray-200);padding-top:.75rem">
+            <div style="font-size:.82rem;font-weight:700;margin-bottom:.4rem">📋 Comprobantes pendientes de revisar</div>
+            <div style="font-size:.72rem;color:var(--gray-400);margin-bottom:.5rem">Si el proveedor falla al emitir un comprobante (caído, dato mal configurado, etc.), aparece acá con el motivo — nunca se reintenta solo, vos decidís cuándo.</div>
+            <div id="comprobantes-error-lista" style="font-size:.8rem;color:var(--gray-400)">Cargando...</div>
+          </div>
         </div>
         <div class="grid-2">
           <div class="card">
