@@ -489,6 +489,13 @@ currentRole = role;
   _tlogC('_completarSesion() TERMINA (todos los listeners ya arrancaron)');
 }
 
+// Guarda el token del dispositivo actual una vez registrado, para poder borrarlo de
+// staff_tokens al cerrar sesion — sin esto, un dispositivo que alguna vez fue staff sigue
+// recibiendo notificaciones de pedidos para siempre, sin importar que se cierre sesion, se
+// borre cache, o se desinstale la app (eso solo limpia el dispositivo, nunca le avisa al
+// servidor que ese registro ya no deberia estar activo).
+let _miTokenFCM = null;
+
 // ── Notificaciones push reales (FCM) — avisa aunque la app este cerrada o el celular
 // bloqueado, a diferencia de notificarNuevoPedido() que solo funciona con la pestaña abierta.
 // Dormido hasta que VAPID_KEY tenga la clave real (ver comentario junto a esa constante).
@@ -503,6 +510,7 @@ async function _registrarNotificacionesPush() {
     const messaging = firebase.messaging();
     const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
     if (!token) { console.warn('[FCM] No se pudo obtener el token del dispositivo.'); return; }
+    _miTokenFCM = token;
 
     // El token ES el id del documento — asi un mismo dispositivo nunca duplica su registro,
     // y si el usuario cambia (otro cajero entra con el mismo celular) el token se actualiza solo.
@@ -541,6 +549,14 @@ function doLogout() {
   if (_backupTimer) { clearInterval(_backupTimer); _backupTimer = null; }
   if (_pedidosOnlineUnsub) { _pedidosOnlineUnsub(); _pedidosOnlineUnsub = null; }
   if (_fbSnapshotUnsub)    { _fbSnapshotUnsub();    _fbSnapshotUnsub    = null; }
+
+  // Dar de baja este dispositivo de las notificaciones push de pedidos — critico para
+  // privacidad: sin esto, un dispositivo que alguna vez fue staff sigue recibiendo avisos de
+  // pedidos de cualquier cliente para siempre, sin importar que se cierre sesion despues.
+  if (_miTokenFCM && dbModular) {
+    deleteDocM(docM(dbModular, 'staff_tokens', _miTokenFCM)).catch(() => {});
+    _miTokenFCM = null;
+  }
 
   // Cerrar sesión Firebase en segundo plano — ambas conexiones (Compat y Modular), ya que
   // ahora ambas se autentican al entrar. Sin esto, authModular quedaria con la sesion vieja
