@@ -668,40 +668,49 @@ async function corregirMetodoPago(id) {
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   const sede = sedeAdminEfectiva();
-  const _corrigeCajaHoy = v.fecha === today() && DB.caja.abierta && DB.caja.fecha === today();
-  const eraEfectivo = metodoViejo === 'Efectivo', esEfectivo = metodoNuevo === 'Efectivo';
-  let _deltaEfectivo = 0;
-  if (_corrigeCajaHoy) {
-    if (eraEfectivo && !esEfectivo) _deltaEfectivo = -v.total;
-    if (!eraEfectivo && esEfectivo) _deltaEfectivo = v.total;
-  }
-
-  // Paquete atomico: venta corregida, caja (si aplica) y movimiento viajan juntos.
-  const batch = writeBatchM(dbModular);
-  batch.set(docM(dbModular, 'ventas', String(v.id)), { ...v, metodo: metodoNuevo });
-  if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
-    batch.set(docM(dbModular, 'caja', sede),
-      { ingresosEfectivo: incrementM(_deltaEfectivo) }, { merge: true });
-  }
-  const _movId = getId();
-  const _movData = { id:_movId, tipo:'info', desc:`Corrección método venta #${v.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
-  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
-  _sincIniciar('correccion_metodo_lote', v.id);
+  // CRITICO: runTransaction en vez de writeBatch — lee la venta real del servidor antes de
+  // escribir, para no revivir una venta que otro proceso ya anulo/devolvio entre medio, y
+  // solo toca el campo metodo (nunca el resto del documento con datos potencialmente viejos).
+  const ventaRef = docM(dbModular, 'ventas', String(v.id));
+  let _r;
   try {
-    await batch.commit();
-    _sincTerminar('correccion_metodo_lote', v.id);
+    _r = await runTransactionM(dbModular, async (tx) => {
+      const snap = await tx.get(ventaRef); // lectura garantizada real del servidor
+      if (!snap.exists()) throw new Error('Esta venta ya no existe en el servidor.'); // en modular, exists es un METODO
+      const vServidor = snap.data();
+      if (vServidor.estado === 'anulado') {
+        throw new Error('Esta venta ya fue anulada (por otro proceso) — no se puede corregir el método.');
+      }
+      const _corrigeCajaHoy = vServidor.fecha === today() && DB.caja.abierta && DB.caja.fecha === today();
+      const eraEfectivo = metodoViejo === 'Efectivo', esEfectivo = metodoNuevo === 'Efectivo';
+      let _deltaEfectivo = 0;
+      if (_corrigeCajaHoy) {
+        if (eraEfectivo && !esEfectivo) _deltaEfectivo = -vServidor.total;
+        if (!eraEfectivo && esEfectivo) _deltaEfectivo = vServidor.total;
+      }
+
+      tx.set(ventaRef, { metodo: metodoNuevo }, { merge: true });
+      if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
+        tx.set(docM(dbModular, 'caja', sede), { ingresosEfectivo: incrementM(_deltaEfectivo) }, { merge: true });
+      }
+      const _movId = getId();
+      const _movData = { id:_movId, tipo:'info', desc:`Corrección método venta #${vServidor.id}: ${metodoViejo} → ${metodoNuevo}`, monto:0, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+      tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+      return { _corrigeCajaHoy, _deltaEfectivo, _movData };
+    });
   } catch (e) {
-    _sincError('correccion_metodo_lote', v.id, e, 'la corrección de método de pago — no se aplicó nada');
+    alert('⚠️ No se pudo corregir el método: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
 
+  // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
   v.metodo = metodoNuevo;
-  if (_corrigeCajaHoy && _deltaEfectivo !== 0) {
- DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) + _deltaEfectivo); 
+  if (_r._corrigeCajaHoy && _r._deltaEfectivo !== 0) {
+    DB.caja.ingresosEfectivo = Math.max(0, (DB.caja.ingresosEfectivo||0) + _r._deltaEfectivo);
   }
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movData);
+  DB.movimientos.push(_r._movData);
   fbGuardar();
   try { renderHistorialVentas(); } catch(e){}
   try { renderCaja(); } catch(e){}
@@ -853,6 +862,7 @@ async function guardarActualizarVenta() {
     hvIdx = DB.historialVentas.length - 1;
   }
   const vDB = DB.historialVentas[hvIdx];
+  const ventaRef = docM(dbModular, 'ventas', String(vDB.id));
 
   // ══════════════════════════════════════════════════════════════════════════
   // CASO A: Anular venta completa
@@ -860,86 +870,92 @@ async function guardarActualizarVenta() {
   if (_huvTab === 'anular') {
     if (!confirm(`¿Confirmar ANULACIÓN TOTAL de esta venta?\n\nSe reembolsará ${sol(vDB.total)} al cliente y se restituirá todo el stock.\n\nEsta acción no se puede deshacer.`)) return;
 
-    const montoReembolso = vDB.total;
-
-    // Mismo paquete atomico que el resto: stock restituido, la venta actualizada, caja y
-    // movimiento viajan juntos en un lote — o se aplica todo, o no se aplica nada. Un
-    // reembolso es dinero real saliendo de caja, merece la misma garantia que una venta.
-    const _sedeDev = vDB.sedeId || sedeAdminEfectiva();
     if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-    await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-    const batch = writeBatchM(dbModular);
-    const _deltasStock = [];
+    await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
+    const _sedeDev = vDB.sedeId || sedeAdminEfectiva();
 
-    (vDB.items||[]).forEach(item => {
-      const prod = DB.productos.find(p => p.id === item.prodId);
-      if (prod) {
-        const cantOrig = item.cantReal ?? item.cant;
-        const yaDevuelto = (vDB.devoluciones||[]).reduce((s,d) => {
-          const di = d.items?.find(x=>x.prodId===item.prodId);
-          return s + (di?.cantDevuelta||0);
-        }, 0);
-        const cantARestituir = Math.max(0, cantOrig - yaDevuelto);
-        if (cantARestituir > 0) {
-          batch.set(docM(dbModular, 'productos', String(prod.id)),
-            { stock: incrementM(cantARestituir) }, { merge: true });
-          _deltasStock.push({ prod, delta: cantARestituir });
-          // Revertir el limite global de la promo, si el producto tiene una activa con limite
-          // — nunca debe quedar inflado por una venta que ya no existe.
-          const _promoAsoc = DB.promociones.find(p => p.limite > 0 && (p.packProdId === prod.id || p.prod1 == prod.id));
-          if (_promoAsoc) {
-            batch.set(docM(dbModular, 'promociones', String(_promoAsoc.id)), { vendidos: incrementM(-cantARestituir) }, { merge: true });
-          }
-        }
-      }
-    });
-
-    const _movId = getId();
-    const _movData = {
-      id: _movId, tipo: 'egreso',
-      desc: `Reembolso anulación venta — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
-      monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDev
-    };
-    batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
-    const _cajaUpdate = { egresos: incrementM(montoReembolso) };
-    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(montoReembolso);
-    batch.set(docM(dbModular, 'caja', _sedeDev), _cajaUpdate, { merge: true });
-
-    const _devolucionEntry = {
-      fecha: today(), hora: nowTime(), tipo: 'anulacion',
-      monto: montoReembolso, metodo, obs, autoriza,
-      items: (vDB.items||[]).map(item => ({
-        prodId: item.prodId, nombre: item.nombre,
-        cantDevuelta: item.cantReal ?? item.cant
-      }))
-    };
-    const _vDBActualizada = { ...vDB, devoluciones: [...(vDB.devoluciones||[]), _devolucionEntry], estado: 'anulado', total: 0, fechaAnulacion: today() + ' ' + nowTime() };
-    batch.set(docM(dbModular, 'ventas', String(vDB.id)), _vDBActualizada);
-
-    _sincIniciar('anulacion_lote', vDB.id);
+    // CRITICO: runTransaction en vez de writeBatch — lee la venta real del servidor (con su
+    // array de devoluciones ya acumuladas) antes de calcular cuanto stock restituir y de
+    // escribir el nuevo estado, para nunca revivir una venta ya anulada por otro proceso, ni
+    // perder una devolucion parcial que ya se aplico en el servidor pero no llego todavia a
+    // esta pantalla.
+    let _r;
     try {
-      await batch.commit();
-      _sincTerminar('anulacion_lote', vDB.id);
+      _r = await runTransactionM(dbModular, async (tx) => {
+        const snap = await tx.get(ventaRef); // lectura garantizada real del servidor
+        if (!snap.exists()) throw new Error('Esta venta ya no existe en el servidor.'); // en modular, exists es un METODO
+        const vServidor = snap.data();
+        if (vServidor.estado === 'anulado') throw new Error('Esta venta ya fue anulada (por otro proceso).');
+
+        const montoReembolso = vServidor.total;
+        const _deltasStock = [];
+        (vServidor.items||[]).forEach(item => {
+          const prod = DB.productos.find(p => p.id === item.prodId);
+          if (prod) {
+            const cantOrig = item.cantReal ?? item.cant;
+            const yaDevuelto = (vServidor.devoluciones||[]).reduce((s,d) => {
+              const di = d.items?.find(x=>x.prodId===item.prodId);
+              return s + (di?.cantDevuelta||0);
+            }, 0);
+            const cantARestituir = Math.max(0, cantOrig - yaDevuelto);
+            if (cantARestituir > 0) {
+              tx.set(docM(dbModular, 'productos', String(prod.id)), { stock: incrementM(cantARestituir) }, { merge: true });
+              _deltasStock.push({ prod, delta: cantARestituir });
+              const _promoAsoc = DB.promociones.find(p => p.limite > 0 && (p.packProdId === prod.id || p.prod1 == prod.id));
+              if (_promoAsoc) {
+                tx.set(docM(dbModular, 'promociones', String(_promoAsoc.id)), { vendidos: incrementM(-cantARestituir) }, { merge: true });
+              }
+            }
+          }
+        });
+
+        const _movId = getId();
+        const _movData = {
+          id: _movId, tipo: 'egreso',
+          desc: `Reembolso anulación venta — ${vServidor.cajero||vServidor.clienteNombre||'cliente'} (${metodo})`,
+          monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDev
+        };
+        tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+        const _cajaUpdate = { egresos: incrementM(montoReembolso) };
+        if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(montoReembolso);
+        tx.set(docM(dbModular, 'caja', _sedeDev), _cajaUpdate, { merge: true });
+
+        const _devolucionEntry = {
+          fecha: today(), hora: nowTime(), tipo: 'anulacion',
+          monto: montoReembolso, metodo, obs, autoriza,
+          items: (vServidor.items||[]).map(item => ({
+            prodId: item.prodId, nombre: item.nombre,
+            cantDevuelta: item.cantReal ?? item.cant
+          }))
+        };
+        const _fechaAnulacion = today() + ' ' + nowTime();
+        tx.set(ventaRef, {
+          devoluciones: [...(vServidor.devoluciones||[]), _devolucionEntry],
+          estado: 'anulado', total: 0, fechaAnulacion: _fechaAnulacion
+        }, { merge: true });
+
+        return { montoReembolso, _deltasStock, _movData, _devolucionEntry, _fechaAnulacion };
+      });
     } catch (e) {
-      _sincError('anulacion_lote', vDB.id, e, 'la anulación de la venta — no se aplicó nada');
+      alert('⚠️ No se pudo anular la venta: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
       return;
     }
 
-    _deltasStock.forEach(({prod, delta}) => {
+    // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
+    _r._deltasStock.forEach(({prod, delta}) => {
       prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
     });
-    // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
-    DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
-  
+    DB.caja.egresos = (DB.caja.egresos||0) + _r.montoReembolso;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + _r.montoReembolso;
+
     if (!vDB.devoluciones) vDB.devoluciones = [];
-    vDB.devoluciones.push(_devolucionEntry);
+    vDB.devoluciones.push(_r._devolucionEntry);
     vDB.estado         = 'anulado';
     vDB.total          = 0;
-    vDB.fechaAnulacion = _vDBActualizada.fechaAnulacion;
+    vDB.fechaAnulacion = _r._fechaAnulacion;
     if (!DB.movimientos) DB.movimientos = [];
-    DB.movimientos.push(_movData);
+    DB.movimientos.push(_r._movData);
 
     fbGuardar();
     cerrarModal('modal-actualizar-venta');
@@ -948,7 +964,7 @@ async function guardarActualizarVenta() {
     try { renderCaja(); } catch(e){}
     try { renderDashboard(); } catch(e){}
     try { generarReporte(); } catch(e){}
-    alert(`✅ Venta anulada correctamente.\n💰 Reembolso registrado: ${sol(montoReembolso)} (${metodo})\n📦 Stock restituido en inventario.`);
+    alert(`✅ Venta anulada correctamente.\n💰 Reembolso registrado: ${sol(_r.montoReembolso)} (${metodo})\n📦 Stock restituido en inventario.`);
     return;
   }
 
@@ -957,113 +973,121 @@ async function guardarActualizarVenta() {
   // ══════════════════════════════════════════════════════════════════════════
   const items = _huvVenta.items || [];
   const itemsDevueltos = [];
-  let montoReembolso = 0;
 
   items.forEach((item, i) => {
     const input = document.getElementById('huv-dev-' + i);
     const cantDev = parseFloat(input?.value) || 0;
     if (cantDev <= 0) return;
-
-    const cantOrig = item.cantReal ?? item.cant;
-    if (cantDev > cantOrig) {
-      alert(`No puedes devolver más unidades de las vendidas (${item.nombre}: vendido ${cantOrig})`);
-      return;
-    }
-
     itemsDevueltos.push({
       prodId: item.prodId, nombre: item.nombre,
       cantDevuelta: cantDev, precioUnit: item.precio,
       subtotal: cantDev * item.precio
     });
-    montoReembolso += cantDev * item.precio;
   });
 
   if (itemsDevueltos.length === 0) {
     alert('Ingresa al menos un producto a devolver (cantidad > 0).'); return;
   }
 
-  if (!confirm(`¿Confirmar devolución parcial?\n\nProductos:\n${itemsDevueltos.map(d=>`• ${d.nombre} x${d.cantDevuelta} = ${sol(d.subtotal)}`).join('\n')}\n\nReembolso: ${sol(montoReembolso)} (${metodo})\nNuevo total de la venta: ${sol(Math.max(0, vDB.total - montoReembolso))}`)) return;
+  const _montoReembolsoEstimado = itemsDevueltos.reduce((s,d) => s + d.subtotal, 0);
+  if (!confirm(`¿Confirmar devolución parcial?\n\nProductos:\n${itemsDevueltos.map(d=>`• ${d.nombre} x${d.cantDevuelta} = ${sol(d.subtotal)}`).join('\n')}\n\nReembolso: ${sol(_montoReembolsoEstimado)} (${metodo})`)) return;
 
-  // Mismo paquete atomico: stock, venta actualizada, caja y movimiento juntos o nada.
-  const _sedeDevP = vDB.sedeId || sedeAdminEfectiva();
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-  const batchP = writeBatchM(dbModular);
-  const _deltasStockP = [];
+  await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
+  const _sedeDevP = vDB.sedeId || sedeAdminEfectiva();
 
-  itemsDevueltos.forEach(dev => {
-    const prod = DB.productos.find(p => p.id === dev.prodId);
-    if (prod) {
-      batchP.set(docM(dbModular, 'productos', String(prod.id)),
-        { stock: incrementM(dev.cantDevuelta) }, { merge: true });
-      _deltasStockP.push({ prod, delta: dev.cantDevuelta });
-      const _promoAsocP = DB.promociones.find(p => p.limite > 0 && (p.packProdId === prod.id || p.prod1 == prod.id));
-      if (_promoAsocP) {
-        batchP.set(docM(dbModular, 'promociones', String(_promoAsocP.id)), { vendidos: incrementM(-dev.cantDevuelta) }, { merge: true });
-      }
-    }
-  });
-
-  const nuevoTotal = Math.max(0, vDB.total - montoReembolso);
-  const _itemsActualizados = (vDB.items||[]).map(item => {
-    const dev = itemsDevueltos.find(d => d.prodId === item.prodId);
-    if (!dev) return item;
-    const cantAntes = item.cantReal ?? item.cant;
-    return { ...item, cantReal: Math.max(0, cantAntes - dev.cantDevuelta) };
-  });
-  const _devolucionEntryP = {
-    fecha: today(), hora: nowTime(), tipo: 'parcial',
-    monto: montoReembolso, metodo, obs, autoriza,
-    items: itemsDevueltos
-  };
-  const _vDBActualizadaP = {
-    ...vDB, items: _itemsActualizados,
-    devoluciones: [...(vDB.devoluciones||[]), _devolucionEntryP],
-    total: nuevoTotal, estado: nuevoTotal === 0 ? 'anulado' : 'parcial'
-  };
-  batchP.set(docM(dbModular, 'ventas', String(vDB.id)), _vDBActualizadaP);
-
-  const _movIdP = getId();
-  const _movDataP = {
-    id: _movIdP, tipo: 'egreso',
-    desc: `Reembolso devolución parcial — ${vDB.cajero||vDB.clienteNombre||'cliente'} (${metodo})`,
-    monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDevP
-  };
-  batchP.set(docM(dbModular, 'movimientos', String(_movIdP)), _movDataP);
-
-  const _cajaUpdateP = { egresos: incrementM(montoReembolso) };
-  if (metodo === 'Efectivo') _cajaUpdateP.egresosEfectivo = incrementM(montoReembolso);
-  batchP.set(docM(dbModular, 'caja', _sedeDevP), _cajaUpdateP, { merge: true });
-
-  _sincIniciar('devolucion_lote', vDB.id);
+  // CRITICO: runTransaction — mismo motivo que el caso A. Ademas, revalida cada cantidad a
+  // devolver contra el stock REAL ya vendido en el servidor (cantOrig - lo ya devuelto antes),
+  // no contra lo que esta pantalla venia mostrando — si una devolucion parcial anterior ya se
+  // aplico en el servidor sin reflejarse aca, esta validacion lo detecta y rechaza en vez de
+  // permitir devolver de mas.
+  let _rP;
   try {
-    await batchP.commit();
-    _sincTerminar('devolucion_lote', vDB.id);
+    _rP = await runTransactionM(dbModular, async (tx) => {
+      const snap = await tx.get(ventaRef); // lectura garantizada real del servidor
+      if (!snap.exists()) throw new Error('Esta venta ya no existe en el servidor.'); // en modular, exists es un METODO
+      const vServidor = snap.data();
+      if (vServidor.estado === 'anulado') throw new Error('Esta venta ya fue anulada (por otro proceso) — no se puede devolver.');
+
+      let montoReembolso = 0;
+      for (const dev of itemsDevueltos) {
+        const itemServidor = (vServidor.items||[]).find(i => i.prodId === dev.prodId);
+        const cantOrig = itemServidor ? (itemServidor.cantReal ?? itemServidor.cant) : 0;
+        const yaDevuelto = (vServidor.devoluciones||[]).reduce((s,d) => {
+          const di = d.items?.find(x=>x.prodId===dev.prodId);
+          return s + (di?.cantDevuelta||0);
+        }, 0);
+        const disponibleParaDevolver = Math.max(0, cantOrig - yaDevuelto);
+        if (dev.cantDevuelta > disponibleParaDevolver) {
+          throw new Error(`No puedes devolver más unidades de las disponibles (${dev.nombre}: disponible ${disponibleParaDevolver}). Puede que ya se haya registrado otra devolución — revisa la venta actualizada.`);
+        }
+        montoReembolso += dev.subtotal;
+      }
+
+      const _deltasStockP = [];
+      itemsDevueltos.forEach(dev => {
+        const prod = DB.productos.find(p => p.id === dev.prodId);
+        if (prod) {
+          tx.set(docM(dbModular, 'productos', String(prod.id)), { stock: incrementM(dev.cantDevuelta) }, { merge: true });
+          _deltasStockP.push({ prod, delta: dev.cantDevuelta });
+          const _promoAsocP = DB.promociones.find(p => p.limite > 0 && (p.packProdId === prod.id || p.prod1 == prod.id));
+          if (_promoAsocP) {
+            tx.set(docM(dbModular, 'promociones', String(_promoAsocP.id)), { vendidos: incrementM(-dev.cantDevuelta) }, { merge: true });
+          }
+        }
+      });
+
+      const nuevoTotal = Math.max(0, Math.round((vServidor.total - montoReembolso) * 100) / 100);
+      const _itemsActualizados = (vServidor.items||[]).map(item => {
+        const dev = itemsDevueltos.find(d => d.prodId === item.prodId);
+        if (!dev) return item;
+        const cantAntes = item.cantReal ?? item.cant;
+        return { ...item, cantReal: Math.max(0, cantAntes - dev.cantDevuelta) };
+      });
+      const _devolucionEntryP = {
+        fecha: today(), hora: nowTime(), tipo: 'parcial',
+        monto: montoReembolso, metodo, obs, autoriza,
+        items: itemsDevueltos
+      };
+      tx.set(ventaRef, {
+        items: _itemsActualizados,
+        devoluciones: [...(vServidor.devoluciones||[]), _devolucionEntryP],
+        total: nuevoTotal, estado: nuevoTotal === 0 ? 'anulado' : 'parcial'
+      }, { merge: true });
+
+      const _movIdP = getId();
+      const _movDataP = {
+        id: _movIdP, tipo: 'egreso',
+        desc: `Reembolso devolución parcial — ${vServidor.cajero||vServidor.clienteNombre||'cliente'} (${metodo})`,
+        monto: montoReembolso, hora: nowTime(), fecha: today(), usuario: autoriza, sedeId: _sedeDevP
+      };
+      tx.set(docM(dbModular, 'movimientos', String(_movIdP)), _movDataP);
+
+      const _cajaUpdateP = { egresos: incrementM(montoReembolso) };
+      if (metodo === 'Efectivo') _cajaUpdateP.egresosEfectivo = incrementM(montoReembolso);
+      tx.set(docM(dbModular, 'caja', _sedeDevP), _cajaUpdateP, { merge: true });
+
+      return { montoReembolso, nuevoTotal, _deltasStockP, _devolucionEntryP, _movDataP, _itemsActualizados };
+    });
   } catch (e) {
-    _sincError('devolucion_lote', vDB.id, e, 'la devolución — no se aplicó nada');
+    alert('⚠️ No se pudo registrar la devolución: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
 
-  _deltasStockP.forEach(({prod, delta}) => {
+  // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
+  _rP._deltasStockP.forEach(({prod, delta}) => {
     prod.stock = Math.max(0, Math.round(((prod.stock||0)+delta)*1000)/1000);
   });
-  (vDB.items||[]).forEach((item, i) => {
-    const dev = itemsDevueltos.find(d => d.prodId === item.prodId);
-    if (dev) {
-      const cantAntes = item.cantReal ?? item.cant;
-      item.cantReal = Math.max(0, cantAntes - dev.cantDevuelta);
-    }
-  });
-  vDB.total  = nuevoTotal;
-  vDB.estado = nuevoTotal === 0 ? 'anulado' : 'parcial';
-  // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
-  DB.caja.egresos = (DB.caja.egresos||0) + montoReembolso;
-  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + montoReembolso;
-  
+  vDB.items  = _rP._itemsActualizados;
+  vDB.total  = _rP.nuevoTotal;
+  vDB.estado = _rP.nuevoTotal === 0 ? 'anulado' : 'parcial';
+  DB.caja.egresos = (DB.caja.egresos||0) + _rP.montoReembolso;
+  if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + _rP.montoReembolso;
+
   if (!vDB.devoluciones) vDB.devoluciones = [];
-  vDB.devoluciones.push(_devolucionEntryP);
+  vDB.devoluciones.push(_rP._devolucionEntryP);
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movDataP);
+  DB.movimientos.push(_rP._movDataP);
 
   fbGuardar();
   cerrarModal('modal-actualizar-venta');
@@ -1072,7 +1096,7 @@ async function guardarActualizarVenta() {
   try { renderCaja(); } catch(e){}
   try { renderDashboard(); } catch(e){}
   try { generarReporte(); } catch(e){}
-  alert(`✅ Devolución registrada correctamente.\n💰 Reembolso: ${sol(montoReembolso)} (${metodo})\n📦 Stock restituido.\nNuevo total de la venta: ${sol(nuevoTotal)}`);
+  alert(`✅ Devolución registrada correctamente.\n💰 Reembolso: ${sol(_rP.montoReembolso)} (${metodo})\n📦 Stock restituido.\nNuevo total de la venta: ${sol(_rP.nuevoTotal)}`);
 }
 
 // ===================== EXCEL IMPORTAR / EXPORTAR =====================
