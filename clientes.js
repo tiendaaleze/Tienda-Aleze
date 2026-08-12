@@ -425,67 +425,80 @@ function _asignarPagoAItems(fiado, monto) {
 
 async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   metodo = metodo || 'Efectivo';
-  let saldo = montoTotal;
   const _sedeEPG = sedeAdminEfectiva();
-  const fiados = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && fiadoPendiente(f)).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
+  const fiadosLocal = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && fiadoPendiente(f)).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
 
-  // Mismo criterio que la venta: TODOS los fiados tocados, el cliente, caja, movimiento y
-  // cada registro de historial viajan en un solo lote — o se aplican todos juntos, o ninguno.
-  // Esta es la funcion que coincide exactamente con el incidente real reportado (pago global
-  // parcial perdido) — antes cada fiado se sincronizaba por separado, sin ninguna garantia.
+  // CRITICO: runTransaction en vez de writeBatch — un batch es atomico DENTRO de una sola
+  // llamada, pero no protege contra que un pago individual (confirmarPagoFiado) o otro pago
+  // global casi simultaneo sobre el MISMO cliente lean el mismo estado viejo y se pisen entre
+  // si. Esta es la funcion que coincide exactamente con el incidente real reportado (pago
+  // global parcial perdido) — el fix anterior de atomicidad de lote ayudo con otro problema,
+  // pero no con este: la lectura seguia siendo de memoria local, potencialmente vieja.
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-  const batch = writeBatchM(dbModular);
-  const _cambiosLocales = []; // {f, montoPagadoEsteFiado, pagoEntry} para aplicar tras el exito
-  const _hvPagosGlobal = [];
+  await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
 
-  fiados.forEach(f => {
-    if (saldo <= 0) return;
-    const pendFiado = fiadoMontoPendiente(f);
-    const montoPagadoEsteFiado = Math.min(saldo, pendFiado);
-    if (montoPagadoEsteFiado > 0) {
-      // Nota: _asignarPagoAItems SI modifica f.items[].pagado como parte de calcular el costo
-      // asociado — es la unica pieza que se adelanta a la confirmacion del lote (necesaria
-      // para el calculo), a diferencia de todo lo demas en esta funcion que espera el exito.
-      // Riesgo minimo: si el lote fallara despues de esto, esta marca queda en memoria local
-      // nada mas, se corrige sola al recargar (trae el fiado real de Firestore de nuevo).
-      const costoAsociado = _asignarPagoAItems(f, montoPagadoEsteFiado);
-      const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' };
-      const _fPagado = Math.round((f.pagado + montoPagadoEsteFiado) * 100) / 100;
-      const _fEstado = (Math.round((f.total - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
-      batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: [...(f.pagos||[]), _fPagoEntry], estado: _fEstado });
-      saldo = Math.round((saldo - montoPagadoEsteFiado) * 100) / 100;
-      const _entry = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: f.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado, sedeId: _sedeEPG };
-      batch.set(docM(dbModular, 'ventas', String(_entry.id)), _entry);
-      _hvPagosGlobal.push(_entry);
-      _cambiosLocales.push({ f, montoPagadoEsteFiado, _fPagoEntry, _fPagado, _fEstado });
-    }
-  });
-
-  batch.set(docM(dbModular, 'clientes', String(cid)), {
-    deuda: incrementM(-montoTotal)
-  }, { merge: true });
-
-  const _movId = getId();
-  const _movData = { id:_movId, tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: montoTotal, hora: nowTime(), fecha: today(), sedeId: _sedeEPG };
-  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
-  const _cajaUpdate = { ingresos: incrementM(montoTotal) };
-  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(montoTotal);
-  batch.set(docM(dbModular, 'caja', _sedeEPG), _cajaUpdate, { merge: true });
-
-  const _idPagoGlobal = 'pago_global_' + cid + '_' + Date.now();
-  _sincIniciar('pago_global_lote', _idPagoGlobal);
+  let _r;
   try {
-    await batch.commit();
-    _sincTerminar('pago_global_lote', _idPagoGlobal);
+    _r = await runTransactionM(dbModular, async (tx) => {
+      // FASE 1 — leer TODOS los fiados candidatos del servidor primero (regla de Firestore:
+      // todas las lecturas de una transaccion deben ocurrir antes que cualquier escritura).
+      const _snapsFiados = [];
+      for (const f of fiadosLocal) {
+        const ref = docM(dbModular, 'fiados', String(f.id));
+        const snap = await tx.get(ref); // lectura garantizada real del servidor, nunca cache
+        if (snap.exists()) _snapsFiados.push({ ref, data: snap.data() }); // en modular, exists es un METODO
+      }
+
+      // FASE 2 — calcular y escribir usando los valores REALES del servidor, nunca los de
+      // memoria local (que podrian estar desactualizados si algo mas ya toco estos fiados).
+      let saldo = montoTotal;
+      const _cambiosLocales = [];
+      const _hvPagosGlobal = [];
+      for (const { ref, data: fServidor } of _snapsFiados) {
+        if (saldo <= 0) break;
+        const pendFiado = Math.max(0, Math.round(((fServidor.total||0) - (fServidor.pagado||0)) * 100) / 100);
+        if (pendFiado <= 0) continue; // ya se habia pagado completo entre medio, saltar
+        const montoPagadoEsteFiado = Math.min(saldo, pendFiado);
+        // _asignarPagoAItems modifica fServidor.items[] como efecto secundario — seguro
+        // dentro de la transaccion, es puramente sincrona y sin llamadas externas.
+        const costoAsociado = _asignarPagoAItems(fServidor, montoPagadoEsteFiado);
+        const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto: montoPagadoEsteFiado, tipo: 'global' };
+        const _fPagado = Math.round(((fServidor.pagado||0) + montoPagadoEsteFiado) * 100) / 100;
+        const _fEstado = (Math.round(((fServidor.total||0) - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
+        tx.set(ref, { ...fServidor, pagado: _fPagado, pagos: [...(fServidor.pagos||[]), _fPagoEntry], estado: _fEstado });
+        saldo = Math.round((saldo - montoPagadoEsteFiado) * 100) / 100;
+        const _entry = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: cid, fiadoId: fServidor.id, total: montoPagadoEsteFiado, metodo, cajero: currentUser, costoAsociado, sedeId: _sedeEPG };
+        tx.set(docM(dbModular, 'ventas', String(_entry.id)), _entry);
+        _hvPagosGlobal.push(_entry);
+        _cambiosLocales.push({ fiadoId: fServidor.id, _fPagoEntry, _fPagado, _fEstado });
+      }
+
+      const _montoRealAplicado = Math.round((montoTotal - saldo) * 100) / 100;
+      if (_montoRealAplicado <= 0) {
+        throw new Error('No se pudo aplicar el pago — la deuda pendiente ya no coincide (puede que se haya saldado por otro pago mientras tanto). Revisa el estado actualizado del cliente.');
+      }
+
+      tx.set(docM(dbModular, 'clientes', String(cid)), { deuda: incrementM(-_montoRealAplicado) }, { merge: true });
+
+      const _movId = getId();
+      const _movData = { id:_movId, tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: _montoRealAplicado, hora: nowTime(), fecha: today(), sedeId: _sedeEPG };
+      tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+      const _cajaUpdate = { ingresos: incrementM(_montoRealAplicado) };
+      if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(_montoRealAplicado);
+      tx.set(docM(dbModular, 'caja', _sedeEPG), _cajaUpdate, { merge: true });
+
+      return { _cambiosLocales, _hvPagosGlobal, _movData, _montoRealAplicado, _saldoSobrante: saldo };
+    });
   } catch (e) {
-    _sincError('pago_global_lote', _idPagoGlobal, e, 'el pago global — no se aplicó nada, ningún fiado quedó marcado como pagado');
+    alert('⚠️ No se pudo registrar el pago global: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
 
-  // El lote ya fue aceptado — recien ahora se aplican los cambios en memoria local.
-  _cambiosLocales.forEach(({f, _fPagoEntry, _fPagado, _fEstado}) => {
+  // La transaccion ya fue aceptada — recien ahora se aplican los cambios en memoria local.
+  _r._cambiosLocales.forEach(({ fiadoId, _fPagoEntry, _fPagado, _fEstado }) => {
+    const f = DB.fiados.find(x => x.id === fiadoId);
+    if (!f) return;
     if (!f.pagos) f.pagos = [];
     f.pagos.push(_fPagoEntry);
     f.pagado = _fPagado;
@@ -494,39 +507,39 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   const cli = DB.clientes.find(c => c.id === cid);
   if (cli) {
     _clienteProxySkipSync = true;
-    try { _aplicarDeudaLocal(cli, -montoTotal); }
+    try { _aplicarDeudaLocal(cli, -_r._montoRealAplicado); }
     finally { _clienteProxySkipSync = false; }
   }
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
-  DB.caja.ingresos += montoTotal;
-  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + montoTotal;
-  
+  DB.caja.ingresos += _r._montoRealAplicado;
+  if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r._montoRealAplicado;
+
   if (!DB.historialVentas) DB.historialVentas = [];
-  _hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
+  _r._hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movData);
+  DB.movimientos.push(_r._movData);
   fbGuardar();
   renderFiados();
   updateAlertCount();
   try { renderDashboard(); } catch(e) {}
   try { renderCaja(); } catch(e) {}
-  alert('✅ Pago global de ' + sol(montoTotal) + ' registrado correctamente.');
+  alert('✅ Pago global de ' + sol(_r._montoRealAplicado) + ' registrado correctamente.' + (_r._saldoSobrante > 0 ? '\n\n⚠️ Quedó un saldo de ' + sol(_r._saldoSobrante) + ' sin aplicar — la deuda pendiente cambió durante el proceso.' : ''));
 }
 
 function confirmarEliminarFiado(id) {
-  const f = DB.fiados.find(x => x.id === id);
-  if (!f) return;
+  const fLocal = DB.fiados.find(x => x.id === id);
+  if (!fLocal) return;
   // CRITICO — cierra un hueco real: la lista de Fiados ya filtra por sede, pero eliminar/cobrar
   // no volvia a verificarlo, dejando la puerta abierta a tocar un fiado de la otra sede si se
   // llegaba a el por otro camino (ej. historial de un cliente). Defensa en profundidad — nunca
   // se permite tocar un fiado que no sea de la sede activa, sin importar como se llego hasta el.
-  if (currentRole !== 'admin' && (f.sedeId||'principal') !== sedeAdminEfectiva()) {
+  if (currentRole !== 'admin' && (fLocal.sedeId||'principal') !== sedeAdminEfectiva()) {
     alert('⛔ Este fiado pertenece a la otra sede — no se puede modificar desde acá.');
     return;
   }
-  const pend = fiadoMontoPendiente(f);
-  const opciones = pend > 0
-    ? `¿Cómo deseas eliminar este fiado de ${sol(f.total)}?
+  const pendLocal = fiadoMontoPendiente(fLocal); // solo decide que texto de prompt mostrar — el monto real se relee dentro de la transaccion
+  const opciones = pendLocal > 0
+    ? `¿Cómo deseas eliminar este fiado de ${sol(fLocal.total)}?
 
 1. ERROR DE REGISTRO → restaura stock
 2. PÉRDIDA/INCOBRABLE → registra en mermas
@@ -537,58 +550,97 @@ Escribe 1 o 2:`
 Escribe 1 para confirmar:`;
   const resp = prompt(opciones);
   if (!resp) return;
+  const opcion = resp.trim();
+  if (opcion !== '1' && opcion !== '2') { alert('Opción no válida. No se realizó ningún cambio.'); return; }
+  if (opcion === '2' && pendLocal <= 0) { alert('Opción no válida. No se realizó ningún cambio.'); return; }
+  _confirmarEliminarFiadoTx(id, opcion);
+}
 
-  if (resp.trim() === '1') {
-    // Restaurar stock del fiado eliminado
-    f.items.forEach(i => {
-      const prod = DB.productos.find(p => p.id === i.prodId);
-      if (prod) ajustarStockSede(prod, i.cant);
+// CRITICO: runTransaction en vez de escrituras independientes — antes, restaurar stock
+// (fbIncrementarStock), borrar el fiado (deleteDocM), ajustar la deuda (ajustarDeudaCliente)
+// y registrar mermas (fbSincronizarMerma) eran 4 operaciones completamente separadas, sin
+// ninguna garantia de que llegaran todas juntas — si una fallaba despues de que otra ya se
+// aplico, el sistema quedaba inconsistente (ej. stock restaurado pero el fiado seguia
+// existiendo, o viceversa). Ademas, el monto pendiente y los items se leian de memoria local,
+// mismo riesgo de desincronizacion ya corregido en confirmarPagoFiado/ejecutarPagoGlobal.
+async function _confirmarEliminarFiadoTx(id, opcion) {
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const fiadoRef = docM(dbModular, 'fiados', String(id));
+  let _r;
+  try {
+    _r = await runTransactionM(dbModular, async (tx) => {
+      // FASE 1 — lecturas: el fiado real, y (solo si opcion 1) cada producto involucrado.
+      const snap = await tx.get(fiadoRef); // lectura garantizada real del servidor
+      if (!snap.exists()) throw new Error('Este fiado ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+      const fServidor = snap.data();
+      const pendReal = Math.max(0, Math.round(((fServidor.total||0) - (fServidor.pagado||0)) * 100) / 100);
+      const _items = fServidor.items || [];
+
+      let _prodSnaps = [];
+      if (opcion === '1') {
+        for (const i of _items) {
+          const prodRef = docM(dbModular, 'productos', String(i.prodId));
+          const prodSnap = await tx.get(prodRef);
+          _prodSnaps.push({ item: i, ref: prodRef, existe: prodSnap.exists() });
+        }
+      }
+
+      // FASE 2 — escrituras, todas juntas.
+      if (opcion === '1') {
+        _prodSnaps.forEach(({ item, ref, existe }) => {
+          if (existe) tx.set(ref, { stock: incrementM(item.cant) }, { merge: true });
+        });
+        tx.delete(fiadoRef);
+        if (pendReal > 0) tx.set(docM(dbModular, 'clientes', String(fServidor.clienteId)), { deuda: incrementM(-pendReal) }, { merge: true });
+        return { tipo: 'restaurado', fServidor, pendReal };
+      } else {
+        // Opcion 2 — mermas proporcionales al saldo REAL pendiente (no al monto local, que
+        // podria no reflejar un pago parcial reciente).
+        const propPend = fServidor.total > 0 ? pendReal / fServidor.total : 0;
+        const _mermasNuevas = [];
+        _items.forEach(i => {
+          const cantMermaExacta = i.cant * propPend;
+          const cantMerma = Math.round(cantMermaExacta * 100) / 100;
+          const perdidaMonto = Math.round((i.costoUnitario||0) * cantMermaExacta * 100) / 100;
+          if (perdidaMonto <= 0) return;
+          const _mermaFI = { id: getId(), prodId: i.prodId, cant: cantMerma, motivo: 'Fiado incobrable', obs: 'Fiado #' + fServidor.id + ' — ' + getClienteNombre(fServidor.clienteId), fecha: today(), usuario: currentUser, sedeId: fServidor.sedeId || 'principal', costoUnitario: i.costoUnitario||0 };
+          tx.set(docM(dbModular, 'mermas', String(_mermaFI.id)), _mermaFI);
+          _mermasNuevas.push(_mermaFI);
+        });
+        if (_mermasNuevas.length === 0 && pendReal > 0) {
+          const _mermaFISinDetalle = { id: getId(), prodId: null, cant: 0, motivo: 'Fiado incobrable', obs: 'Fiado #' + fServidor.id + ' (saldo, sin detalle por producto) — ' + getClienteNombre(fServidor.clienteId) + ' — Pérdida: ' + sol(pendReal), fecha: today(), usuario: currentUser, sedeId: fServidor.sedeId || 'principal' };
+          tx.set(docM(dbModular, 'mermas', String(_mermaFISinDetalle.id)), _mermaFISinDetalle);
+          _mermasNuevas.push(_mermaFISinDetalle);
+        }
+        tx.delete(fiadoRef);
+        if (pendReal > 0) tx.set(docM(dbModular, 'clientes', String(fServidor.clienteId)), { deuda: incrementM(-pendReal) }, { merge: true });
+        return { tipo: 'merma', fServidor, pendReal, mermas: _mermasNuevas };
+      }
     });
-    DB.fiados = DB.fiados.filter(x => x.id !== id);
-    if (dbModular) deleteDocM(docM(dbModular, 'fiados', String(id))).catch(e => console.warn('No se pudo borrar fiados/'+id, e)); // [SDK modular]
-    const cli = DB.clientes.find(c => c.id === f.clienteId);
-    
-    // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 1 ===
-    if (cli) ajustarDeudaCliente(cli, -pend);
-    
+  } catch (e) {
+    alert('⚠️ No se pudo eliminar el fiado: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
+    return;
+  }
+
+  // La transaccion ya fue aceptada — recien ahora se aplica en memoria local.
+  DB.fiados = DB.fiados.filter(x => x.id !== id);
+  const cli = DB.clientes.find(c => c.id === _r.fServidor.clienteId);
+  if (_r.tipo === 'restaurado') {
+    (_r.fServidor.items||[]).forEach(i => {
+      const prod = DB.productos.find(p => p.id === i.prodId);
+      if (prod) prod.stock = Math.max(0, Math.round(((prod.stock||0) + i.cant) * 1000) / 1000);
+    });
+    if (cli && _r.pendReal > 0) { _clienteProxySkipSync = true; try { _aplicarDeudaLocal(cli, -_r.pendReal); } finally { _clienteProxySkipSync = false; } }
     fbGuardar();
     renderFiados(); renderInventario && renderInventario();
     alert('✅ Fiado eliminado y stock restaurado.');
-
-  } else if (resp.trim() === '2' && pend > 0) {
-    // Registrar como merma
-    let _algunaMermaRegistrada = false;
-    const propPend = pend / f.total;
-    f.items.forEach(i => {
-      const prod = DB.productos.find(p => p.id === i.prodId);
-      if (!prod) return;
-      const cantMermaExacta = i.cant * propPend;
-      const cantMerma = Math.round(cantMermaExacta * 100) / 100;
-      const perdidaMonto = Math.round(prod.costo * cantMermaExacta * 100) / 100;
-      if (perdidaMonto <= 0) return;
-    const _mermaFI = { id: getId(), prodId: i.prodId, cant: cantMerma, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' — ' + getClienteNombre(f.clienteId), fecha: today(), usuario: currentUser, sedeId: f.sedeId || 'principal', costoUnitario: prod.costo };
-    DB.mermas.push(_mermaFI);
-      fbSincronizarMerma(_mermaFI);
-      _algunaMermaRegistrada = true;
-    });
-
-   if (!_algunaMermaRegistrada && pend > 0) {
-      const _mermaFISinDetalle = { id: getId(), prodId: null, cant: 0, motivo: 'Fiado incobrable', obs: 'Fiado #' + f.id + ' (saldo, sin detalle por producto) — ' + getClienteNombre(f.clienteId) + ' — Pérdida: ' + sol(pend), fecha: today(), usuario: currentUser, sedeId: f.sedeId || 'principal' };
-      DB.mermas.push(_mermaFISinDetalle);
-      fbSincronizarMerma(_mermaFISinDetalle);
-    }
-    DB.fiados = DB.fiados.filter(x => x.id !== id);
-    if (dbModular) deleteDocM(docM(dbModular, 'fiados', String(id))).catch(e => console.warn('No se pudo borrar fiados/'+id, e)); // [SDK modular]
-    const cli = DB.clientes.find(c => c.id === f.clienteId);
-    
-    // === AQUÍ SE APLICA EL CAMBIO PARA LA OPCIÓN 2 ===
-    if (cli) ajustarDeudaCliente(cli, -pend);
-    
+  } else {
+    if (!DB.mermas) DB.mermas = [];
+    _r.mermas.forEach(m => DB.mermas.push(m));
+    if (cli && _r.pendReal > 0) { _clienteProxySkipSync = true; try { _aplicarDeudaLocal(cli, -_r.pendReal); } finally { _clienteProxySkipSync = false; } }
     fbGuardar();
     renderFiados(); try { renderMermas(); } catch(e) {}
     alert('✅ Fiado eliminado y registrado como merma.');
-  } else {
-    alert('Opción no válida. No se realizó ningún cambio.');
   }
 }
 
@@ -646,53 +698,61 @@ async function confirmarPagoFiado() {
   }
   const monto = parseFloat(document.getElementById('fiado-pago-monto').value) || 0;
   const metodo = document.getElementById('fiado-pago-metodo')?.value || 'Efectivo';
-const pendiente = fiadoMontoPendiente(f);
-  if (monto <= 0 || monto > pendiente) { alert('Monto inválido. Máximo: ' + sol(pendiente)); return; }
-  const costoAsociado = _asignarPagoAItems(f, monto);
-
-  // Mismo criterio que la venta: el pago es un paquete — fiado actualizado, deuda del
-  // cliente, movimiento, caja y el registro en historial viajan juntos o no viaja nada.
-  // Antes de este cambio, este pago tenia el mismo hueco que la venta/fiado original: cada
-  // pieza viajaba por separado, sin ninguna garantia de que llegaran todas juntas.
+  if (monto <= 0) { alert('Monto inválido.'); return; }
   const sede = sedeAdminEfectiva();
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
-  const batch = writeBatchM(dbModular);
+  await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
 
-  const _fPagos = [...(f.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
-  const _fPagado = Math.round((f.pagado + monto) * 100) / 100;
-  const _fEstado = (Math.round((f.total - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
-  batch.set(docM(dbModular, 'fiados', String(f.id)), { ...f, pagado: _fPagado, pagos: _fPagos, sedeId: f.sedeId || sede, estado: _fEstado });
-
-  batch.set(docM(dbModular, 'clientes', String(f.clienteId)), {
-    deuda: incrementM(-monto)
-  }, { merge: true });
-
-  const _movId = getId();
-  const _movData = { id:_movId, tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(f.clienteId), monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
-  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
-  const _cajaUpdate = { ingresos: incrementM(monto) };
-  if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(monto);
-  batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
-
-  const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: f.clienteId, fiadoId: f.id, total: monto, metodo, cajero: currentUser, costoAsociado, sedeId: sede };
-  batch.set(docM(dbModular, 'ventas', String(_pagoFiado.id)), _pagoFiado);
-
-  _sincIniciar('pago_fiado_lote', f.id);
+  // CRITICO: runTransaction en vez de writeBatch — un batch es atomico DENTRO de una sola
+  // llamada (todo o nada), pero no protege contra que 2 pagos casi simultaneos sobre el MISMO
+  // fiado (2 cajeros, o el mismo cajero cobrando rapido) lean el mismo estado viejo y se pisen
+  // el uno al otro. La transaccion lee el fiado real del servidor en el momento exacto de
+  // escribir — si el saldo real ya no alcanza porque otro pago se coló entre medio, esta
+  // llamada se rechaza con un aviso claro en vez de perder ese pago anterior en silencio.
+  // Firestore reintenta sola la transaccion perdedora si hay conflicto (mismo mecanismo ya
+  // probado en ensureCajaAbierta() y en el correlativo de comprobantes).
+  const fiadoRef = docM(dbModular, 'fiados', String(f.id));
+  let _r;
   try {
-    await batch.commit();
-    _sincTerminar('pago_fiado_lote', f.id);
+    _r = await runTransactionM(dbModular, async (tx) => {
+      const snap = await tx.get(fiadoRef); // lectura garantizada real del servidor, nunca cache
+      if (!snap.exists()) throw new Error('Este fiado ya no existe — puede que ya se haya eliminado.');
+      const fServidor = snap.data(); // en modular, exists es un METODO
+      const pendienteReal = Math.max(0, Math.round(((fServidor.total||0) - (fServidor.pagado||0)) * 100) / 100);
+      if (monto > pendienteReal) {
+        throw new Error('El monto (' + sol(monto) + ') supera el saldo real pendiente (' + sol(pendienteReal) + '). Alguien más pudo haber registrado un pago recién — revisa el fiado actualizado antes de reintentar.');
+      }
+      const costoAsociado = _asignarPagoAItems(fServidor, monto);
+      const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo };
+      const _fPagado = Math.round(((fServidor.pagado||0) + monto) * 100) / 100;
+      const _fEstado = (Math.round(((fServidor.total||0) - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
+
+      tx.set(fiadoRef, { ...fServidor, pagado: _fPagado, pagos: [...(fServidor.pagos||[]), _fPagoEntry], sedeId: fServidor.sedeId || sede, estado: _fEstado });
+      tx.set(docM(dbModular, 'clientes', String(fServidor.clienteId)), { deuda: incrementM(-monto) }, { merge: true });
+
+      const _movId = getId();
+      const _movData = { id:_movId, tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(fServidor.clienteId), monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+      tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+      const _cajaUpdate = { ingresos: incrementM(monto) };
+      if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(monto);
+      tx.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
+
+      const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: fServidor.clienteId, fiadoId: fServidor.id, total: monto, metodo, cajero: currentUser, costoAsociado, sedeId: sede };
+      tx.set(docM(dbModular, 'ventas', String(_pagoFiado.id)), _pagoFiado);
+
+      return { _fPagoEntry, _fPagado, _fEstado, _movData, _pagoFiado };
+    });
   } catch (e) {
-    _sincError('pago_fiado_lote', f.id, e, 'el pago del fiado — no se aplicó nada');
+    alert('⚠️ No se pudo registrar el pago: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
 
-  // El lote ya fue aceptado — recien ahora se refleja en memoria local.
+  // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
   if (!f.pagos) f.pagos = [];
-  f.pagos.push({ fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo });
-  f.pagado = _fPagado;
-  f.estado = _fEstado;
+  f.pagos.push(_r._fPagoEntry);
+  f.pagado = _r._fPagado;
+  f.estado = _r._fEstado;
   const cli = DB.clientes.find(c => c.id === f.clienteId);
   if (cli) {
     _clienteProxySkipSync = true;
@@ -702,11 +762,11 @@ const pendiente = fiadoMontoPendiente(f);
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
   DB.caja.ingresos += monto;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
-  
+
   if (!DB.historialVentas) DB.historialVentas = [];
-  DB.historialVentas.push(_pagoFiado);
+  DB.historialVentas.push(_r._pagoFiado);
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movData);
+  DB.movimientos.push(_r._movData);
   fbGuardar();
   cerrarModal('modal-pago-fiado');
   renderFiados();
