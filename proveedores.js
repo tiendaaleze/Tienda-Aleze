@@ -590,52 +590,68 @@ async function abrirPagoBoleta(provId, idx) {
   const prov = DB.proveedores.find(x => x.id === provId);
   if (!prov || !prov.boletas || !prov.boletas[idx]) return;
   const b = prov.boletas[idx];
-  const pendiente = Math.round(((b.monto||0) - (b.pagado||0)) * 100) / 100;
-  if (pendiente <= 0) { alert('Esta boleta ya está pagada.'); return; }
-  const monto = parseFloat(prompt(`Boleta N° ${b.num} — ${getProveedorNombre(provId)}\nPendiente: ${sol(pendiente)}\n\n¿Cuánto vas a pagar?`));
+  const pendienteLocal = Math.round(((b.monto||0) - (b.pagado||0)) * 100) / 100;
+  if (pendienteLocal <= 0) { alert('Esta boleta ya está pagada.'); return; }
+  const monto = parseFloat(prompt(`Boleta N° ${b.num} — ${getProveedorNombre(provId)}\nPendiente: ${sol(pendienteLocal)}\n\n¿Cuánto vas a pagar?`));
   if (!monto || isNaN(monto) || monto <= 0) return;
-  if (monto > pendiente) { alert('El monto supera lo pendiente: ' + sol(pendiente)); return; }
+  if (monto > pendienteLocal) { alert('El monto supera lo pendiente: ' + sol(pendienteLocal)); return; }
   const _metodosPago = ['Efectivo','Yape','Plin','QR','Link de pago','Tarjeta POS','Tarjeta POS Móvil','Transferencia'];
   const idxM = parseInt(prompt('Método de pago:\n' + _metodosPago.map((m,i)=>`${i+1}. ${m}`).join('\n'), '1'));
   const metodo = (idxM >= 1 && idxM <= _metodosPago.length) ? _metodosPago[idxM-1] : 'Efectivo';
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
-  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
+  await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
 
-  // Paquete atomico: boleta actualizada, caja y movimiento viajan juntos.
+  // CRITICO: runTransaction en vez de writeBatch — mismo motivo que confirmarPagoFiado()
+  // (ver clientes.js): un lote es atomico DENTRO de una sola llamada, pero no protege contra
+  // 2 pagos casi simultaneos a la MISMA boleta leyendo el mismo estado viejo y pisandose
+  // entre si. La transaccion lee la boleta real del servidor en el momento exacto de
+  // escribir — si el saldo real ya no alcanza, se rechaza con un aviso claro en vez de
+  // perder el pago anterior en silencio.
+  const boletaRef = docM(dbModular, 'boletas', String(b.id));
   const sede = sedeAdminEfectiva();
-  const batch = writeBatchM(dbModular);
-  const _pagosNuevo = [...(b.pagos||[]), { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo }];
-  const _pagadoNuevo = Math.round(((b.pagado||0) + monto) * 100) / 100;
-  batch.set(docM(dbModular, 'boletas', String(b.id)), { ...b, pagado: _pagadoNuevo, pagos: _pagosNuevo, proveedorId: provId });
-
-  const _cajaUpdate = { egresos: incrementM(monto) };
-  if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(monto);
-  batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
-
-  const _movId = getId();
-  const _movData = { id:_movId, tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${b.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
-  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
-  _sincIniciar('pago_boleta_lote', b.id);
+  let _r;
   try {
-    await batch.commit();
-    _sincTerminar('pago_boleta_lote', b.id);
+    _r = await runTransactionM(dbModular, async (tx) => {
+      const snap = await tx.get(boletaRef); // lectura garantizada real del servidor
+      if (!snap.exists()) throw new Error('Esta boleta ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+      const bServidor = snap.data();
+      const pendienteReal = Math.max(0, Math.round(((bServidor.monto||0) - (bServidor.pagado||0)) * 100) / 100);
+      if (monto > pendienteReal) {
+        throw new Error('El monto (' + sol(monto) + ') supera el saldo real pendiente (' + sol(pendienteReal) + '). Alguien más pudo haber registrado un pago recién — revisa la boleta actualizada.');
+      }
+      const _pagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo };
+      const _pagadoNuevo = Math.round(((bServidor.pagado||0) + monto) * 100) / 100;
+
+      tx.set(boletaRef, { ...bServidor, pagado: _pagadoNuevo, pagos: [...(bServidor.pagos||[]), _pagoEntry], proveedorId: provId });
+
+      const _cajaUpdate = { egresos: incrementM(monto) };
+      if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(monto);
+      tx.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
+
+      const _movId = getId();
+      const _movData = { id:_movId, tipo:'egreso', desc:`Pago a proveedor (${metodo}): ${getProveedorNombre(provId)} — boleta ${bServidor.num}`, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+      tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+      return { _pagoEntry, _pagadoNuevo, _movData, pendienteReal };
+    });
   } catch (e) {
-    _sincError('pago_boleta_lote', b.id, e, 'el pago a proveedor — no se aplicó nada');
+    alert('⚠️ No se pudo registrar el pago: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
 
-  b.pagos = _pagosNuevo;
-  b.pagado = _pagadoNuevo;
+  // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
+  if (!b.pagos) b.pagos = [];
+  b.pagos.push(_r._pagoEntry);
+  b.pagado = _r._pagadoNuevo;
   if (!DB.movimientos) DB.movimientos = [];
-  DB.movimientos.push(_movData);
+  DB.movimientos.push(_r._movData);
   DB.caja.egresos = (DB.caja.egresos||0) + monto;
   if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
-  
+
   fbGuardar();
   filtrarBoletas();
   renderProveedores();
   try { renderCaja(); } catch(e){}
-  alert(`✅ Pago registrado: ${sol(monto)}. Pendiente restante: ${sol(Math.max(0,pendiente-monto))}`);
+  alert(`✅ Pago registrado: ${sol(monto)}. Pendiente restante: ${sol(Math.max(0,_r.pendienteReal-monto))}`);
 }
 
