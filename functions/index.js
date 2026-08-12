@@ -335,6 +335,13 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
  * actualizada, cliente registrado), solo queda comprobante.estado = 'error' para revisar o
  * reintentar más adelante. Mismo principio ya aplicado en notificarPedidoNuevo de arriba.
  *
+ * SI ALGO FALLA (comprobante.estado = 'error'): no hay reintento automático — el proveedor
+ * caído por unos minutos, un dato mal configurado, etc. quedan visibles en Configuración →
+ * Comprobante electrónico ("Comprobantes pendientes de revisar"), con el motivo del error y
+ * un botón "Reintentar" por cada uno (ver reintentarComprobante() más abajo, y
+ * _cargarComprobantesConError()/reintentarComprobante() en configuracion.js). El admin decide
+ * cuándo reintentar, en vez de que el sistema lo haga solo sin que nadie se entere.
+ *
  * ANTES DE DESPLEGAR ESTO EN SERIO, HACE FALTA:
  * 1. Confirmar con el proveedor elegido (ej. Nubefact) la URL exacta de su endpoint y los
  *    nombres de campo — esto sigue el formato públicamente documentado por Nubefact, pero
@@ -349,7 +356,12 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
  */
 async function _procesarComprobante(snap) {
   const venta = snap.data();
-  if (!venta.comprobante || venta.comprobante.estado !== "pendiente") return; // nada que hacer
+  // Acepta 'pendiente' (primera vez, disparado por los triggers automaticos de abajo) o
+  // 'error' (reintento explicito via reintentarComprobante) — nunca se reprocesa un
+  // comprobante ya 'emitido'. El trigger automatico onDocumentCreated solo reacciona a la
+  // CREACION del documento, nunca a una actualizacion posterior, asi que permitir 'error'
+  // aca es seguro: la unica forma de que esto se ejecute de nuevo es un reintento explicito.
+  if (!venta.comprobante || (venta.comprobante.estado !== "pendiente" && venta.comprobante.estado !== "error")) return;
 
   const ventaRef = snap.ref;
   const cfgSnap = await db.collection("aleze").doc("config").get();
@@ -451,4 +463,30 @@ exports.emitirComprobanteVenta = onDocumentCreated(
 exports.emitirComprobanteFiado = onDocumentCreated(
   { document: "fiados/{fiadoId}", region: "southamerica-east1", secrets: [NUBEFACT_TOKEN] },
   async (event) => { await _procesarComprobante(event.data); }
+);
+
+/**
+ * ── reintentarComprobante ────────────────────────────────────────────────
+ * Llamada explícita desde Configuración → Comprobante electrónico, cuando el admin ve un
+ * comprobante en estado 'error' y toca "Reintentar". Solo staff autenticado (no anónimo,
+ * mismo criterio que isAdmin() en las reglas de Firestore) — nunca callable por un cliente
+ * de tienda pública. Reutiliza _procesarComprobante tal cual, sin duplicar ninguna lógica:
+ * misma función que corre automáticamente al crear la venta, ahora disparada a demanda.
+ */
+exports.reintentarComprobante = onCall(
+  { secrets: [NUBEFACT_TOKEN], region: "southamerica-east1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.firebase.sign_in_provider === "anonymous") {
+      throw new Error("No autorizado.");
+    }
+    const { coleccion, id } = request.data || {};
+    if (!coleccion || !["ventas", "fiados"].includes(coleccion) || !id) {
+      throw new Error("Datos inválidos — falta indicar la colección o el ID.");
+    }
+    const ref = db.collection(coleccion).doc(String(id));
+    const snap = await ref.get();
+    if (!snap.exists) throw new Error("La venta/fiado indicado no existe.");
+    await _procesarComprobante(snap);
+    return { ok: true };
+  }
 );
