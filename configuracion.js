@@ -192,6 +192,12 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
   document.getElementById('cfg-pasarela-activa').checked = !!_pp.activa;
   document.getElementById('cfg-pasarela-llave').value = _pp.llavePublica || '';
   document.getElementById('cfg-pasarela-detalle').style.display = _pp.activa ? 'block' : 'none';
+  document.getElementById('cfg-regimen-tributario').value = DB.config.regimenTributario || '';
+  const _ce = DB.config.comprobanteElectronico || { activa: false, serieBoleta: '', serieFactura: '' };
+  document.getElementById('cfg-comprobante-activa').checked = !!_ce.activa;
+  document.getElementById('cfg-serie-boleta').value = _ce.serieBoleta || '';
+  document.getElementById('cfg-serie-factura').value = _ce.serieFactura || '';
+  document.getElementById('cfg-comprobante-detalle').style.display = _ce.activa ? 'block' : 'none';
   renderConfigTienda();
   renderUsuariosStaff();
   renderCfgUserSelect();
@@ -205,6 +211,21 @@ function guardarConfigPasarela() {
   };
   fbGuardarProductos();
   alert('✅ Configuración guardada.' + (DB.config.pasarelaPago.activa ? '\n\nRecuerda: esto solo funciona si ya desplegaste las Cloud Functions del repositorio — activar el interruptor no las despliega solas.' : ''));
+}
+
+// Regimen tributario y comprobante electronico solo los necesita el staff (POS, confirmar
+// entrega de pedido online) — a diferencia de pasarelaPago, aca no hay ningun boton visible
+// para el cliente final en tienda publica que dependa de esto, asi que basta con fbGuardar()
+// (documento privado), no hace falta duplicarlo en el documento publico via fbGuardarProductos().
+function guardarConfigComprobante() {
+  DB.config.regimenTributario = document.getElementById('cfg-regimen-tributario').value || null;
+  DB.config.comprobanteElectronico = {
+    activa: document.getElementById('cfg-comprobante-activa').checked,
+    serieBoleta: document.getElementById('cfg-serie-boleta').value.trim().toUpperCase() || null,
+    serieFactura: document.getElementById('cfg-serie-factura').value.trim().toUpperCase() || null
+  };
+  fbGuardar();
+  alert('✅ Configuración guardada.' + (DB.config.comprobanteElectronico.activa ? '\n\nRecuerda: esto solo funciona si ya desplegaste las Cloud Functions del repositorio y configuraste el Token del proveedor como Secret — activar el interruptor no hace eso solo.' : ''));
 }
 
 function guardarConfig() {
