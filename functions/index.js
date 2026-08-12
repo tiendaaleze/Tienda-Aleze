@@ -69,6 +69,18 @@ const IZIPAY_API_URL = "https://api.micuentaweb.pe/api-payment/V4/Charge/CreateP
 exports.crearSesionPago = onCall(
   { secrets: [IZIPAY_LLAVE_PRIVADA], region: "us-central1" },
   async (request) => {
+    // Verificación server-side del interruptor — no confiar solo en que la UI oculte el
+    // botón. Mismo patrón ya probado en _procesarComprobante() (comprobante electrónico, más
+    // abajo): sin esto, alguien que conozca el nombre de esta función (el repositorio es
+    // público) podría llamarla directo, sin pasar por la UI, sin importar si el admin activó
+    // o no la pasarela desde Configuración. Se verifica ANTES que cualquier otra cosa, para
+    // rechazar de inmediato sin necesitar leer nada más de Firestore si está apagado.
+    const cfgSnap = await db.collection("aleze").doc("config").get();
+    const cfg = cfgSnap.exists ? cfgSnap.data() : {};
+    if (!cfg.pasarelaPago || !cfg.pasarelaPago.activa) {
+      throw new Error("El pago en línea no está activo en este momento.");
+    }
+
     const { pedidoId, monto, moneda } = request.data || {};
 
     if (!pedidoId || !monto || monto <= 0) {
