@@ -47,6 +47,11 @@ const db = admin.firestore();
 const IZIPAY_LLAVE_PRIVADA = defineSecret("IZIPAY_LLAVE_PRIVADA");
 const IZIPAY_LLAVE_HMAC = defineSecret("IZIPAY_LLAVE_HMAC");
 
+// ── Secret del proveedor de facturación electrónica (ej. Nubefact) — mismo criterio que
+// Izipay arriba: se carga con `firebase functions:secrets:set NUBEFACT_TOKEN`, nunca en
+// código ni en Firestore.
+const NUBEFACT_TOKEN = defineSecret("NUBEFACT_TOKEN");
+
 // TODO: confirmar con Izipay la URL exacta de su API de creación de sesión
 // (formToken). Este valor es un placeholder siguiendo el patrón Lyra estándar.
 const IZIPAY_API_URL = "https://api.micuentaweb.pe/api-payment/V4/Charge/CreatePayment";
@@ -314,3 +319,136 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
     logger.error("Error enviando notificación push de pedido nuevo:", err);
   }
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ * Emisión de comprobante electrónico (SUNAT) — dormido hasta activarse
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Se dispara sola, automáticamente, cada vez que se crea una venta o un fiado con
+ * comprobante.estado === 'pendiente' (ver _asignarComprobante() en core.js, que arma ese
+ * bloque). No hace falta llamarla desde ningún lado del frontend.
+ *
+ * CRÍTICO — la venta/fiado YA está guardada en Firestore, completa, ANTES de que esto se
+ * ejecute. La emisión del comprobante nunca es condición para que la venta se guarde — si
+ * esto falla por cualquier motivo, la venta sigue intacta (stock descontado, caja
+ * actualizada, cliente registrado), solo queda comprobante.estado = 'error' para revisar o
+ * reintentar más adelante. Mismo principio ya aplicado en notificarPedidoNuevo de arriba.
+ *
+ * ANTES DE DESPLEGAR ESTO EN SERIO, HACE FALTA:
+ * 1. Confirmar con el proveedor elegido (ej. Nubefact) la URL exacta de su endpoint y los
+ *    nombres de campo — esto sigue el formato públicamente documentado por Nubefact, pero
+ *    no fue probado contra un Token de prueba real todavía (mismo caso que Izipay arriba).
+ * 2. IGV: el negocio opera bajo el Nuevo RUS actualmente, que NO discrimina IGV en sus
+ *    comprobantes (regimen de cuota fija, no regimen general) — el código de abajo ya
+ *    distingue este caso (envía el total como no gravado bajo RUS, solo desglosa 18% de IGV
+ *    para otros regímenes), pero esto tiene peso tributario real: confirmar con un contador
+ *    o directo con el proveedor antes de emitir cualquier comprobante real.
+ * 3. Cargar el Token como Secret de Firebase (ver arriba) y activar el interruptor en
+ *    Configuración → Comprobante electrónico.
+ */
+async function _procesarComprobante(snap) {
+  const venta = snap.data();
+  if (!venta.comprobante || venta.comprobante.estado !== "pendiente") return; // nada que hacer
+
+  const ventaRef = snap.ref;
+  const cfgSnap = await db.collection("aleze").doc("config").get();
+  const cfg = cfgSnap.exists ? cfgSnap.data() : {};
+  const ce = cfg.comprobanteElectronico || {};
+
+  if (!ce.activa) {
+    // El sistema se desactivó entre que esta venta pidió número y que esta función corrió —
+    // no intentar nada, dejar marcado para que el admin decida qué hacer.
+    await ventaRef.update({ "comprobante.estado": "no_emitido_inactivo" }).catch(() => {});
+    return;
+  }
+
+  try {
+    const _esRus = cfg.regimenTributario === "RUS";
+    const _total = venta.total || 0;
+    // TODO: confirmar el codigo SUNAT exacto de tipo_de_igv para operaciones no gravadas
+    // (RUS) contra la documentacion del proveedor — este es un valor razonable segun el
+    // catalogo estandar SUNAT (17 = Operacion inafecta), no verificado contra Token real.
+    const _totalGravada = _esRus ? 0 : Math.round((_total / 1.18) * 100) / 100;
+    const _totalIgv = _esRus ? 0 : Math.round((_total - _total / 1.18) * 100) / 100;
+
+    const trama = {
+      operacion: "generar_comprobante",
+      tipo_de_comprobante: venta.comprobante.tipo === "factura" ? 1 : 2,
+      serie: venta.comprobante.serie,
+      numero: venta.comprobante.numero,
+      sunat_transaction: 1,
+      cliente_tipo_de_documento: venta.comprobante.tipo === "factura" ? "6" : "1",
+      cliente_numero_de_documento: venta.clienteRuc || "00000000",
+      cliente_denominacion: venta.clienteNombre || "Cliente",
+      cliente_direccion: venta.clienteDireccion || "",
+      fecha_de_emision: (venta.fecha || "").split("-").reverse().join("-"), // YYYY-MM-DD → DD-MM-YYYY
+      moneda: 1,
+      total_gravada: _totalGravada,
+      total_igv: _totalIgv,
+      total: _total,
+      items: (venta.items || []).map((i) => {
+        const _precioItem = i.precio || 0;
+        const _cantItem = i.cant || 1;
+        const _valorUnit = _esRus ? _precioItem : Math.round((_precioItem / 1.18) * 100) / 100;
+        const _igvItem = _esRus ? 0 : Math.round((_precioItem - _precioItem / 1.18) * _cantItem * 100) / 100;
+        return {
+          unidad_de_medida: "NIU",
+          codigo: String(i.prodId || ""),
+          descripcion: i.nombre || "",
+          cantidad: _cantItem,
+          valor_unitario: _valorUnit,
+          precio_unitario: _precioItem,
+          tipo_de_igv: _esRus ? 17 : 1,
+          igv: _igvItem,
+          total: Math.round(_precioItem * _cantItem * 100) / 100,
+        };
+      }),
+    };
+
+    // TODO: confirmar URL exacta del endpoint contra el panel/documentacion del proveedor —
+    // este valor sigue el patron publico documentado, no verificado contra Token real.
+    const resp = await fetch("https://api.nubefact.com/api/v1/" + (ce.rucONumero || ""), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Token token=" + NUBEFACT_TOKEN.value(),
+      },
+      body: JSON.stringify(trama),
+    });
+    const data = await resp.json().catch(() => null);
+
+    if (resp.ok && data && !data.errors) {
+      await ventaRef.update({
+        "comprobante.estado": "emitido",
+        "comprobante.enlacePdf": data.enlace_del_pdf || null,
+        "comprobante.emitidoTs": admin.firestore.FieldValue.serverTimestamp(),
+      });
+      logger.info(`Comprobante emitido para venta ${ventaRef.id}: ${trama.serie}-${trama.numero}`);
+    } else {
+      await ventaRef.update({
+        "comprobante.estado": "error",
+        "comprobante.errorMsg": (data && (data.errors || data.mensaje)) || "Respuesta no exitosa del proveedor",
+      });
+      logger.warn(`Comprobante no emitido para venta ${ventaRef.id}:`, data);
+    }
+  } catch (err) {
+    logger.error("Error emitiendo comprobante:", err);
+    // La venta ya esta guardada de antes — esto solo marca el comprobante como pendiente de
+    // revisar, nunca revierte ni afecta stock, caja, ni el resto de la venta.
+    await ventaRef.update({
+      "comprobante.estado": "error",
+      "comprobante.errorMsg": err.message || "Error de red al conectar con el proveedor",
+    }).catch(() => {});
+  }
+}
+
+exports.emitirComprobanteVenta = onDocumentCreated(
+  { document: "ventas/{ventaId}", region: "southamerica-east1", secrets: [NUBEFACT_TOKEN] },
+  async (event) => { await _procesarComprobante(event.data); }
+);
+
+exports.emitirComprobanteFiado = onDocumentCreated(
+  { document: "fiados/{fiadoId}", region: "southamerica-east1", secrets: [NUBEFACT_TOKEN] },
+  async (event) => { await _procesarComprobante(event.data); }
+);
