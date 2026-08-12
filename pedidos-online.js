@@ -553,6 +553,12 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         _deltasStock.push({ prod, delta });
       });
 
+      // Comprobante electronico (SUNAT) — dormido hasta activarse, ver _asignarComprobante()
+      // en core.js. Se pide UNA sola vez aca, antes de las 2 ramas de abajo (pagado/fiado) —
+      // un pedido online necesita comprobante independientemente de si se cobro al contado o
+      // quedo fiado, SUNAT lo exige igual en ambos casos, asi que ambas ramas reutilizan este
+      // mismo resultado en vez de pedir cada una el suyo por separado.
+      const _comprobante = await _asignarComprobante('boleta');
       let _ventaOnline = null, _fiadoOnline = null, _puntosGanadosPedido = 0;
       if (_esPagado) {
         const _itemsConCosto = itemsFinales.map(i => {
@@ -567,7 +573,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'completado',
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
-          sedeId: _sedeDespacho
+          sedeId: _sedeDespacho,
+          comprobante: _comprobante
         };
         batch.set(docM(dbModular, 'ventas', String(_ventaOnline.id)), _ventaOnline);
         if (cli) {
@@ -611,7 +618,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           descuento: p.descuento || 0, total: p.total, metodo: p.metodo,
           origen: 'online', estado: 'fiado',
           estadoStock: 'descontado', notaAdmin: p.notaAdmin || '',
-          sedeId: _sedeDespacho
+          sedeId: _sedeDespacho,
+          comprobante: _comprobante
         };
         batch.set(docM(dbModular, 'ventas', String(_ventaOnlineFiado.id)), _ventaOnlineFiado);
         _ventaOnline = _ventaOnlineFiado; // usado abajo para empujar a historialVentas
