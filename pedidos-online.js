@@ -593,7 +593,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
               return { ...i, costoUnitario: pd ? pd.data.costo : 0 };
             });
             _ventaOnline = {
-              id: pServidor === p ? p.id : p.id, fecha: pServidor.fecha, hora: pServidor.hora,
+              id: pServidor.id, fecha: pServidor.fecha, hora: pServidor.hora,
               cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
               clienteNombre: pServidor.clienteNombre, items: _itemsConCosto,
               subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
@@ -615,7 +615,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           } else {
             if (cli) {
               _fiadoOnline = {
-                id: p.id, clienteId: cli.id,
+                id: pServidor.id, clienteId: cli.id,
                 items: itemsFinales.map(i => {
                   const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
                   return { ...i, costoUnitario: pd ? pd.data.costo : 0 };
@@ -633,7 +633,7 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
                 { merge: true });
             }
             const _ventaOnlineFiado = {
-              id: p.id, fecha: pServidor.fecha, hora: pServidor.hora,
+              id: pServidor.id, fecha: pServidor.fecha, hora: pServidor.hora,
               cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
               clienteNombre: pServidor.clienteNombre, items: itemsFinales,
               subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
