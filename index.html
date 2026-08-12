@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.12-2130</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.13-1000</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.12-2130</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.13-1000</div>
   </div>
 
 </div>
@@ -837,6 +837,33 @@ window.addEventListener('error', function(e) {
             <div style="font-size:.75rem;color:var(--warning);background:#FFFBEB;border-radius:6px;padding:.5rem .6rem">⚠️ La llave privada y la de verificación de firma NUNCA van acá — esas se cargan directo en Firebase como Secrets, nunca en el sistema ni en Firestore.</div>
           </div>
           <button type="button" class="btn btn-primary btn-sm" style="margin-top:.75rem" onclick="guardarConfigPasarela()">Guardar configuración</button>
+        </div>
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-title">🧾 Comprobante electrónico (SUNAT)</div>
+          <div style="font-size:.82rem;color:var(--gray-500);margin-bottom:.75rem">
+            Construido y listo, pero <strong>apagado a propósito</strong> — igual que la pasarela de pago. Activarlo de verdad requiere desplegar las Cloud Functions y tener un Token real de un proveedor de facturación electrónica autorizado por SUNAT (ej. Nubefact). Mientras esté apagado, las ventas se registran exactamente igual que hoy, sin ningún cambio.
+          </div>
+          <div class="form-group">
+            <label>Régimen tributario</label>
+            <select class="form-control" id="cfg-regimen-tributario">
+              <option value="">Sin configurar</option>
+              <option value="RUS">Nuevo RUS</option>
+              <option value="RER">Régimen Especial (RER)</option>
+              <option value="MYPE">Régimen MYPE Tributario</option>
+              <option value="RG">Régimen General</option>
+            </select>
+            <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem">Bajo RUS solo se puede emitir boleta — factura queda bloqueada automáticamente hasta cambiar de régimen.</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;margin-bottom:.75rem">
+            <input type="checkbox" id="cfg-comprobante-activa" onchange="document.getElementById('cfg-comprobante-detalle').style.display=this.checked?'block':'none'" />
+            <span>Activar emisión de comprobante electrónico</span>
+          </label>
+          <div id="cfg-comprobante-detalle" style="display:none">
+            <div class="form-group"><label>Serie de boleta</label><input type="text" class="form-control" id="cfg-serie-boleta" placeholder="Ej: B001" /></div>
+            <div class="form-group"><label>Serie de factura</label><input type="text" class="form-control" id="cfg-serie-factura" placeholder="Ej: F001" /></div>
+            <div style="font-size:.75rem;color:var(--warning);background:#FFFBEB;border-radius:6px;padding:.5rem .6rem">⚠️ El Token del proveedor de facturación NUNCA va acá — se carga directo en Firebase como Secret, nunca en el sistema ni en Firestore.</div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" style="margin-top:.75rem" onclick="guardarConfigComprobante()">Guardar configuración</button>
         </div>
         <div class="grid-2">
           <div class="card">
