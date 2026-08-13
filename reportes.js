@@ -518,7 +518,7 @@ async function renderHistorialVentas() {
 
   const tbody = document.getElementById('hv-tbody');
   const controles = [inDesde, inHasta, inEstado, inOrigen, inSede, inBuscar];
-  if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--gray-400)">⏳ Cargando...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--gray-400)">⏳ Cargando...</td></tr>';
   controles.forEach(el => { if (el) el.disabled = true; });
 
   let lista;
@@ -527,7 +527,7 @@ async function renderHistorialVentas() {
   } catch (e) {
     console.warn('renderHistorialVentas: error consultando ventas/{id}', e);
     controles.forEach(el => { if (el) el.disabled = false; });
-    if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--danger)">⚠️ Error cargando historial. Intenta de nuevo.</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--danger)">⚠️ Error cargando historial. Intenta de nuevo.</td></tr>';
     return;
   }
   controles.forEach(el => { if (el) el.disabled = false; });
@@ -570,7 +570,7 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
 
   if (!tbody) return;
   if (lista.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--gray-400)">Sin ventas en el período seleccionado</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--gray-400)">Sin ventas en el período seleccionado</td></tr>';
     return;
   }
   tbody.innerHTML = lista.map(v => {
@@ -584,7 +584,6 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
       <td>${formatDate(v.fecha)}</td>
       <td>${v.hora||'-'}</td>
       <td>${origenIcon[v.origen]||'🏪'} ${v.origen==='online'?'Online':'POS'}</td>
-      <td><span class="badge badge-gray">${v.sedeId||'principal'}</span></td>
       <td>${nombre||'-'}</td>
       <td style="font-size:.78rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${prods}">${prods}</td>
       <td style="font-weight:700">
