@@ -439,8 +439,8 @@ function _renderTienda() {
    con algo mas de presencia. Mismo breakpoint de 900px ya usado en todo el sistema para
    distinguir desktop de mobile. */
 @media (min-width:900px) {
-  .tnd-cat-bubble { width:90px; }
-  .tnd-cat-circle { width:76px; height:76px; }
+  .tnd-cat-bubble { width:113px; }
+  .tnd-cat-circle { width:99px; height:99px; }
 }
 .tnd-cat-circle img { width:100%;height:100%;object-fit:cover; }
 .tnd-cat-bubble .tnd-cat-label { font-size:.7rem;font-weight:700;color:#374151;line-height:1.2; }
