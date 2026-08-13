@@ -132,7 +132,7 @@ function renderPedidosOnline() {
           <strong style="color:var(--primary)">${sol(p.total)}</strong>
         </div>
         <div style="font-size:.8rem;color:var(--gray-700);margin-bottom:.4rem;line-height:1.5">
-          ${(p.items||[]).filter(i=>i.cant>0&&!i.eliminado).map(i=>`${i.nombre} x${i.cant} — ${sol(subtotalItemCarrito(i))}`).join(' &nbsp;·&nbsp; ')}
+          ${(p.items||[]).filter(i=>i.cant>0&&!i.eliminado).map(i=>`${escapeHtml(i.nombre)} x${i.cant} — ${sol(subtotalItemCarrito(i))}`).join(' &nbsp;·&nbsp; ')}
         </div>
         <div class="flex-between" style="flex-wrap:wrap;gap:.4rem">
           <span style="font-size:.78rem;color:var(--gray-500)">
@@ -159,8 +159,8 @@ function renderPedidosOnline() {
     <div class="card" style="margin-bottom:.75rem;border-left:4px solid var(--${pendGrupo>0?'warning':'gray-300'})">
       <div class="flex-between" style="margin-bottom:.6rem;flex-wrap:wrap;gap:.4rem">
         <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
-          <strong style="font-size:.95rem">👤 ${g.nombre}</strong>
-          ${g.tel ? `<span style="font-size:.75rem;color:var(--gray-500)">📱 ${g.tel}</span>` : ''}
+          <strong style="font-size:.95rem">👤 ${escapeHtml(g.nombre)}</strong>
+          ${g.tel ? `<span style="font-size:.75rem;color:var(--gray-500)">📱 ${escapeHtml(g.tel)}</span>` : ''}
           ${pendGrupo>0 ? `<span class="badge badge-orange">${pendGrupo} pendiente${pendGrupo>1?'s':''}</span>` : ''}
         </div>
         <div style="text-align:right">
@@ -217,7 +217,7 @@ function _renderItemsEditorPedido(items) {
   if (!tbody) return;
   tbody.innerHTML = items.map((item, i) => `
     <tr id="po-row-${i}" style="${item.cant <= 0 || item.eliminado ? 'opacity:.45;text-decoration:line-through' : ''}">
-      <td style="font-size:.83rem;font-weight:600">${item.nombre}</td>
+      <td style="font-size:.83rem;font-weight:600">${escapeHtml(item.nombre)}</td>
       <td>
         <div style="display:flex;align-items:center;gap:.3rem">
           <button class="qty-btn" onclick="poItemCant(${i},-1)" title="Reducir">−</button>
@@ -602,7 +602,11 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           if (_esPagado) {
             const _itemsConCosto = itemsFinales.map(i => {
               const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
-              return { ...i, costoUnitario: pd ? pd.data.costo : 0 };
+              // CRITICO: nombre reemplazado por el real del catalogo, nunca el que el cliente
+              // envio — la regla de Firestore no valida items[].nombre por contenido, asi que
+              // sin esto cualquiera hablando directo con Firestore podria inyectar HTML/JS que
+              // se ejecutaria en el navegador del staff al ver esta venta despues.
+              return { ...i, nombre: pd ? pd.data.nombre : i.nombre, costoUnitario: pd ? pd.data.costo : 0 };
             });
             _ventaOnline = {
               id: pServidor.id, fecha: pServidor.fecha, hora: pServidor.hora,
@@ -630,7 +634,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
                 id: pServidor.id, clienteId: cli.id,
                 items: itemsFinales.map(i => {
                   const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
-                  return { ...i, costoUnitario: pd ? pd.data.costo : 0 };
+                  // Mismo motivo que _itemsConCosto arriba — nombre real del catalogo, nunca lo que envio el cliente.
+                  return { ...i, nombre: pd ? pd.data.nombre : i.nombre, costoUnitario: pd ? pd.data.costo : 0 };
                 }),
                 total: pServidor.total, pagado: 0, fecha: pServidor.fecha,
                 descuentoCombo: pServidor.descuento || 0, descuentoManual: 0,
@@ -644,10 +649,14 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
                   : { compras: incrementM(1), total: incrementM(pServidor.total), deuda: incrementM(pServidor.total), puntos: incrementM(_puntosGanadosPedido) },
                 { merge: true });
             }
+            const _itemsFiadoConNombreReal = itemsFinales.map(i => {
+              const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
+              return { ...i, nombre: pd ? pd.data.nombre : i.nombre };
+            });
             const _ventaOnlineFiado = {
               id: pServidor.id, fecha: pServidor.fecha, hora: pServidor.hora,
               cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
-              clienteNombre: pServidor.clienteNombre, items: itemsFinales,
+              clienteNombre: pServidor.clienteNombre, items: _itemsFiadoConNombreReal,
               subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
               descuento: pServidor.descuento || 0, total: pServidor.total, metodo: pServidor.metodo,
               origen: 'online', estado: 'fiado',
