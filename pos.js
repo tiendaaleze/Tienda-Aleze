@@ -497,8 +497,11 @@ function calcTotal() {
 function updatePosClientes() {
   const sel = document.getElementById('pos-cliente');
   const valorActual = sel.value;
-  sel.innerHTML = '<option value="">Cliente anónimo</option>';
-  DB.clientes.forEach(c => sel.innerHTML += `<option value="${c.id}">${c.nombre || 'Cliente sin nombre'}</option>`);
+  // Construir el HTML completo antes de asignarlo una sola vez — con += en el bucle, cada
+  // asignacion reconstruye y re-parsea todo el HTML acumulado hasta ese punto (O(n²) en vez
+  // de O(n)). Se nota con la cantidad de clientes reales del negocio.
+  sel.innerHTML = '<option value="">Cliente anónimo</option>' +
+    DB.clientes.map(c => `<option value="${c.id}">${c.nombre || 'Cliente sin nombre'}</option>`).join('');
   if (valorActual) sel.value = valorActual;
 }
 
