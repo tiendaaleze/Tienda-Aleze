@@ -713,7 +713,13 @@ function onCatImgSelect(e) {
   reader.onload = function(ev) {
     const img = new Image();
     img.onload = function() {
-      const MAX_W = 600, MAX_H = 400;
+      // Limite de resolucion para la foto de categoria. El circulo pequeño donde se ve
+      // primero (64px en tienda publica) ya tenia sobra de resolucion con 600x400 — la causa
+      // real de falta de detalle era otro uso: esta misma imagen sirve de respaldo en la
+      // grilla de productos cuando un producto no tiene foto propia, donde una tarjeta puede
+      // llegar a 250-300px CSS en pantallas anchas de escritorio, necesitando hasta 600-900px
+      // reales en pantallas de alta densidad de pixeles para verse totalmente nitida.
+      const MAX_W = 900, MAX_H = 600;
       const ratio = Math.min(MAX_W / img.width, MAX_H / img.height);
       const canvas = document.createElement('canvas');
       canvas.width  = Math.round(img.width  * ratio);
