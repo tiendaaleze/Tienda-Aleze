@@ -415,7 +415,7 @@ function onPromoImgSelect(e) {
         try {
           const fileName = `promociones/${editingPromoId || Date.now()}.webp`;
           const ref = fbStorage.ref(fileName);
-          await ref.put(blob, { contentType: 'image/webp' });
+          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
           const url = await ref.getDownloadURL();
           document.getElementById('promo-img-data').value = url;
           const lbl = document.getElementById('_promo-img-upload-lbl');
