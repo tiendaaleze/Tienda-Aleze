@@ -615,3 +615,36 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
   }
   return { ok: true, resultados };
 });
+
+// CRITICO: App Check (activado en una ronda anterior) protege contra bots puros hablando
+// directo con la API de Firestore, pero no contra un navegador real automatizado (por ejemplo
+// con Puppeteer) que si pasa esa verificacion. Esta funcion es la segunda capa: cuenta cuantos
+// pedidos llegaron del mismo telefono en una ventana de tiempo corta, usando createTime — el
+// metadato real que Firestore asigna en el servidor, inmune a cualquier manipulacion del
+// cliente (a diferencia de fecha/hora, que son strings que el cliente envia). Ningun cliente
+// real genera varios pedidos en minutos - si eso ocurre, se marca para revision, sin bloquear
+// nada (mismo criterio que totalSospechoso: el staff decide con el contexto completo antes de
+// confirmar, no se rechaza el pedido automaticamente).
+exports.detectarPedidosSospechosos = onDocumentCreated("pedidos_online/{pedidoId}", async (event) => {
+  const pedido = event.data?.data();
+  if (!pedido || !pedido.telefono) return;
+
+  try {
+    const VENTANA_MINUTOS = 5;
+    const UMBRAL = 3; // mas de 3 pedidos del mismo telefono en la ventana es sospechoso
+
+    const snap = await db.collection("pedidos_online").where("telefono", "==", pedido.telefono).get();
+    const ahora = Date.now();
+    const recientes = snap.docs.filter(d => (ahora - d.createTime.toMillis()) <= VENTANA_MINUTOS * 60 * 1000);
+
+    if (recientes.length > UMBRAL) {
+      await event.data.ref.set({
+        pedidosRecientesSospechoso: true,
+        pedidosRecientesCantidad: recientes.length
+      }, { merge: true });
+      logger.warn(`Pedido ${event.params.pedidoId}: ${recientes.length} pedidos del mismo telefono (${pedido.telefono}) en los últimos ${VENTANA_MINUTOS} minutos — marcado para revisión`);
+    }
+  } catch (e) {
+    logger.error("detectarPedidosSospechosos: error", e);
+  }
+});
