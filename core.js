@@ -328,6 +328,7 @@ let DB = {
   clientes: [],
   ventas: [],
   fiados: [],
+  recordatorios: [],
   mermas: [],
   promociones: [],
   movimientos: [],
@@ -505,6 +506,7 @@ async function navigate(page) {
   if (page === 'categorias') renderCategorias();
   if (page === 'proveedores') renderProveedores();
   if (page === 'clientes') renderClientes();
+  if (page === 'recordatorios') renderRecordatorios();
   if (page === 'frecuentes') renderFrecuentes();
   if (page === 'fiados') renderFiados();
   if (page === 'caja') renderCaja();
