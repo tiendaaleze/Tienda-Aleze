@@ -19,9 +19,9 @@ _norm(c.alias||'').includes(_norm(buscar)) ||
 _norm(c.tel||'').includes(_norm(buscar))
   ) : DB.clientes;
   document.getElementById('cli-tbody').innerHTML = lista.map(c => { const _deudaSede = clienteDeudaMonto(c); return `<tr>
-    <td><strong>${c.nombre || 'Cliente sin nombre'}</strong></td>
-    <td><span class="badge badge-blue">${c.alias||'-'}</span></td>
-    <td>${c.tel||'-'}</td>
+    <td><strong>${escapeHtml(c.nombre) || 'Cliente sin nombre'}</strong></td>
+    <td><span class="badge badge-blue">${escapeHtml(c.alias)||'-'}</span></td>
+    <td>${escapeHtml(c.tel)||'-'}</td>
     <td>${c.cumple ? formatDate(c.cumple) : '-'}</td>
    <td><span class="badge badge-gold">⭐ ${c.puntos||0} pts</span></td>
     <td><strong>${sol(c.total||0)}</strong></td>
@@ -195,7 +195,7 @@ function renderFiados() {
           </span>
         </div>
         <div style="font-size:.8rem;margin-bottom:.3rem">
-          ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
+          ${f.items.map(i => `${escapeHtml(i.nombre)} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
         </div>
         <div style="font-size:.72rem;color:var(--gray-500)">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
         <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
@@ -207,8 +207,8 @@ function renderFiados() {
     return `<div class="fiado-card" style="margin-bottom:.75rem">
       <div class="flex-between" style="cursor:pointer" onclick="toggleFiadoDetalle('${detalleId}')">
         <div>
-          <strong style="font-size:1rem">${nombre}</strong>
-          ${tel ? `<span style="font-size:.72rem;color:var(--gray-400);margin-left:.5rem">📞 ${tel}</span>` : ''}
+          <strong style="font-size:1rem">${escapeHtml(nombre)}</strong>
+          ${tel ? `<span style="font-size:.72rem;color:var(--gray-400);margin-left:.5rem">📞 ${escapeHtml(tel)}</span>` : ''}
           <span style="font-size:.75rem;color:var(--gray-500);margin-left:.5rem">${fiados.length} venta(s)</span>
         </div>
         <div style="text-align:right;display:flex;align-items:center;gap:.75rem">
@@ -286,7 +286,7 @@ function renderDetalleFiado(cid) {
         </span>
       </div>
       <div style="font-size:.8rem;margin-bottom:.3rem">
-        ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
+        ${f.items.map(i => `${escapeHtml(i.nombre)} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
       </div>
       <div style="font-size:.72rem;color:var(--gray-500)">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
       <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
@@ -661,10 +661,10 @@ function abrirPagoFiado(id) {
   const pendiente = fiadoMontoPendiente(f);
   document.getElementById('fiado-detalle').innerHTML = `
     <div style="background:var(--gray-50);border-radius:8px;padding:0.75rem;margin-bottom:1rem">
-      <strong>${getClienteNombre(f.clienteId)}</strong>
-      ${cli && cli.tel ? `<span style="font-size:.78rem;color:var(--gray-500);margin-left:.5rem">📞 ${cli.tel}</span>` : ''}
+      <strong>${escapeHtml(getClienteNombre(f.clienteId))}</strong>
+      ${cli && cli.tel ? `<span style="font-size:.78rem;color:var(--gray-500);margin-left:.5rem">📞 ${escapeHtml(cli.tel)}</span>` : ''}
       <div style="font-size:0.82rem;margin-top:.4rem">
-        ${f.items.map(i => `${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
+        ${f.items.map(i => `${escapeHtml(i.nombre)} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}
       </div>
       <div style="font-size:0.85rem;margin-top:.3rem">
         Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)} | <strong style="color:var(--danger)">Pendiente: ${sol(pendiente)}</strong>
@@ -868,7 +868,7 @@ function renderHistorialCliente() {
           <div>
             <div style="font-size:.82rem;font-weight:600;color:var(--accent-dark)">💳 Abono registrado</div>
             <div style="font-size:.72rem;color:var(--gray-500)">${p.fecha} ${p.hora} — por <em>${p.cajero}</em></div>
-            <div style="font-size:.72rem;color:var(--gray-500)">${p.items.map(i=>i.nombre).join(', ')}</div>
+            <div style="font-size:.72rem;color:var(--gray-500)">${p.items.map(i=>escapeHtml(i.nombre)).join(', ')}</div>
           </div>
           <strong style="color:var(--accent);font-size:.95rem">+${sol(p.monto)}</strong>
         </div>`).join('');
@@ -889,7 +889,7 @@ function renderHistorialCliente() {
               ${pend > 0 ? sol(pend)+' pendiente' : '✅ Saldado'}
             </span>
           </div>
-          <div style="font-size:.8rem;margin-bottom:.3rem">${f.items.map(i=>`${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}</div>
+          <div style="font-size:.8rem;margin-bottom:.3rem">${f.items.map(i=>`${escapeHtml(i.nombre)} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join(' · ')}</div>
           <div style="font-size:.72rem;color:var(--gray-500);margin-bottom:.3rem">Total: ${sol(f.total)} | Pagado: ${sol(f.pagado)}</div>
           ${pagosF.length > 0 ? `<div style="font-size:.72rem;color:var(--gray-600);border-top:1px dashed var(--gray-200);padding-top:.3rem;margin-top:.3rem">
             ${pagosF.map(p=>`<span style="margin-right:.75rem">💳 ${p.fecha} ${p.hora} <em>${p.cajero}</em>: +${sol(p.monto)}</span>`).join('')}
