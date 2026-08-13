@@ -17,7 +17,7 @@ function abrirModalRecordatorio(id) {
   document.getElementById('rec-fecha-entrega').value = r ? r.fechaEntrega : today();
   document.getElementById('rec-obs').value = r ? (r.obs || '') : '';
   const cli = r ? DB.clientes.find(c => c.id === r.clienteId) : null;
-  document.getElementById('rec-cliente').innerHTML = cli ? `<option value="${cli.id}">${cli.nombre}</option>` : '';
+  document.getElementById('rec-cliente').innerHTML = cli ? `<option value="${cli.id}">${escapeHtml(cli.nombre)}</option>` : '';
   document.getElementById('rec-cliente').value = cli ? cli.id : '';
   document.getElementById('rec-cliente-buscar').value = cli ? (cli.alias || cli.nombre) : '';
   abrirModal('modal-recordatorio');
@@ -34,7 +34,7 @@ function _recClienteBuscar() {
     sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
   } else {
     sug.innerHTML = matches.map(c => `<div onclick="_recClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
-        ${c.alias || c.nombre}
+        ${escapeHtml(c.alias || c.nombre)}
        </div>`).join('');
   }
   sug.style.display = 'block';
@@ -43,7 +43,7 @@ function _recClienteSeleccionar(id) {
   const c = DB.clientes.find(x => x.id === id);
   const sel = document.getElementById('rec-cliente');
   const buscar = document.getElementById('rec-cliente-buscar');
-  sel.innerHTML = c ? `<option value="${c.id}">${c.nombre}</option>` : '';
+  sel.innerHTML = c ? `<option value="${c.id}">${escapeHtml(c.nombre)}</option>` : '';
   if (sel) sel.value = id;
   if (buscar) buscar.value = c ? (c.alias || c.nombre) : '';
   const sug = document.getElementById('rec-cliente-sugerencias'); if (sug) sug.style.display = 'none';
