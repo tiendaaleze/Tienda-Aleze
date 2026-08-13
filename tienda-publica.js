@@ -283,9 +283,48 @@ function initTienda() {
       // completo (pd.productos + una lectura separada de la coleccion stock, que ya no se
       // actualiza desde ningun lado) — sobrescribia el stock ya correcto, cargado bien desde
       // otro lado, con datos vacios/desactualizados de esa coleccion muerta.
-      return getDocsM(collectionM(dbModular, 'productos')).then(prodsSnap => {
-        DB.productos = prodsSnap.docs.map(d => d.data());
-      }).catch(() => {});
+      //
+      // CRITICO: cache del catalogo por version REAL del servidor, no por tiempo fijo — con
+      // catalogos grandes, releer 1000+ productos en cada visita agota la cuota diaria de
+      // lecturas con apenas unas decenas de visitantes reales. El stock debe reflejarse al
+      // instante en cuanto algo cambia (fricción real si un cliente compra algo agotado), asi
+      // que el cache nunca se basa en "cuanto tiempo paso" sino en "¿cambio algo de verdad?" —
+      // marcarCatalogoActualizado_* (Cloud Functions) actualiza aleze/catalogo_meta cada vez
+      // que un producto o categoria cambia, sin importar el origen (venta, merma, edicion).
+      // Durante horas sin ningun cambio, esa marca queda igual y el cache local sirve
+      // indefinidamente: 0 lecturas adicionales para cada visita durante ese tiempo. En el
+      // instante en que algo cambia, la version ya no coincide y se relee todo de inmediato.
+      return getDocM(docM(dbModular, 'aleze', 'catalogo_meta')).then(metaSnap => {
+        const _versionServidor = (metaSnap.exists() && metaSnap.data().ultimaActualizacion)
+          ? metaSnap.data().ultimaActualizacion.toMillis() : null;
+        let _cacheValido = false;
+        if (_versionServidor) {
+          try {
+            const _versionLocal = localStorage.getItem('tnd_catalogo_version');
+            const _catalogoLocal = localStorage.getItem('tnd_catalogo_data');
+            if (_versionLocal && _catalogoLocal && parseInt(_versionLocal) === _versionServidor) {
+              DB.productos = JSON.parse(_catalogoLocal);
+              _cacheValido = true;
+            }
+          } catch(e) { /* localStorage no disponible o dato corrupto — sigue de largo, relee todo */ }
+        }
+        if (_cacheValido) return; // catalogo ya cargado desde cache local, sin releer nada
+        return getDocsM(collectionM(dbModular, 'productos')).then(prodsSnap => {
+          DB.productos = prodsSnap.docs.map(d => d.data());
+          if (_versionServidor) {
+            try {
+              localStorage.setItem('tnd_catalogo_version', String(_versionServidor));
+              localStorage.setItem('tnd_catalogo_data', JSON.stringify(DB.productos));
+            } catch(e) { /* localStorage lleno o no disponible — no rompe nada, solo no cachea esta vez */ }
+          }
+        }).catch(() => {});
+      }).catch(() => {
+        // catalogo_meta aun no existe, o la regla no esta publicada todavia — cae al
+        // comportamiento original: relee todo, sin cache, igual que siempre.
+        return getDocsM(collectionM(dbModular, 'productos')).then(prodsSnap => {
+          DB.productos = prodsSnap.docs.map(d => d.data());
+        }).catch(() => {});
+      });
     }).then(() => {
       _initTiendaConDatos();
     }).catch(() => _initTiendaConDatos());
