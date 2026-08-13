@@ -141,6 +141,7 @@ function renderPedidosOnline() {
           </span>
           <div style="display:flex;gap:.35rem;align-items:center">
             ${!bloqueado ? `<button class="btn btn-outline btn-xs" style="color:var(--primary);border-color:var(--primary)" onclick="editarPedidoOnline('${p.id}')">✏️ Editar</button>` : ''}
+            ${p.estado==='entregado' ? `<button class="btn btn-outline btn-xs" style="color:var(--accent);border-color:var(--accent)" onclick="verTicketPedido('${p.id}')">🎫 Ver ticket</button>` : ''}
             <select class="form-control" style="width:130px;font-size:.78rem" id="po-estado-${p.id}" ${bloqueado?'disabled':''}>
               <option value="pendiente"  ${p.estado==='pendiente' ?'selected':''}>Pendiente</option>
               <option value="procesado"  ${p.estado==='procesado' ?'selected':''}>Procesado</option>
@@ -465,6 +466,16 @@ function _dialogoPagoOnline(nombre, callback) {
 }
 
 // ── Confirmar entrega con validación de stock ─────────────────────────────────
+// Reimprimir/reenviar el ticket de un pedido ya entregado — el cliente puede pedirlo de
+// nuevo dias despues. Busca la venta real ya guardada (confirmarEntregaPedido() la crea con
+// el mismo id que el pedido), reutiliza el mismo mostrarTicket() de siempre.
+function verTicketPedido(id) {
+  const venta = (DB.historialVentas||[]).find(v => String(v.id) === String(id))
+             || (DB.ventas||[]).find(v => String(v.id) === String(id));
+  if (!venta) { alert('No se encontró el comprobante de este pedido — puede que haya salido de la ventana de historial reciente.'); return; }
+  mostrarTicket(venta);
+}
+
 function confirmarEntregaPedido(id) {
   if (!DB.pedidosOnline) return;
   const p = DB.pedidosOnline.find(x => String(x.id) === String(id));
@@ -737,9 +748,13 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
         const _nb = document.getElementById('po-nav-badge');
         if (_nb) { _nb.textContent = _pendAhora || ''; _nb.style.display = _pendAhora > 0 ? 'inline-block' : 'none'; }
       } catch(e){}
-      alert(_esPagado
-        ? '✅ Pedido cobrado. Stock, caja, historial y reportes actualizados.'
-        : '✅ Pedido fiado. Stock descontado, visible en módulo Fiados.');
+      // Mismo ticket ya usado en los 3 flujos de POS (venta normal, venta con fiado, cobro de
+      // fiado existente) — reutiliza _ventaOnline/_ventaOnlineFiado, que ya trae exactamente
+      // los campos que mostrarTicket() necesita. El modal ya incluye imprimir y compartir por
+      // WhatsApp como imagen — para un cliente de pedido online, que normalmente no esta
+      // presente fisicamente, el envio por WhatsApp es la forma real de entregarle su
+      // comprobante.
+      mostrarTicket(_r._ventaOnline);
     });
     return; // Flujo entregado es async — el código siguiente aplica solo a otros estados
   }
