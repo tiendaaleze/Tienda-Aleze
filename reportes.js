@@ -287,7 +287,7 @@ function reporteFiados(sede) {
   document.getElementById('rep-tabla-titulo').textContent = 'Fiados pendientes';
   document.getElementById('rep-tabla-wrap').innerHTML = `
     <table><thead><tr><th>Cliente</th><th>Deuda S/</th></tr></thead>
-    <tbody>${data.map(d=>`<tr><td>${d.nombre}</td><td style="color:var(--danger);font-weight:700">${sol(d.deuda)}</td></tr>`).join('')}</tbody>
+    <tbody>${data.map(d=>`<tr><td>${escapeHtml(d.nombre)}</td><td style="color:var(--danger);font-weight:700">${sol(d.deuda)}</td></tr>`).join('')}</tbody>
     <tfoot><tr style="background:var(--gray-50);font-weight:700"><td>TOTAL</td><td style="color:var(--danger)">${sol(total)}</td></tr></tfoot>
     </table>`;
 }
@@ -584,7 +584,7 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
   }
   tbody.innerHTML = lista.map(v => {
     const nombre = v.clienteNombre || (v.clienteId ? getClienteNombre(v.clienteId) : v.cajero);
-    const prods  = (v.items||[]).map(i=>`${i.nombre} x${i.cantReal??i.cant}`).join(', ');
+    const prods  = (v.items||[]).map(i=>`${escapeHtml(i.nombre)} x${i.cantReal??i.cant}`).join(', ');
     const totalDevuelto = (v.devoluciones||[]).reduce((s,d)=>s+d.monto,0);
     const tieneDevolucion = totalDevuelto > 0;
     const btnLabel = v.estado === 'anulado' ? '👁️ Ver' : '↩️ Devolver';
@@ -593,7 +593,7 @@ _norm(v.clienteNombre||getClienteNombre(v.clienteId)||'').includes(_norm(buscar)
       <td>${formatDate(v.fecha)}</td>
       <td>${v.hora||'-'}</td>
       <td>${origenIcon[v.origen]||'🏪'} ${v.origen==='online'?'Online':'POS'}</td>
-      <td>${nombre||'-'}</td>
+      <td>${escapeHtml(nombre)||'-'}</td>
       <td style="font-size:.78rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${prods}">${prods}</td>
       <td style="font-weight:700">
         ${sol(v.total)}
@@ -753,10 +753,10 @@ function abrirActualizarVenta(id) {
   _huvVenta = JSON.parse(JSON.stringify(v)); // copia de trabajo
 
   // Info resumen
-  const itemsStr = (v.items||[]).map(i=>`${i.nombre} x${i.cantReal??i.cant}`).join(', ');
+  const itemsStr = (v.items||[]).map(i=>`${escapeHtml(i.nombre)} x${i.cantReal??i.cant}`).join(', ');
   document.getElementById('huv-info').innerHTML = `
     <div style="background:var(--gray-50);border-radius:8px;padding:.75rem 1rem;font-size:.82rem;margin-bottom:1rem;border:1px solid var(--gray-200)">
-      <div style="font-weight:700;margin-bottom:.2rem">📋 Venta ${formatDate(v.fecha)} ${v.hora||''} — ${v.cajero||v.clienteNombre||'-'}</div>
+      <div style="font-weight:700;margin-bottom:.2rem">📋 Venta ${formatDate(v.fecha)} ${v.hora||''} — ${escapeHtml(v.cajero||v.clienteNombre||'-')}</div>
       <div style="color:var(--gray-600)">${itemsStr}</div>
       <div style="margin-top:.35rem">
         <strong style="color:var(--primary)">Total original cobrado: ${sol(v.total)}</strong>
