@@ -1665,7 +1665,7 @@ if (_tndStep === 'cart') {
         ? `<div class="tnd-metodo-grid" style="margin-top:.5rem">${metodosOtros.map(m=>`<div class="tnd-metodo-opt ${_tndMetodo===m.v?'selected':''}" onclick="tndSetMetodo('${m.v}')">${m.e}</div>`).join('')}</div>`
         : `<button type="button" onclick="_tndToggleMasMetodos()" style="width:100%;background:none;border:none;color:#7C3AED;font-size:.82rem;font-weight:600;padding:.6rem 0;cursor:pointer">Ver más opciones ▾</button>`}
       <div style="border-top:2px solid #e5e7eb;padding-top:.75rem;margin-top:.5rem">
-        ${_tiendaCart.map(i=>`<div style="display:flex;justify-content:space-between;font-size:.82rem;padding:.25rem 0"><span>${i.nombre} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant}</span><span>S/ ${subtotalItemCarrito(i).toFixed(2)}</span></div>`).join('')}
+        ${_tiendaCart.map(i=>`<div style="display:flex;justify-content:space-between;gap:.5rem;font-size:.82rem;padding:.25rem 0"><span style="flex:1;min-width:0">${i.nombre} x${i.tipo==='granel'?Math.round(i.cant*1000)+'g':i.cant}</span><span style="flex-shrink:0;white-space:nowrap">S/ ${subtotalItemCarrito(i).toFixed(2)}</span></div>`).join('')}
         <div style="display:flex;justify-content:space-between;margin-top:.5rem;font-size:1rem;font-weight:700;color:#7C3AED">
           <span>TOTAL</span><span>S/ ${subtotal.toFixed(2)}</span>
         </div>
