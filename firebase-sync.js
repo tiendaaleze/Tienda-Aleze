@@ -176,6 +176,7 @@ let _fbVentasHoyUnsub = null;      // depende de sede
 let _fbMovimientosHoyUnsub = null; // depende de sede
 let _fbFiadosPendUnsub = null;     // depende de sede
 let _fbClientesUnsub = null;
+let _fbRecordatoriosUnsub = null;
 let _fbPromocionesUnsub = null;
 let _fbMermasMesUnsub = null;
 let _fbGastosUnsub = null;
@@ -829,6 +830,23 @@ function fbEscucharFiadosPendientes() {
     }, err => { console.warn('Firestore listener error (fiados pendientes):', err.code); });
 }
 
+// ── Recordatorios: sin filtro — modulo de proposito general (envases, herramientas, o
+// cualquier otra cosa pendiente con un cliente), se necesita ver tanto pendientes como ya
+// devueltos para el historial completo. Sin filtro de sede, mismo criterio que clientes.
+function fbEscucharRecordatorios() {
+  if (!dbModular) return;
+  if (_fbRecordatoriosUnsub) { _fbRecordatoriosUnsub(); _fbRecordatoriosUnsub = null; }
+  if (!DB.recordatorios) DB.recordatorios = [];
+  _fbRecordatoriosUnsub = onSnapshotM(
+    collectionM(dbModular, 'recordatorios'),
+    snapshot => {
+      if (!_aplicarCambiosSnapshot(snapshot, DB.recordatorios)) return;
+      const activePage = document.querySelector('.page.active');
+      const pageId = activePage ? activePage.id.replace('page-','') : '';
+      try { if (pageId === 'recordatorios') renderRecordatorios(); } catch(e){}
+    }, err => { console.warn('Firestore listener error (recordatorios):', err.code); });
+}
+
 // ── Clientes: sin filtro — compartidos entre sedes a proposito (puntos/compras/total son del
 // negocio completo). Resuelve el riesgo real de que 2 cajeros, en sedes distintas o la misma,
 // creen el mismo cliente sin saberlo.
@@ -975,7 +993,7 @@ function _iniciarListenersOperativos() {
   fbEscucharClientes();
   setTimeout(() => { fbEscucharVentasHoy(); fbEscucharMovimientosHoy(); fbEscucharProductosColeccion(); }, 120);
   setTimeout(() => { fbEscucharFiadosPendientes(); fbEscucharPromociones(); }, 240);
-  setTimeout(() => { fbEscucharMermasMes(); fbEscucharCanjes(); }, 360);
+  setTimeout(() => { fbEscucharMermasMes(); fbEscucharCanjes(); fbEscucharRecordatorios(); }, 360);
   setTimeout(() => { fbEscucharGastos(); fbEscucharCapitalMovimientos(); }, 480);
 }
 
