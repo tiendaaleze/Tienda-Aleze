@@ -592,7 +592,12 @@ function fbGuardarProductos() {
   banners: DB.config?.banners || [], serviciosBannerUrl: DB.config?.serviciosBannerUrl,
   serviciosBanners: DB.config?.serviciosBanners || [],
   tiendasTexto: DB.config?.tiendasTexto, tiendasExternas: DB.config?.tiendasExternas || [],
-  serviciosWa: DB.config?.serviciosWa || []
+  serviciosWa: DB.config?.serviciosWa || [],
+  // CRITICO: faltaba este campo — tienda publica lee su configuracion especificamente de
+  // este documento (aleze/db_productos), nunca de aleze/db. Sin deliveryMinimo aca, el valor
+  // configurado en Configuracion nunca llegaba a tienda publica, sin importar que boton se
+  // tocara para guardar — siempre caia al fallback de 20 en tienda-publica.js.
+  deliveryMinimo: DB.config?.deliveryMinimo
 };
     // FASE 4/4 migracion de productos: 'productos' ya NO se escribe aca — cada producto vive
     // en su propia coleccion (ver fbGuardarProducto/fbGuardarProductosLote mas arriba), la
