@@ -127,6 +127,7 @@ function renderPedidosOnline() {
             <span style="font-size:.78rem;color:var(--gray-500)">${formatDate(p.fecha)} ${p.hora||''}</span>
             <span class="badge ${badgeColor[p.estado]||'badge-gray'}">${p.estado}</span>
             ${p.editado ? `<span class="badge badge-purple">✏️ editado</span>` : ''}
+            ${p.totalSospechoso ? `<span class="badge badge-red" title="El total enviado está muy por debajo del precio de catálogo (referencia: ${sol(p.totalCatalogoReferencia||0)}). Revisa los items antes de confirmar.">⚠️ Total a revisar</span>` : ''}
           </div>
           <strong style="color:var(--primary)">${sol(p.total)}</strong>
         </div>
