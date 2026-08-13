@@ -184,6 +184,35 @@ async function _doLoginInterno() {
     }
     _tlogL('signInWithEmailAndPassword TERMINO (Compat' + (authModular ? ' + Modular' : '') + ')');
     _limpiarBloqueo();
+
+    // CRITICO: sincroniza el rol real (custom claim) apenas se autentica, ANTES de continuar
+    // con el resto del login — asi las reglas de Firestore ya pueden verificar el rol real
+    // desde el primer momento de la sesion, no solo despues de un refresh natural del token.
+    // No bloqueante a proposito: si esto falla (Cloud Functions no desplegadas todavia, sin
+    // conexion momentanea), el login sigue funcionando exactamente igual que antes de este
+    // cambio — las reglas de Firestore ya funcionaban con la verificacion generica previa, asi
+    // que un fallo aca nunca deja a nadie sin acceso, solo retrasa cuando el rol reforzado
+    // empieza a aplicarse (proximo login, o cuando el token expire y se renueve solo).
+    _tlogL('arrancando sincronizacion de rol real (custom claim)');
+    try {
+      if (fbFunctions) {
+        const _fnSyncRoles = fbFunctions.httpsCallable('sincronizarRolesStaff');
+        await _fnSyncRoles();
+        // Forzar refresh del token para que el claim recien asignado se refleje de inmediato
+        // en ambas conexiones (Compat y Modular) — sin esto, la sesion seguiria usando el
+        // token viejo (sin el rol real) hasta que expire naturalmente.
+        await fbAuth.currentUser.getIdToken(true);
+        if (authModular && authModular.currentUser) {
+          await authModular.currentUser.getIdToken(true);
+        }
+        _tlogL('sincronizacion de rol real TERMINO');
+      } else {
+        _tlogL('fbFunctions no disponible — se omite sincronizacion de rol (Cloud Functions no desplegadas o sin conexion)');
+      }
+    } catch (e) {
+      console.warn('[Login] No se pudo sincronizar el rol real (custom claim) — continuando con el flujo normal:', e.message);
+      _tlogL('sincronizacion de rol real FALLO (no bloqueante): ' + e.message);
+    }
   } catch(fbErr) {
     _tlogL('signInWithEmailAndPassword FALLO: ' + fbErr.message);
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Ingresar'; }
