@@ -577,3 +577,41 @@ exports.marcarCatalogoActualizado_categorias = onDocumentWritten("aleze/db_produ
     logger.error("marcarCatalogoActualizado_categorias: error", e);
   }
 });
+
+// CRITICO: el rol de cada usuario vivia solo en una variable de JavaScript en el navegador
+// (currentRole), leida una vez al iniciar sesion y nunca reverificada contra el servidor. Las
+// reglas de Firestore solo distinguian "autenticado" de "anonimo" — cualquier staff con
+// sesion valida (vendedor incluido) podia, en teoria, escribir directo a Firestore acciones
+// reservadas a admin, sin que la regla lo notara. Esta funcion asigna el rol real como custom
+// claim en el propio token de autenticacion — un dato que solo el servidor puede escribir,
+// nunca el cliente — para que las reglas de Firestore puedan verificarlo de verdad.
+//
+// Callable por CUALQUIER staff autenticado (no solo admin) — esto es seguro a proposito:
+// resuelve el problema de arranque (la primera vez que se ejecuta, nadie tiene el claim
+// todavia, asi que exigir "solo admin ya verificado" dejaria un candado sin llave). El rol
+// asignado a cada usuario SIEMPRE viene de lo que ya esta en usuariosStaff (Firestore, editable
+// solo por admin desde el panel de Configuracion) — nunca de lo que pide quien llama la
+// funcion. Un vendedor no puede auto-asignarse admin llamando esto, porque la funcion ignora
+// por completo cualquier input del llamador sobre que rol quiere.
+exports.sincronizarRolesStaff = onCall(async (request) => {
+  if (!request.auth || request.auth.token.firebase.sign_in_provider === "anonymous") {
+    throw new Error("No autorizado.");
+  }
+
+  const configSnap = await db.collection("aleze").doc("db_productos").get();
+  const usuariosStaff = configSnap.exists ? (configSnap.data().usuariosStaff || []) : [];
+
+  const resultados = [];
+  for (const u of usuariosStaff) {
+    if (!u.email || !u.rol) continue;
+    try {
+      const userRecord = await admin.auth().getUserByEmail(u.email);
+      await admin.auth().setCustomUserClaims(userRecord.uid, { role: u.rol });
+      resultados.push({ email: u.email, rol: u.rol, ok: true });
+    } catch (e) {
+      logger.warn(`sincronizarRolesStaff: no se pudo sincronizar ${u.email}`, e.message);
+      resultados.push({ email: u.email, rol: u.rol, ok: false, error: e.message });
+    }
+  }
+  return { ok: true, resultados };
+});
