@@ -128,6 +128,7 @@ function renderPedidosOnline() {
             <span class="badge ${badgeColor[p.estado]||'badge-gray'}">${p.estado}</span>
             ${p.editado ? `<span class="badge badge-purple">✏️ editado</span>` : ''}
             ${p.totalSospechoso ? `<span class="badge badge-red" title="El total enviado está muy por debajo del precio de catálogo (referencia: ${sol(p.totalCatalogoReferencia||0)}). Revisa los items antes de confirmar.">⚠️ Total a revisar</span>` : ''}
+            ${p.pedidosRecientesSospechoso ? `<span class="badge badge-red" title="${p.pedidosRecientesCantidad||0} pedidos de este mismo teléfono llegaron en pocos minutos — poco común en un cliente real. Revisa antes de confirmar.">⚠️ Varios pedidos seguidos</span>` : ''}
           </div>
           <strong style="color:var(--primary)">${sol(p.total)}</strong>
         </div>
