@@ -24,7 +24,7 @@ function _uploadConfigImg(fileInput, targetFieldId, storagePath) {
       canvas.toBlob(async (blob) => {
         try {
           const ref = fbStorage.ref(storagePath);
-          await ref.put(blob, { contentType: 'image/webp' });
+          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
           const url = await ref.getDownloadURL();
           const field = document.getElementById(targetFieldId);
           if (field) field.value = url;
