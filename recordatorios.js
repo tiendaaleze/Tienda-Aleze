@@ -62,19 +62,26 @@ async function guardarRecordatorio() {
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
 
   const data = { clienteId, tipo, cantidad, fechaEntrega, obs, sedeId: sedeAdminEfectiva() };
-  let _final;
+  let _final, _payloadEscritura;
   if (editingRecordatorioId) {
     const idx = DB.recordatorios.findIndex(x => x.id === editingRecordatorioId);
     if (idx >= 0) DB.recordatorios[idx] = { ...DB.recordatorios[idx], ...data };
     _final = DB.recordatorios[idx];
+    _payloadEscritura = data; // al editar, nunca toca estado/fechaDevolucion
   } else {
     _final = { id: getId(), ...data, estado: 'pendiente', fechaDevolucion: null, usuario: currentUser };
     DB.recordatorios.push(_final);
+    // CRITICO: al crear, la escritura real DEBE incluir estado/fechaDevolucion/usuario — antes
+    // se escribia solo "data" (sin esos 3 campos), asi que el documento real en Firestore
+    // quedaba sin "estado" definido. El listener sincronizaba ese vacio de vuelta a memoria
+    // local, y renderRecordatorios() interpretaba "no es 'pendiente'" como "debe ser
+    // devuelto" — mostrando cada recordatorio nuevo como ya devuelto sin que nadie lo marcara.
+    _payloadEscritura = _final;
   }
   try {
     // merge:true — nunca sobrescribe el documento completo basado en memoria local, mismo
     // criterio ya aplicado en todo el resto del sistema tras la auditoria de fiados.
-    await setDocM(docM(dbModular, 'recordatorios', String(_final.id)), data, { merge: true });
+    await setDocM(docM(dbModular, 'recordatorios', String(_final.id)), _payloadEscritura, { merge: true });
   } catch (e) {
     alert('⚠️ No se pudo guardar: ' + (e.message || 'intenta de nuevo'));
     return;
