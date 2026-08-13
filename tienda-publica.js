@@ -423,17 +423,24 @@ function _renderTienda() {
 /* Burbujas de categoria — reemplazan las fotos-collage con texto incrustado por un circulo
    de color + emoji, mucho mas liviano y consistente entre categorias con o sin foto propia. */
 .tnd-cat-bubble {
-  cursor:pointer;flex-shrink:0;width:78px;display:flex;flex-direction:column;
+  cursor:pointer;flex-shrink:0;width:86px;display:flex;flex-direction:column;
   align-items:center;gap:.4rem;text-align:center;
   transition:transform .12s ease;
 }
 .tnd-cat-bubble:active { transform:scale(.94); }
 .tnd-cat-circle {
-  width:64px;height:64px;border-radius:50%;
+  width:72px;height:72px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;font-size:1.7rem;
   background:linear-gradient(135deg,#5B21B6,#7C3AED);
   box-shadow:0 3px 10px rgba(124,58,237,.25);
   overflow:hidden;
+}
+/* Circulo un poco mas grande en web/PC que en mobile/app — pantallas mas anchas, se ve mejor
+   con algo mas de presencia. Mismo breakpoint de 900px ya usado en todo el sistema para
+   distinguir desktop de mobile. */
+@media (min-width:900px) {
+  .tnd-cat-bubble { width:90px; }
+  .tnd-cat-circle { width:76px; height:76px; }
 }
 .tnd-cat-circle img { width:100%;height:100%;object-fit:cover; }
 .tnd-cat-bubble .tnd-cat-label { font-size:.7rem;font-weight:700;color:#374151;line-height:1.2; }
