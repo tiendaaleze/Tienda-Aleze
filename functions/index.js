@@ -30,7 +30,7 @@
  */
 
 const { onRequest, onCall } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
@@ -536,5 +536,44 @@ exports.validarTotalPedido = onDocumentCreated("pedidos_online/{pedidoId}", asyn
     }
   } catch (e) {
     logger.error("validarTotalPedido: error", e);
+  }
+});
+
+// CRITICO: con catalogos grandes (varios cientos de productos), cada visita a tienda publica
+// releyendo la coleccion completa de productos se vuelve muy caro muy rapido — 1000
+// productos = 1000 lecturas por visita, agotando la cuota diaria gratuita con apenas unas
+// decenas de visitas reales, sin necesitar ningun bot de por medio. La solucion no puede ser
+// un cache por tiempo fijo: el stock debe reflejarse al instante en cuanto cambia (fricción
+// real con el cliente si compra algo que ya no hay), pero durante horas sin ninguna venta ni
+// cambio, no tiene sentido releer todo una y otra vez para cada visitante.
+//
+// Estas 2 funciones observan directamente la fuente de verdad (productos y categorias), sin
+// importar desde donde vino el cambio — una venta, una merma, una edicion de catalogo,
+// cualquier cosa — y actualizan un documento liviano con la hora exacta del ultimo cambio
+// real. tienda-publica.js lee ese documento (1 lectura barata) antes de decidir si vale la
+// pena releer los productos completos, o si puede reutilizar lo que el navegador ya tiene
+// guardado. Durante tiempos muertos, el marcador no cambia, y el cache sirve indefinidamente
+// — en el instante en que algo cambia, se dispara la actualizacion y el proximo visitante
+// (o el mismo, si vuelve a entrar) ve el dato fresco de inmediato.
+exports.marcarCatalogoActualizado_productos = onDocumentWritten("productos/{prodId}", async (event) => {
+  try {
+    await db.collection("aleze").doc("catalogo_meta").set({
+      ultimaActualizacion: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    logger.error("marcarCatalogoActualizado_productos: error", e);
+  }
+});
+
+exports.marcarCatalogoActualizado_categorias = onDocumentWritten("aleze/db_productos", async (event) => {
+  // Las categorias viven dentro de aleze/db_productos (campo 'categorias'), no en su propia
+  // coleccion — mismo documento que ya se re-escribe completo cada vez que se edita una
+  // categoria o la configuracion de tienda. Mismo mecanismo, misma razon.
+  try {
+    await db.collection("aleze").doc("catalogo_meta").set({
+      ultimaActualizacion: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    logger.error("marcarCatalogoActualizado_categorias: error", e);
   }
 });
