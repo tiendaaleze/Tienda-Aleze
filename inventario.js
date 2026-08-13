@@ -313,7 +313,12 @@ function onProdImgSelect(e) {
         try {
           const fileName = `productos/${editingProductId || Date.now()}.webp`;
           const ref = fbStorage.ref(fileName);
-          await ref.put(blob, { contentType: 'image/webp' });
+          // cacheControl: 30 dias — seguro, cada resubida genera un token nuevo en la URL
+          // (confirmado: getDownloadURL() despues de put() siempre da una URL distinta), asi
+          // que un cache largo nunca puede mostrar una foto vieja por error. Sin esto, el
+          // navegador volvia a descargar el catalogo completo de fotos cada 1 hora (default
+          // de Storage), en cada recarga de la tienda — con o sin bots de por medio.
+          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
           const url = await ref.getDownloadURL();
           document.getElementById('prod-img-data').value = url;
           const lbl = document.getElementById('_img-upload-lbl');
@@ -365,7 +370,7 @@ function onProdImgExtraSelect(e, slot) {
         try {
           const fileName = `productos_detalle/${editingProductId || Date.now()}_${slot}.webp`;
           const ref = fbStorage.ref(fileName);
-          await ref.put(blob, { contentType: 'image/webp' });
+          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
           const url = await ref.getDownloadURL();
           document.getElementById(`prod-img-extra-${slot}-data`).value = url;
         } catch(err) {
@@ -739,7 +744,7 @@ function onCatImgSelect(e) {
       canvas.toBlob(async (blob) => {
         try {
           const ref = fbStorage.ref(`categorias/${editingCatId || Date.now()}.webp`);
-          await ref.put(blob, { contentType: 'image/webp' });
+          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
           const url = await ref.getDownloadURL();
           document.getElementById('cat-img-data').value = url;
           const l = document.getElementById('_cat-img-lbl'); if (l) l.remove();
