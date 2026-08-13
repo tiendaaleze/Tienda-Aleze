@@ -759,6 +759,21 @@ function calcRecargoPorLimitePromo(cartRef, sede) {
   });
   return { total: totalRecargo, lineas };
 }
+// CRITICO: unica defensa real contra XSS almacenado. clienteNombre/clienteTel/clienteDir de
+// un pedido online, y nombre/alias/tel/dir de un cliente autoregistrado desde tienda publica,
+// nunca se validan por CONTENIDO en las reglas de Firestore (solo por tamano/tipo) — nada
+// impide que alguien hablando directo con Firestore (sin pasar por el formulario real) envie
+// HTML/JavaScript en esos campos. Se aplica SOLO en el punto exacto de insertar en innerHTML,
+// nunca al guardar el dato ni en textContent/.value (ya seguros por naturaleza) — escapar en
+// la fuente rompería mensajes de WhatsApp, tickets impresos y busquedas, que necesitan el
+// valor real sin modificar.
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 function subtotalItemCarrito(item) {
   if (item.subtotalFinal != null) return item.subtotalFinal;
   const bruto = (item.precio || 0) * (item.cant || 0);
