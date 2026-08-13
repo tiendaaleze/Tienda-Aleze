@@ -441,44 +441,6 @@ function _reiniciarCaja() {
   if (dbModular) setDocM(docM(dbModular, 'caja', 'principal'), vacia).catch(()=>{}); // [SDK modular]
 }
 
-// MIGRACION FINAL de stock — rescata el dato real que quedo acumulado bajo el nombre de
-// campo confuso ("stockPorSede.principal" — un campo PLANO cuyo nombre literal incluye el
-// punto, NO un objeto anidado, confirmado con volcado crudo directo del documento) y lo mueve
-// al campo nuevo correcto "stock" (un numero simple, sin punto, sin anidar nada — ya no hay
-// mas de una sede). El catalogo (nombre/imagen/precio/categoria) nunca se toca.
-async function migrarStockAProducto() {
-  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede ejecutar esto.'); return; }
-  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento.'); return; } // [SDK modular]
-  if (!confirm('Esto recupera el stock real que quedó guardado bajo el nombre de campo viejo y confuso, y lo mueve al campo nuevo correcto. No toca nombre/imagen/precio/categoría de ningún producto. Puede tardar unos segundos.\n\n¿Continuar?')) return;
-
-  try {
-    const CLAVE_VIEJA = 'stockPorSede.principal'; // nombre LITERAL del campo, con el punto incluido
-    const snap = await getDocsM(collectionM(dbModular, 'productos'));
-    let migrados = 0, sinDatoViejo = 0;
-    const CHUNK = 200;
-    const docs = snap.docs;
-    for (let i = 0; i < docs.length; i += CHUNK) {
-      const trozo = docs.slice(i, i + CHUNK);
-      const batch = writeBatchM(dbModular);
-      trozo.forEach(d => {
-        const data = d.data();
-        const valorViejo = data[CLAVE_VIEJA]; // acceso directo por clave literal, sin ambiguedad
-        if (valorViejo !== undefined) {
-          batch.set(d.ref, { stock: valorViejo, [CLAVE_VIEJA]: deleteFieldM() }, { merge: true });
-          migrados++;
-        } else {
-          sinDatoViejo++;
-        }
-      });
-      await batch.commit();
-    }
-    alert(`✅ Migración completada.\n\n${migrados} producto(s) con stock recuperado del campo viejo.\n${sinDatoViejo} producto(s) sin ese campo (ya estaban bien, o nunca lo tuvieron).\n\nEl catálogo (nombre/imagen/precio) no se tocó.`);
-  } catch (e) {
-    console.warn('migrarStockAProducto: error', e);
-    alert('⚠️ Hubo un error durante la migración — revisa la consola. Nada del catálogo actual se vio afectado.');
-  }
-}
-
 const RESET_CONFIG = {
   dashboard: {
     nombre: 'Dashboard (todos los datos operativos)',
