@@ -1582,6 +1582,7 @@ if (_tndStep === 'cart') {
     } else {
       const cli = DB.clientes.find(c => c.id === clienteId);
       const est = estadoFidelizacion(clienteId);
+      const _deudaCli = clienteDeudaMonto(cli);
       body.innerHTML = `
         <div style="text-align:center;padding:1rem 0">
           <div style="font-size:2.2rem;font-weight:800;color:#7C3AED">${cli.puntos||0}</div>
@@ -1590,7 +1591,14 @@ if (_tndStep === 'cart') {
         ${est.valorCanjeable > 0 ? `
           <div style="background:#ECFDF5;border-left:4px solid #10B981;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.85rem">🎁 Puedes canjear tus puntos por <strong>${sol(est.valorCanjeable)}</strong> de descuento.</div>
           <p style="font-size:.75rem;color:#9ca3af;margin-top:.5rem">Pídelo en caja al recoger tu pedido.</p>
-        ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para juntar puntos canjeables.</p>'}`;
+        ` : '<p style="font-size:.82rem;color:#9ca3af;text-align:center">Seguí comprando para juntar puntos canjeables.</p>'}
+        ${_deudaCli > 0 ? `
+          <div style="border-top:1px solid #e5e7eb;margin-top:1rem;padding-top:1rem;text-align:center">
+            <div style="font-size:.78rem;color:#6b7280;margin-bottom:.25rem">Tienes una deuda pendiente de</div>
+            <div style="font-size:1.6rem;font-weight:800;color:var(--danger,#EF4444)">${sol(_deudaCli)}</div>
+            <a href="https://wa.me/51${(DB.config?.whatsappTienda||'980037284').replace(/\\D/g,'')}?text=${encodeURIComponent('Hola, quisiera ver el detalle de mi deuda pendiente ('+sol(_deudaCli)+').')}" target="_blank" style="display:inline-block;margin-top:.6rem;font-size:.78rem;color:#25D366;text-decoration:none;font-weight:600">📲 Pedir detalle por WhatsApp</a>
+          </div>
+        ` : ''}`;
       footer.innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Cerrar</button>`;
     }
   }
