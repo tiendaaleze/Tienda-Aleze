@@ -502,3 +502,39 @@ exports.reintentarComprobante = onCall(
     return { ok: true };
   }
 );
+
+// CRITICO: las reglas de Firestore validan que pedidoValido() tenga total > 0, pero no que
+// coincida con lo que realmente cuestan los items — un cliente malicioso podria enviar items
+// reales por S/100 con total: 0.01, y la regla lo aceptaria igual. Esta funcion no intenta
+// recalcular el total exacto (fragil: se desincronizaria con cualquier cambio futuro a
+// _tndCalcularTotal() en tienda-publica.js, que incluye combos/promociones/descuento por
+// puntos/recargo de delivery). En vez de eso, compara contra el precio de CATALOGO (sin
+// descuentos) de cada item, y solo marca si el total esta muy por debajo de lo que ni la
+// promocion mas agresiva legitima explicaria — detecta manipulacion extrema sin generar
+// falsos positivos por descuentos reales.
+exports.validarTotalPedido = onDocumentCreated("pedidos_online/{pedidoId}", async (event) => {
+  const pedido = event.data?.data();
+  if (!pedido || !Array.isArray(pedido.items) || pedido.items.length === 0) return;
+
+  try {
+    let sumaCatalogo = 0;
+    for (const item of pedido.items) {
+      if (!item.prodId || !item.cant) continue;
+      const prodSnap = await db.collection("productos").doc(String(item.prodId)).get();
+      if (!prodSnap.exists) continue;
+      sumaCatalogo += (prodSnap.data().precio || 0) * item.cant;
+    }
+    if (sumaCatalogo === 0) return; // sin items validos en catalogo, nada que comparar
+
+    const UMBRAL_MINIMO = 0.4; // ningun descuento/combo legitimo baja el total a menos del 40% del precio de lista
+    if (pedido.total < sumaCatalogo * UMBRAL_MINIMO) {
+      await event.data.ref.set({
+        totalSospechoso: true,
+        totalCatalogoReferencia: Math.round(sumaCatalogo * 100) / 100
+      }, { merge: true });
+      logger.warn(`Pedido ${event.params.pedidoId}: total (${pedido.total}) muy por debajo del catálogo (${sumaCatalogo.toFixed(2)}) — marcado para revisión`);
+    }
+  } catch (e) {
+    logger.error("validarTotalPedido: error", e);
+  }
+});
