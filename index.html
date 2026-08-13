@@ -124,7 +124,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.13-1600</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.13-1830</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.13-1600</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.13-1830</div>
   </div>
 
 </div>
@@ -234,6 +234,9 @@ window.addEventListener('error', function(e) {
         <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
         <div class="nav-item" onclick="navigate('caja')" title="Ver caja actual">
           <span class="icon">💰</span><span class="nav-label">Caja</span>
+        </div>
+        <div class="nav-item" onclick="navigate('recordatorios')" title="Recordatorios y pendientes con clientes">
+          <span class="icon">📌</span><span class="nav-label">Recordatorios</span>
         </div>
         <div class="nav-item" onclick="navigate('mermas')" title="Registro de mermas y pérdidas">
           <span class="icon">📉</span><span class="nav-label">Mermas</span>
@@ -591,6 +594,45 @@ window.addEventListener('error', function(e) {
             <table>
               <thead><tr><th>Nombre</th><th>Contacto</th><th>Teléfono</th><th>Productos</th><th>Boletas</th><th>Acciones</th></tr></thead>
               <tbody id="prov-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- RECORDATORIOS -->
+      <div id="page-recordatorios" class="page">
+        <div class="flex-between" style="margin-bottom:1rem">
+          <div class="page-title" style="margin:0">📌 Recordatorios</div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="abrirModalRecordatorio()">+ Nuevo</button>
+        </div>
+        <div style="font-size:.8rem;color:var(--gray-500);margin-bottom:.75rem">Para cualquier cosa pendiente con un cliente — envases, herramientas, o lo que haga falta seguir — no tiene relación con ventas ni con fiados.</div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem;align-items:flex-end">
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:.75rem;font-weight:600">Buscar cliente</label>
+            <input type="text" class="form-control" id="rec-buscar" placeholder="Nombre del cliente..." oninput="renderRecordatorios()" />
+          </div>
+          <div style="flex:0 0 auto;min-width:130px">
+            <label style="font-size:.75rem;font-weight:600">Tipo</label>
+            <input type="text" class="form-control" id="rec-filtro-tipo" placeholder="Ej: botella..." oninput="renderRecordatorios()" />
+          </div>
+          <div style="flex:0 0 auto;min-width:140px">
+            <label style="font-size:.75rem;font-weight:600">Estado</label>
+            <select class="form-control" id="rec-filtro-estado" onchange="renderRecordatorios()">
+              <option value="pendiente">Pendientes</option>
+              <option value="devuelto">Devueltos</option>
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div style="flex:0 0 auto">
+            <label style="font-size:.75rem;font-weight:600">&nbsp;</label>
+            <button type="button" class="btn btn-outline btn-sm" style="background:var(--gray-100);border-color:var(--gray-400)" onclick="limpiarFiltrosRecordatorios()">✕ Limpiar</button>
+          </div>
+        </div>
+        <div class="card" style="padding:0">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Cliente</th><th>Tipo</th><th>Cant.</th><th>Entregado</th><th>Estado</th><th>Devuelto</th><th>Acciones</th></tr></thead>
+              <tbody id="rec-tbody"></tbody>
             </table>
           </div>
         </div>
@@ -1338,6 +1380,33 @@ window.addEventListener('error', function(e) {
         <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-proveedor')">Cancelar</button>
         <button type="button" class="btn btn-primary" onclick="guardarProveedor()">Guardar proveedor</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-recordatorio">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="rec-modal-titulo">Nuevo Recordatorio</h3>
+      <button type="button" class="modal-close" onclick="cerrarModal('modal-recordatorio')">✕</button>
+    </div>
+    <div class="form-group" style="position:relative">
+      <label>Cliente *</label>
+      <input type="text" id="rec-cliente-buscar" class="form-control" placeholder="🔍 Buscar cliente..." autocomplete="off"
+        oninput="_recClienteBuscar()" onfocus="_recClienteBuscar()"
+        onblur="setTimeout(()=>{const s=document.getElementById('rec-cliente-sugerencias');if(s)s.style.display='none';},150)" />
+      <select id="rec-cliente" style="display:none"></select>
+      <div id="rec-cliente-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label>Tipo *</label><input type="text" class="form-control" id="rec-tipo" placeholder="Ej: Botella grande, jaba..." /></div>
+      <div class="form-group"><label>Cantidad *</label><input type="number" class="form-control" id="rec-cantidad" min="1" value="1" /></div>
+    </div>
+    <div class="form-group"><label>Fecha de entrega</label><input type="date" class="form-control" id="rec-fecha-entrega" /></div>
+    <div class="form-group"><label>Observación (opcional)</label><input type="text" class="form-control" id="rec-obs" /></div>
+    <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem">
+      <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-recordatorio')">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="guardarRecordatorio()">Guardar</button>
     </div>
   </div>
 </div>
@@ -2122,6 +2191,7 @@ window.addEventListener('error', function(e) {
 <script src="pos.js"></script>
 <script src="inventario.js"></script>
 <script src="proveedores.js"></script>
+<script src="recordatorios.js"></script>
 <script src="clientes.js"></script>
 <script src="caja.js"></script>
 <script src="promociones.js"></script>
