@@ -261,8 +261,17 @@ function reporteMermas(desde, hasta, sede) {
 }
 
 function reporteFiados(sede) {
+  // Agrupar fiados por clienteId una sola vez (O(m)) en vez de filtrar el array completo por
+  // cada cliente (O(n×m)) — mismo resultado, mejor escala si el negocio crece mucho.
+  const fiadosPorCliente = new Map();
+  DB.fiados.forEach(f => {
+    if (sede && (f.sedeId||'principal') !== sede) return;
+    const arr = fiadosPorCliente.get(f.clienteId);
+    if (arr) arr.push(f); else fiadosPorCliente.set(f.clienteId, [f]);
+  });
  const data = DB.clientes.map(c => {
-    const deudaReal = Math.round(DB.fiados.filter(f => f.clienteId === c.id && (!sede || (f.sedeId||'principal') === sede)).reduce((s,f) => s + fiadoMontoPendiente(f), 0) * 100) / 100;
+    const fiadosCli = fiadosPorCliente.get(c.id) || [];
+    const deudaReal = Math.round(fiadosCli.reduce((s,f) => s + fiadoMontoPendiente(f), 0) * 100) / 100;
     return { nombre: c.alias||c.nombre, deuda: deudaReal };
   }).filter(d => d.deuda > 0).sort((a,b) => b.deuda - a.deuda);
   const total = data.reduce((s,d)=>s+d.deuda,0);
