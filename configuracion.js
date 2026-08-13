@@ -253,7 +253,7 @@ async function _cargarComprobantesConError() {
     cont.innerHTML = items.map(v => `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.5rem 0;border-bottom:1px solid var(--gray-100)">
         <div>
-          <div><strong>${v.clienteNombre || 'Cliente'}</strong> — ${sol(v.total||0)} — ${v.fecha||''}</div>
+          <div><strong>${escapeHtml(v.clienteNombre) || 'Cliente'}</strong> — ${sol(v.total||0)} — ${v.fecha||''}</div>
           <div style="color:var(--danger);font-size:.72rem">${(v.comprobante && v.comprobante.errorMsg) || 'Error desconocido'}</div>
         </div>
         <button type="button" class="btn btn-outline btn-sm" onclick="reintentarComprobante('${v.coleccion}','${v.id}', this)">🔄 Reintentar</button>
