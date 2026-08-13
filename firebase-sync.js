@@ -278,6 +278,27 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           _tlog('window.__fbModular SI esta disponible — arrancando rama modular');
           const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
           _tlog('initializeAppModular() listo');
+
+          // CRITICO: App Check tambien para la instancia modular — la version compat de arriba
+          // solo protege fbApp (panel de staff, con login). dbModular es la conexion que usa
+          // tienda-publica.js, sin ningun login de por medio, expuesta a cualquiera en
+          // internet — exactamente donde un bot golpeando directo la API de Firestore/Storage
+          // sin pasar por el sitio real podria generar lecturas masivas sin limite. Mismo
+          // patron defensivo que la version compat: no bloqueante, si falla la tienda sigue
+          // funcionando igual, solo sin esta capa de proteccion.
+          try {
+            const { initializeAppCheck, ReCaptchaV3Provider } = window.__fbModular.appCheck;
+            initializeAppCheck(appModular, {
+              provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
+              isTokenAutoRefreshEnabled: true
+            });
+            console.log('[AppCheck modular] activado correctamente');
+            _tlog('[AppCheck modular] activado para appModular');
+          } catch (acModErr) {
+            console.warn('[AppCheck modular] no activado — tienda pública sigue funcionando:', acModErr.message);
+            _tlog('[AppCheck modular] fallo activate(): ' + acModErr.message);
+          }
+
           // CRITICO: persistentMultipleTabManager() (coordinación entre pestañas vía
           // IndexedDB) tiene problemas conocidos y documentados en navegadores móviles —
           // especialmente Safari iOS y los WebView de apps instaladas — donde la negociación
