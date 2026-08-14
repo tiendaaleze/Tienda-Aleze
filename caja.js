@@ -605,6 +605,7 @@ function abrirModalGastoRec() {
 }
 
 function guardarGastoRec() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar gastos recurrentes.'); return; }
   const desc  = document.getElementById('gr-desc').value.trim();
   const monto = parseFloat(document.getElementById('gr-monto').value) || 0;
   if (!desc || monto <= 0) { alert('Completa los campos'); return; }
@@ -615,6 +616,7 @@ function guardarGastoRec() {
 }
 
 function elimGastoRec(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar gastos recurrentes.'); return; }
   if (!confirm('¿Eliminar este gasto recurrente?')) return;
   DB_EXT.gastosRec = DB_EXT.gastosRec.filter(g => g.id !== id);
   fbGuardarExt();
@@ -765,6 +767,7 @@ async function updateCapStats() {
 }
 
 async function guardarCapital() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar el capital.'); return; }
   const totalInicial = parseFloat(document.getElementById('cap-inp-total').value) || 0;
   DB_EXT.capital.prestamo= parseFloat(document.getElementById('cap-inp-prestamo').value) || 0;
   DB_EXT.capital.cuota   = parseFloat(document.getElementById('cap-inp-cuota').value)   || 0;
@@ -800,6 +803,7 @@ function abrirAddCapital() {
 }
 
 async function confirmarAddCapital() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede agregar capital.'); return; }
   const monto = parseFloat(document.getElementById('ac-monto').value) || 0;
   const desc  = document.getElementById('ac-desc').value || 'Capital adicional';
   if (monto <= 0) { alert('Monto inválido'); return; }
@@ -870,6 +874,7 @@ async function abrirCerrarMes() {
 }
 
 async function confirmarCerrarMes() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cerrar el mes.'); return; }
   const mes   = document.getElementById('cm-mes').value;
   const monto = parseFloat(document.getElementById('cm-monto').value) || 0;
   if (!mes) { alert('Selecciona el mes'); return; }
@@ -914,6 +919,7 @@ function abrirPagoCuota() {
 }
 
 async function confirmarPagoCuota() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar pagos de cuota.'); return; }
   const monto = parseFloat(document.getElementById('pc-monto').value) || 0;
   const fecha = document.getElementById('pc-fecha').value || today();
   const desc  = document.getElementById('pc-desc').value.trim() || 'Pago préstamo '+fecha.substring(0,7);
