@@ -205,6 +205,7 @@ document.getElementById('cfg-ruc').value = DB.config.ruc || '';
 }
 
 function guardarConfigPasarela() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar la pasarela de pago.'); return; }
   DB.config.pasarelaPago = {
     activa: document.getElementById('cfg-pasarela-activa').checked,
     proveedor: 'izipay',
@@ -219,6 +220,7 @@ function guardarConfigPasarela() {
 // para el cliente final en tienda publica que dependa de esto, asi que basta con fbGuardar()
 // (documento privado), no hace falta duplicarlo en el documento publico via fbGuardarProductos().
 function guardarConfigComprobante() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar el comprobante electrónico.'); return; }
   DB.config.regimenTributario = document.getElementById('cfg-regimen-tributario').value || null;
   DB.config.comprobanteElectronico = {
     activa: document.getElementById('cfg-comprobante-activa').checked,
@@ -283,6 +285,7 @@ async function reintentarComprobante(coleccion, id, btnEl) {
 }
 
 function guardarConfig() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar la configuración.'); return; }
   DB.config.nombre    = document.getElementById('cfg-nombre').value;
   DB.config.direccion = document.getElementById('cfg-direccion').value;
   DB.config.telefono  = document.getElementById('cfg-telefono').value;
@@ -338,6 +341,7 @@ function renderUsuariosStaff() {
 }
 
 function agregarUsuarioStaff() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede agregar usuarios.'); return; }
   const nombre = document.getElementById('nuevo-usr-nombre').value.trim();
   const email  = document.getElementById('nuevo-usr-email').value.trim();
   const rol    = document.getElementById('nuevo-usr-rol').value || 'cajero';
@@ -355,6 +359,11 @@ function agregarUsuarioStaff() {
 }
 
 function cambiarRolUsuarioStaff(i, nuevoRol) {
+  // CRITICO: sin este chequeo, un vendedor podia llamar esta funcion directo desde la
+  // consola sobre si mismo, cambiando su propio rol a admin en usuariosStaff — la misma
+  // fuente que sincronizarRolesStaff() lee para asignar el custom claim real en cada login.
+  // Sin este chequeo, esto era una escalada de privilegios completa y permanente.
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cambiar roles.'); return; }
   DB.config.usuariosStaff[i].rol = nuevoRol;
   DB.config.usuariosStaff = [...DB.config.usuariosStaff];
   renderLoginDropdown();
@@ -362,6 +371,7 @@ function cambiarRolUsuarioStaff(i, nuevoRol) {
 }
 
 function eliminarUsuarioStaff(i) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede quitar usuarios.'); return; }
   const u = DB.config.usuariosStaff[i];
   if (!confirm(`¿Quitar a ${u.nombre} del sistema? Esto no borra su cuenta de Firebase, solo su acceso desde aquí.`)) return;
   DB.config.usuariosStaff = DB.config.usuariosStaff.filter((_, idx) => idx !== i);
@@ -370,6 +380,7 @@ function eliminarUsuarioStaff(i) {
 }
 
 function guardarSueldos() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar sueldos.'); return; }
   DB_EXT.sueldos['Jose Carlos'] = parseFloat(document.getElementById('sueldo-jc').value) || 0;
   DB_EXT.sueldos['Shessira']    = parseFloat(document.getElementById('sueldo-sh').value) || 0;
   DB_EXT.sueldos['José Luis']   = parseFloat(document.getElementById('sueldo-jl').value) || 0;
@@ -543,6 +554,7 @@ function abrirReset(modulo) {
 }
 
 function ejecutarReset() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede limpiar datos.'); return; }
   const input = document.getElementById('reset-confirm-input').value;
   if (input !== 'LIMPIAR') return;
   const cfg = RESET_CONFIG[_resetModuloActual];
