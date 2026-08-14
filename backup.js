@@ -1,5 +1,4 @@
 // ===================== BACKUP AUTOMÁTICO =====================
-let _backupTimer = null;
 // ── Respaldo completo: catálogo + las 9 colecciones propias, no solo aleze/db ──
 // Firestore limita cada documento a 1 MB — por eso el respaldo se guarda como VARIOS
 // documentos (uno principal + uno por colección), no todo apretado en uno solo. Ventas y
@@ -127,16 +126,67 @@ async function _ejecutarBackup() {
 
   if (_fallos.length === 0) {
     console.log('[Backup] Guardado completo:', key);
+    DB.config._ultimoBackupFecha = today();
+    fbGuardar();
+    _limpiarBackupsViejos();
   } else {
     console.warn('[Backup] Fallos detallados:', _fallos);
     const _detalle = _fallos.map(f => '• ' + f.parte + (f.codigo ? ' [' + f.codigo + ']' : '') + ': ' + f.mensaje).join('\n');
-    alert('⚠️ El respaldo automático de las ' + ahora.toLocaleTimeString('es-PE') + ' no se guardó completo.\n\n' + _detalle + '\n\nEl sistema lo reintentará en 30 minutos.');
+    alert('⚠️ El respaldo del día (' + ahora.toLocaleTimeString('es-PE') + ') no se guardó completo.\n\n' + _detalle + '\n\nSe reintentará en el próximo inicio de sesión.');
   }
 }
 
 function iniciarBackupAutomatico() {
-  if (_backupTimer) clearInterval(_backupTimer);
-  _backupTimer = setInterval(_ejecutarBackup, 30 * 60 * 1000);
+  // CRITICO: antes corria cada 30 minutos mientras la sesion de admin estuviera abierta —
+  // con colecciones que crecen con el tiempo (clientes, fiados, gastos, mermas, boletas, cada
+  // una releida completa en cada corrida, nunca se "limpian" solas), esto generaba miles de
+  // lecturas por dia sin necesidad real. El backup sirve para errores puntuales detectables
+  // al momento, o un desastre completo muy reciente — no es un archivo historico, restaurar
+  // algo de hace semanas es mas riesgo que beneficio. Con eso claro, 1 vez por dia alcanza de
+  // sobra — mismo patron ya probado en limpiarAlertasIgnoradasSiCorresponde().
+  if (DB.config._ultimoBackupFecha === today()) return; // ya se hizo hoy
+  _ejecutarBackup();
+}
+
+// Antiguedad maxima de un respaldo — mas alla de esto, ya no tiene sentido restaurarlo (el
+// riesgo de perder datos mas recientes reales supera cualquier beneficio de recuperar algo
+// tan viejo). Se ejecuta despues de cada backup exitoso, asi el volumen de respaldos
+// guardados nunca crece sin limite — siempre se mantiene acotado a esta ventana.
+const _BACKUP_ANTIGUEDAD_MAXIMA_DIAS = 15;
+
+async function _limpiarBackupsViejos() {
+  if (!dbModular) return; // [SDK modular]
+  try {
+    const limite = Date.now() - _BACKUP_ANTIGUEDAD_MAXIMA_DIAS * 24 * 60 * 60 * 1000;
+    const snap = await getDocsM(collectionM(dbModular, 'aleze_backups'));
+    // Solo documentos principales (sin '__') — cada uno sabe, via _chunksPorColeccion, cuantos
+    // satelites tiene por coleccion, necesario para poder borrarlos todos correctamente.
+    const principalesViejos = snap.docs.filter(d => {
+      if (d.id.includes('__')) return false;
+      const ts = d.data()._backupTs;
+      return ts && new Date(ts).getTime() < limite;
+    });
+    if (principalesViejos.length === 0) return;
+
+    const idsABorrar = [];
+    principalesViejos.forEach(d => {
+      const key = d.id;
+      idsABorrar.push(key);
+      const chunksPorCol = d.data()._chunksPorColeccion || {};
+      Object.entries(chunksPorCol).forEach(([col, cantidad]) => {
+        for (let i = 0; i < cantidad; i++) idsABorrar.push(key + '__' + col + '__' + i);
+      });
+    });
+
+    for (let i = 0; i < idsABorrar.length; i += 450) {
+      const batch = writeBatchM(dbModular);
+      idsABorrar.slice(i, i + 450).forEach(id => batch.delete(docM(dbModular, 'aleze_backups', id)));
+      await batch.commit();
+    }
+    console.log(`[Backup] Limpieza: ${principalesViejos.length} respaldo(s) de más de ${_BACKUP_ANTIGUEDAD_MAXIMA_DIAS} días eliminado(s) (${idsABorrar.length} documento(s) en total).`);
+  } catch (e) {
+    console.warn('_limpiarBackupsViejos: error', e);
+  }
 }
 
 function verBackups() {
