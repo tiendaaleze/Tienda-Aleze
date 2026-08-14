@@ -8,15 +8,16 @@ const _BACKUP_COLECCIONES_30DIAS = ['ventas', 'movimientos', 'mermas', 'gastos',
 
 async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
   if (!dbModular) return []; // [SDK modular]
-  try {
-    const colRef = collectionM(dbModular, nombreColeccion);
-    const q = filtrarDesde ? queryM(colRef, whereM('fecha', '>=', filtrarDesde)) : colRef;
-    const snap = await getDocsM(q);
-    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-  } catch (e) {
-    console.warn('_leerColeccionParaBackup: error en ' + nombreColeccion, e);
-    return [];
-  }
+  // CRITICO: antes esta funcion atrapaba CUALQUIER error (incluido permission-denied) y
+  // devolvia [] — desde afuera, un fallo real de permisos se veia identico a "la coleccion
+  // esta vacia", y el backup se reportaba como "completo" aunque le faltara una coleccion
+  // entera. El sistema de deteccion de fallos (Promise.allSettled en _ejecutarBackup) ya
+  // existia y funciona bien — solo hacia falta dejar que el error se propague hasta el, en
+  // vez de silenciarlo aca.
+  const colRef = collectionM(dbModular, nombreColeccion);
+  const q = filtrarDesde ? queryM(colRef, whereM('fecha', '>=', filtrarDesde)) : colRef;
+  const snap = await getDocsM(q);
+  return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
 }
 
 // Divide un array de items en grupos que quepan holgadamente bajo el limite real de 1 MB por
