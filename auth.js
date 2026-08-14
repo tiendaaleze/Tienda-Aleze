@@ -107,6 +107,22 @@ async function doLogin() {
   }
 }
 
+// CRITICO: confirmado con evidencia real (verificacion directa del token de una sesion activa)
+// — Firebase Auth tiene un margen real de propagacion entre el momento en que
+// setCustomUserClaims() se graba en el servidor y el momento en que ese mismo claim esta
+// disponible para el SIGUIENTE token que se emite. Pedir el token nuevo INMEDIATAMENTE
+// despues de que la Cloud Function termina no alcanzaba a esperar esa propagacion — la
+// sincronizacion terminaba sin ningun error, pero el token seguia sin el rol real. Se
+// reintenta unas pocas veces con una espera corta entre cada intento, en vez de una sola vez.
+async function _esperarClaimRol(usuario, intentos, esperaMs) {
+  for (let i = 0; i < intentos; i++) {
+    const r = await usuario.getIdTokenResult(true);
+    if (r.claims && r.claims.role) return true;
+    if (i < intentos - 1) await new Promise(res => setTimeout(res, esperaMs));
+  }
+  return false;
+}
+
 async function _doLoginInterno() {
   // DIAGNOSTICO TEMPORAL — cronometro real desde el clic del boton, para encontrar donde se
   // va el tiempo despues de iniciarFirebase() (ya confirmado rapido). Variable global porque
@@ -205,13 +221,13 @@ async function _doLoginInterno() {
         const _fnSyncRoles = fbFunctions.httpsCallable('sincronizarRolesStaff', { timeout: 8000 });
         await _fnSyncRoles();
         // Forzar refresh del token para que el claim recien asignado se refleje de inmediato
-        // en ambas conexiones (Compat y Modular) — sin esto, la sesion seguiria usando el
-        // token viejo (sin el rol real) hasta que expire naturalmente.
-        await fbAuth.currentUser.getIdToken(true);
+        // en ambas conexiones (Compat y Modular) — con reintento, dado el margen real de
+        // propagacion de custom claims confirmado (ver _esperarClaimRol arriba).
+        const _rolListo = await _esperarClaimRol(fbAuth.currentUser, 3, 1200);
         if (authModular && authModular.currentUser) {
-          await authModular.currentUser.getIdToken(true);
+          await _esperarClaimRol(authModular.currentUser, 3, 1200);
         }
-        _tlogL('sincronizacion de rol real TERMINO');
+        _tlogL('sincronizacion de rol real TERMINO' + (_rolListo ? '' : ' (claim aun no confirmado tras los reintentos)'));
       } else {
         _tlogL('fbFunctions no disponible — se omite sincronizacion de rol (Cloud Functions no desplegadas o sin conexion)');
       }
