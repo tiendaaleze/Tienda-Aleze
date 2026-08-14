@@ -42,6 +42,7 @@ let messagingModular = null;
 let docM, setDocM, getDocM, getDocDelServidorM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
     queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
     serverTimestampM, deleteFieldM, onSnapshotM;
+let refM, uploadBytesM, getDownloadURLM, deleteObjectM;
 
 // ══════════════════════════════════════════════════════════════════════════
 // Visibilidad real de sincronización — camino completo, no un parche.
@@ -164,7 +165,7 @@ function _actualizarBadgeSync() {
     }
   });
 }
-let fbStorage = null;     // Firebase Storage — imágenes de productos  
+// (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver storageModular)
 let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
 let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
 let _fbCajaUnsub = null; // Listener dedicado a la colección caja — unica fuente de verdad
@@ -255,8 +256,7 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       // ningun permiso de terceros) se evita que el SDK intente esa deteccion en absoluto.
       try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch(persErr) { console.warn('[Auth] No se pudo fijar persistencia explicita (Compat):', persErr.message); }
       _tlog('setPersistence (Compat) listo');
-      fbStorage = firebase.storage();
-      _tlog('firebase.storage() (Compat) listo');
+      // (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver mas abajo)
       // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
       // Y las Cloud Functions ya fueron desplegadas manualmente. Si no se desplegaron,
       // la llamada falla con un error claro (manejado en tndPagarEnLinea), no en silencio.
@@ -351,6 +351,7 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
              where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
              runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
              deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
+          ({ ref: refM, uploadBytes: uploadBytesM, getDownloadURL: getDownloadURLM, deleteObject: deleteObjectM } = window.__fbModular.storage);
           console.log('[SDK modular] Conexión propia inicializada con persistencia offline — listo para empezar a migrar funciones.');
           _tlog('[SDK modular] TODO listo — docM y el resto de funciones ya asignadas');
         } else {
