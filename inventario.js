@@ -305,7 +305,7 @@ function onProdImgSelect(e) {
       const preview = document.getElementById('prod-img-preview');
       if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:8px"/>`;
       // Subir a Firebase Storage en lugar de guardar base64
-      if (!fbStorage) {
+      if (!storageModular) {
         document.getElementById('prod-img-data').value = previewData;
         return;
       }
@@ -313,14 +313,14 @@ function onProdImgSelect(e) {
       canvas.toBlob(async (blob) => {
         try {
           const fileName = `productos/${editingProductId || Date.now()}.webp`;
-          const ref = fbStorage.ref(fileName);
+          const ref = refM(storageModular, fileName);
           // cacheControl: 30 dias — seguro, cada resubida genera un token nuevo en la URL
           // (confirmado: getDownloadURL() despues de put() siempre da una URL distinta), asi
           // que un cache largo nunca puede mostrar una foto vieja por error. Sin esto, el
           // navegador volvia a descargar el catalogo completo de fotos cada 1 hora (default
           // de Storage), en cada recarga de la tienda — con o sin bots de por medio.
-          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
-          const url = await ref.getDownloadURL();
+          await uploadBytesM(ref, blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
+          const url = await getDownloadURLM(ref);
           document.getElementById('prod-img-data').value = url;
           const lbl = document.getElementById('_img-upload-lbl');
           if (lbl) lbl.remove();
@@ -364,16 +364,16 @@ function onProdImgExtraSelect(e, slot) {
       const previewData = canvas.toDataURL('image/webp', 0.78);
       const preview = document.getElementById(`prod-img-extra-${slot}-preview`);
       if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:6px"/>`;
-      if (!fbStorage) {
+      if (!storageModular) {
         document.getElementById(`prod-img-extra-${slot}-data`).value = previewData;
         return;
       }
       canvas.toBlob(async (blob) => {
         try {
           const fileName = `productos_detalle/${editingProductId || Date.now()}_${slot}.webp`;
-          const ref = fbStorage.ref(fileName);
-          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
-          const url = await ref.getDownloadURL();
+          const ref = refM(storageModular, fileName);
+          await uploadBytesM(ref, blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
+          const url = await getDownloadURLM(ref);
           document.getElementById(`prod-img-extra-${slot}-data`).value = url;
         } catch(err) {
           document.getElementById(`prod-img-extra-${slot}-data`).value = previewData;
@@ -738,7 +738,7 @@ function onCatImgSelect(e) {
       const previewData = canvas.toDataURL('image/webp', 0.80);
       const preview = document.getElementById('cat-img-preview');
       preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:8px"/>`;
-      if (!fbStorage) { document.getElementById('cat-img-data').value = previewData; return; }
+      if (!storageModular) { document.getElementById('cat-img-data').value = previewData; return; }
       const lbl = document.createElement('small');
       lbl.id = '_cat-img-lbl'; lbl.style = 'color:var(--primary);font-size:.72rem';
       lbl.textContent = '⏳ Subiendo...';
@@ -747,9 +747,9 @@ function onCatImgSelect(e) {
       if (_btnGuardarCat) _btnGuardarCat.disabled = true;
       canvas.toBlob(async (blob) => {
         try {
-          const ref = fbStorage.ref(`categorias/${editingCatId || Date.now()}.webp`);
-          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
-          const url = await ref.getDownloadURL();
+          const ref = refM(storageModular, `categorias/${editingCatId || Date.now()}.webp`);
+          await uploadBytesM(ref, blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
+          const url = await getDownloadURLM(ref);
           document.getElementById('cat-img-data').value = url;
           const l = document.getElementById('_cat-img-lbl'); if (l) l.remove();
         } catch(err) {
