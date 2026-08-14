@@ -174,31 +174,20 @@ async function _doLoginInterno() {
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Verificando...'; }
 
   try {
-    _tlogL('arrancando signInWithEmailAndPassword (Compat + Modular en paralelo)');
-    // CRITICO: causa real encontrada — confirmada por el propio usuario notando que un
-    // segundo login (sin cerrar la app del todo) sí carga rapido. Compat y Modular son 2
-    // conexiones de Firebase completamente separadas (2 registros de app distintos en
-    // memoria, ver comentario en firebase-sync.js) — dbModular (usada para TODAS las
-    // lecturas/escrituras/listeners reales del sistema) depende del contexto de autenticacion
-    // de authModular para que las reglas de seguridad la reconozcan como usuario valido. Pero
-    // solo se autenticaba fbAuth (Compat) — authModular se creaba (getAuth) pero NUNCA se le
-    // avisaba quien inicio sesion. El resultado: justo despues del login, TODOS los listeners
-    // y lecturas via dbModular fallaban con permission-denied — recien se resolvia solos tras
-    // varios segundos, cuando algun mecanismo interno indirecto terminaba de propagar el
-    // estado. En un login posterior dentro de la MISMA sesion de app, esa propagacion ya
-    // habia ocurrido, por eso cargaba rapido — exactamente lo que se observo. Ahora se
-    // autentican ambas conexiones EXPLICITAMENTE, con las mismas credenciales, al mismo
-    // tiempo — sin depender de ninguna propagacion indirecta.
-    const _authPromises = [fbAuth.signInWithEmailAndPassword(email, pass)];
-    if (authModular && window.__fbModular) {
-      _authPromises.push(window.__fbModular.auth.signInWithEmailAndPassword(authModular, email, pass));
-    }
-    const _authResults = await Promise.allSettled(_authPromises);
-    if (_authResults[0].status === 'rejected') throw _authResults[0].reason;
-    if (_authResults[1] && _authResults[1].status === 'rejected') {
-      console.warn('[Login] Compat autenticado OK, pero Modular fallo — dbModular podria tardar en reconocer la sesion:', _authResults[1].reason.message);
-    }
-    _tlogL('signInWithEmailAndPassword TERMINO (Compat' + (authModular ? ' + Modular' : '') + ')');
+    _tlogL('arrancando signInWithEmailAndPassword (Modular)');
+    // CRITICO: Compat eliminado por completo — antes se autenticaban 2 conexiones de Firebase
+    // simultaneamente (Compat + Modular) con las mismas credenciales, porque dbModular
+    // necesitaba que authModular tuviera sesion iniciada para que las reglas de seguridad la
+    // reconocieran (Firestore ya esta 100% migrado a Modular, no hay ninguna lectura/escritura
+    // via Compat en todo el sistema). Autenticar 2 SDKs en paralelo significaba 2 escrituras
+    // simultaneas al mismo almacenamiento de sesion del navegador (IndexedDB) — causa real,
+    // confirmada con evidencia directa, del error intermitente signInWithEmailAndPassword
+    // FALLO: network-request-failed despues de ~30 segundos, y del patron "un F5 a veces lo
+    // arregla" (coherente con una condicion de carrera, no con un problema de red externo).
+    // Con Auth 100% migrado a Modular, ya no hay 2 SDKs compitiendo por el mismo
+    // almacenamiento — solo 1 autenticacion real, sin ninguna carrera posible.
+    await window.__fbModular.auth.signInWithEmailAndPassword(authModular, email, pass);
+    _tlogL('signInWithEmailAndPassword TERMINO (Modular)');
     _limpiarBloqueo();
 
     // CRITICO: sincroniza el rol real (custom claim) apenas se autentica, ANTES de continuar
@@ -220,13 +209,10 @@ async function _doLoginInterno() {
         // fallar rapido en vez de tardar casi un minuto en darse cuenta.
         const _fnSyncRoles = httpsCallableM(functionsModular, 'sincronizarRolesStaff', { timeout: 8000 });
         await _fnSyncRoles();
-        // Forzar refresh del token para que el claim recien asignado se refleje de inmediato
-        // en ambas conexiones (Compat y Modular) — con reintento, dado el margen real de
-        // propagacion de custom claims confirmado (ver _esperarClaimRol arriba).
-        const _rolListo = await _esperarClaimRol(fbAuth.currentUser, 3, 1200);
-        if (authModular && authModular.currentUser) {
-          await _esperarClaimRol(authModular.currentUser, 3, 1200);
-        }
+        // Forzar refresh del token para que el claim recien asignado se refleje de inmediato —
+        // con reintento, dado el margen real de propagacion de custom claims confirmado (ver
+        // _esperarClaimRol arriba).
+        const _rolListo = await _esperarClaimRol(authModular.currentUser, 3, 1200);
         _tlogL('sincronizacion de rol real TERMINO' + (_rolListo ? '' : ' (claim aun no confirmado tras los reintentos)'));
       } else {
         _tlogL('functionsModular no disponible — se omite sincronizacion de rol (Cloud Functions no desplegadas o sin conexion)');
@@ -608,10 +594,8 @@ function doLogout() {
     _miTokenFCM = null;
   }
 
-  // Cerrar sesión Firebase en segundo plano — ambas conexiones (Compat y Modular), ya que
-  // ahora ambas se autentican al entrar. Sin esto, authModular quedaria con la sesion vieja
-  // si otro usuario inicia sesion despues en el mismo dispositivo.
-  if (fbAuth) fbAuth.signOut().catch(() => {});
+  // Cerrar sesión Firebase en segundo plano. Sin esto, authModular quedaria con la sesion
+  // vieja si otro usuario inicia sesion despues en el mismo dispositivo.
   if (authModular && window.__fbModular) window.__fbModular.auth.signOut(authModular).catch(() => {});
 
   // Volver a pantalla de login
