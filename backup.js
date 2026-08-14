@@ -3,8 +3,8 @@
 // Firestore limita cada documento a 1 MB — por eso el respaldo se guarda como VARIOS
 // documentos (uno principal + uno por colección), no todo apretado en uno solo. Ventas y
 // movimientos se acotan a 30 días (mismo criterio que la poda local); el resto va completo.
-const _BACKUP_COLECCIONES_COMPLETAS = ['boletas', 'fiados', 'mermas', 'gastos', 'caja', 'clientes'];
-const _BACKUP_COLECCIONES_30DIAS = ['ventas', 'movimientos'];
+const _BACKUP_COLECCIONES_COMPLETAS = ['fiados', 'caja', 'clientes'];
+const _BACKUP_COLECCIONES_30DIAS = ['ventas', 'movimientos', 'mermas', 'gastos', 'boletas'];
 
 async function _leerColeccionParaBackup(nombreColeccion, filtrarDesde) {
   if (!dbModular) return []; // [SDK modular]
