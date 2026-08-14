@@ -581,7 +581,6 @@ function doLogout() {
   resetAppState();
 
   // Detener listeners en tiempo real
-  if (_backupTimer) { clearInterval(_backupTimer); _backupTimer = null; }
   if (_pedidosOnlineUnsub) { _pedidosOnlineUnsub(); _pedidosOnlineUnsub = null; }
   if (_fbSnapshotUnsub)    { _fbSnapshotUnsub();    _fbSnapshotUnsub    = null; }
 
