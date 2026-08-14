@@ -23,7 +23,7 @@ let _fbSaveTimer = null;
 let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ventana debounce
 let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
 let fbAuth = null; // Firebase Authentication
-let fbFunctions = null; // Cloud Functions — pasarela de pago, dormida hasta activarse
+// (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver functionsModular)
 
 // ── SDK modular — migración progresiva, paso 1 ──────────────────────────────
 // Estas instancias apuntan a la MISMA app/proyecto que fbApp/fbFS de arriba (Compat) —
@@ -43,6 +43,7 @@ let docM, setDocM, getDocM, getDocDelServidorM, getDocsM, deleteDocM, updateDocM
     queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
     serverTimestampM, deleteFieldM, onSnapshotM;
 let refM, uploadBytesM, getDownloadURLM, deleteObjectM;
+let functionsModular, httpsCallableM;
 
 // ══════════════════════════════════════════════════════════════════════════
 // Visibilidad real de sincronización — camino completo, no un parche.
@@ -257,10 +258,7 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
       try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch(persErr) { console.warn('[Auth] No se pudo fijar persistencia explicita (Compat):', persErr.message); }
       _tlog('setPersistence (Compat) listo');
       // (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver mas abajo)
-      // Pasarela de pago (dormida) — solo se usa si DB.config.pasarelaPago.activa es true
-      // Y las Cloud Functions ya fueron desplegadas manualmente. Si no se desplegaron,
-      // la llamada falla con un error claro (manejado en tndPagarEnLinea), no en silencio.
-      try { fbFunctions = firebase.functions(); } catch(e) { fbFunctions = null; }
+      // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver mas abajo)
 
       // ── SDK modular — inicializar su PROPIA conexión al mismo proyecto ─────────
       // CORRECCION: getApp() fallaba con "No Firebase App '[DEFAULT]' has been created" —
@@ -346,6 +344,8 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           // solo el riesgo del cuelgue. Se elimina la llamada por completo — authModular
           // sigue disponible para cuando se migre el login real al SDK modular.
           storageModular = window.__fbModular.storage.getStorage(appModular);
+          functionsModular = window.__fbModular.functions.getFunctions(appModular);
+          httpsCallableM = window.__fbModular.functions.httpsCallable;
           ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocFromServer: getDocDelServidorM, getDocs: getDocsM, deleteDoc: deleteDocM,
              updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
              where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
