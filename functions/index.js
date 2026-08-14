@@ -597,22 +597,31 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
   if (!request.auth || request.auth.token.firebase.sign_in_provider === "anonymous") {
     throw new Error("No autorizado.");
   }
+  logger.info(`sincronizarRolesStaff: llamado por uid=${request.auth.uid} email=${request.auth.token.email || '(sin email en token)'}`);
 
   const configSnap = await db.collection("aleze").doc("db_productos").get();
   const usuariosStaff = configSnap.exists ? (configSnap.data().usuariosStaff || []) : [];
+  logger.info(`sincronizarRolesStaff: usuariosStaff encontrados = ${usuariosStaff.length}`);
 
   const resultados = [];
   for (const u of usuariosStaff) {
-    if (!u.email || !u.rol) continue;
+    if (!u.email || !u.rol) { logger.warn(`sincronizarRolesStaff: entrada sin email/rol, se salta: ${JSON.stringify(u)}`); continue; }
     try {
       const userRecord = await admin.auth().getUserByEmail(u.email);
       await admin.auth().setCustomUserClaims(userRecord.uid, { role: u.rol });
+      // Verificacion inmediata: releer el usuario justo despues de asignarle el rol, para
+      // confirmar si el servidor YA lo tiene grabado en este mismo instante — aisla si el
+      // problema es de propagacion hacia el token del navegador, o si nunca se guardo.
+      const userVerificado = await admin.auth().getUser(userRecord.uid);
+      const esQuienLlama = userRecord.uid === request.auth.uid;
+      logger.info(`sincronizarRolesStaff: ${u.email} -> uid=${userRecord.uid}${esQuienLlama ? ' (ES quien llama)' : ''}, rol asignado=${u.rol}, claims verificados justo despues=${JSON.stringify(userVerificado.customClaims)}`);
       resultados.push({ email: u.email, rol: u.rol, ok: true });
     } catch (e) {
       logger.warn(`sincronizarRolesStaff: no se pudo sincronizar ${u.email}`, e.message);
       resultados.push({ email: u.email, rol: u.rol, ok: false, error: e.message });
     }
   }
+  logger.info(`sincronizarRolesStaff: TERMINO — ${resultados.filter(r=>r.ok).length}/${resultados.length} sincronizados ok`);
   return { ok: true, resultados };
 });
 
