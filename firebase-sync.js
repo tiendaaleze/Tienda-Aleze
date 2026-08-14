@@ -204,37 +204,20 @@ async function iniciarFirebase() {
   try {
     fbApp = firebase.initializeApp(FIREBASE_CONFIG);
     _tlog('firebase.initializeApp() listo');
-
-    // ── App Check (reCAPTCHA v3) — SDK Compat syntax ────────────────────────
-    // firebase-app-check-compat.js expone firebase.appCheck() directamente
-    // El provider se pasa como objeto {siteKey} — NO como clase constructora
-    try {
-     const appCheckInstance = firebase.appCheck(fbApp);
-appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
-      console.log('[AppCheck] activado correctamente');
-      _tlog('[AppCheck] activate() retorno (no espera token, solo dispara)');
-      // DIAGNOSTICO TEMPORAL — mide CUANTO TARDA REALMENTE generar el primer token de App
-      // Check (reCAPTCHA v3), en paralelo, sin bloquear nada del flujo normal (no lleva
-      // await).
-      const _tAppCheckStart = performance.now();
-      appCheckInstance.getToken().then(() => {
-        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check generado — tardo ${(performance.now()-_tAppCheckStart).toFixed(0)}ms`);
-      }).catch(acTokenErr => {
-        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check FALLO tras ${(performance.now()-_tAppCheckStart).toFixed(0)}ms: ${acTokenErr.message}`);
-      });
-      // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
-      // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
-      // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
-      // arrancar. Esa espera manual, en la práctica, agregaba varios segundos GARANTIZADOS a
-      // cada login sin necesidad real, y coincidía con las fallas de reconciliación
-      // reportadas ("no se pudo reconciliar caja/datos/gastos frescos") — pedir un token de
-      // más, a mano, justo antes de la ráfaga real de lecturas, competía por el mismo recurso
-      // en vez de ayudar. Si el primerísimo pedido sale sin token adjunto todavía, el manejo
-      // ya construido (Promise.allSettled en el login) lo absorbe sin romper nada.
-    } catch(acErr) {
-      console.warn('[AppCheck] no activado — la app sigue funcionando:', acErr.message);
-      _tlog('[AppCheck] fallo activate(): ' + acErr.message);
-    }
+// ── App Check (reCAPTCHA v3) — DESACTIVADO del lado Compat a propósito ──
+    // CAUSA RAIZ del login lento/roto (confirmada): App Check se activaba dos veces con la
+    // MISMA RECAPTCHA_SITE_KEY — acá (Compat, fbApp) y mas abajo (Modular, appModular).
+    // reCAPTCHA v3 solo permite un widget renderizado por site key por pagina, asi que la
+    // segunda activacion chocaba con la primera ("reCAPTCHA has already been rendered in
+    // this element"), dejando el reCAPTCHA roto para toda la carga de pagina. Con App Check
+    // activo sobre fbApp, el SDK de Auth (fbAuth) intentaba adjuntar un token de App Check a
+    // cada peticion automaticamente — con el reCAPTCHA roto, ese intento nunca resolvia, y
+    // el login esperaba el timeout completo de reCAPTCHA (30s, ver execute-ms) antes de
+    // fallar con auth/network-request-failed. Confirmado en Firebase Console que App Check
+    // esta en modo "Supervision" (no "Enforced") en Storage/Firestore/Authentication, asi
+    // que quitarlo de aca no bloquea ninguna peticion real. Se deja activo SOLO del lado
+    // Modular (mas abajo), que es el que protege dbModular/tienda publica — la superficie
+    // sin login, que es la que de verdad lo necesita.
     // ────────────────────────────────────────────────────────────────────────
 
    fbFS  = firebase.firestore();
