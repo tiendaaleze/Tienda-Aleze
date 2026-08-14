@@ -407,7 +407,7 @@ function onPromoImgSelect(e) {
       const previewData = canvas.toDataURL('image/webp', 0.78);
       const preview = document.getElementById('promo-img-preview');
       if (preview) preview.innerHTML = `<img src="${previewData}" style="width:100%;height:100%;object-fit:cover;border-radius:8px"/>`;
-      if (!fbStorage) {
+      if (!storageModular) {
         document.getElementById('promo-img-data').value = previewData;
         return;
       }
@@ -415,9 +415,9 @@ function onPromoImgSelect(e) {
       canvas.toBlob(async (blob) => {
         try {
           const fileName = `promociones/${editingPromoId || Date.now()}.webp`;
-          const ref = fbStorage.ref(fileName);
-          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
-          const url = await ref.getDownloadURL();
+          const ref = refM(storageModular, fileName);
+          await uploadBytesM(ref, blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
+          const url = await getDownloadURLM(ref);
           document.getElementById('promo-img-data').value = url;
           const lbl = document.getElementById('_promo-img-upload-lbl');
           if (lbl) lbl.remove();
