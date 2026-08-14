@@ -1730,7 +1730,7 @@ async function tndPagarEnLinea() {
     const _minDelivery = (DB.config && DB.config.deliveryMinimo) || 20;
     if (subtotal < _minDelivery) { alert(`🚚 El pedido mínimo para delivery es S/ ${_minDelivery.toFixed(2)}. Tu carrito cambió — ajústalo o elige recojo en tienda.`); return; }
   }
-  if (!fbFunctions) { alert('El pago en línea no está disponible por el momento.'); return; }
+  if (!functionsModular) { alert('El pago en línea no está disponible por el momento.'); return; }
   if (!(await _tndRevalidarStock())) return;
 
   try {
@@ -1746,7 +1746,7 @@ async function tndPagarEnLinea() {
     };
     await setDocM(docM(dbModular, 'pedidos_online', String(pedido.id)), pedido); // [SDK modular]
 
-    const crearSesion = fbFunctions.httpsCallable('crearSesionPago');
+    const crearSesion = httpsCallableM(functionsModular, 'crearSesionPago');
     const resultado = await crearSesion({ pedidoId: pedido.id, monto: pedido.total, moneda: 'PEN' });
 
     // TODO: acá se renderiza el formulario embebido de Izipay usando
