@@ -600,7 +600,14 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
   logger.info(`sincronizarRolesStaff: llamado por uid=${request.auth.uid} email=${request.auth.token.email || '(sin email en token)'}`);
 
   const configSnap = await db.collection("aleze").doc("db_productos").get();
-  const usuariosStaff = configSnap.exists ? (configSnap.data().usuariosStaff || []) : [];
+  // CRITICO: usuariosStaff vive dentro de config (db_productos.config.usuariosStaff), no en
+  // la raiz del documento — fbGuardarProductos() (cliente) siempre lo escribio anidado asi.
+  // Buscarlo en la raiz (como estaba antes) siempre encontraba 0 usuarios, sin importar
+  // cuantos reintentos se hicieran del lado del token — el rol nunca se llegaba ni a intentar
+  // asignar, porque el bucle de abajo nunca tenia nada que procesar. Confirmado con evidencia
+  // real de logs: "usuariosStaff encontrados = 0" en cada corrida, pese a que el documento
+  // real si tenia los 3 usuarios — solo que en config.usuariosStaff, no en la raiz.
+  const usuariosStaff = configSnap.exists ? (configSnap.data().config?.usuariosStaff || []) : [];
   logger.info(`sincronizarRolesStaff: usuariosStaff encontrados = ${usuariosStaff.length}`);
 
   const resultados = [];
