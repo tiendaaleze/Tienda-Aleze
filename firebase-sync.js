@@ -16,7 +16,7 @@ const FIREBASE_CONFIG = {
   appId: "1:231416120915:web:749a1a6648d0006faf68a6"
 };
 
-let fbApp = null;
+// (fbApp Compat eliminado — App Check ahora vive por completo en appModular, ver mas abajo)
 // (fbFS Compat eliminado — Firestore migrado por completo a Modular, ver dbModular)
 let _fbEscribiendo = false; // Flag anti-loop: true mientras este dispositivo escribe
 let _fbSaveTimer = null;
@@ -25,10 +25,9 @@ let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
 // (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
 // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver functionsModular)
 
-// ── SDK modular — Firestore, Auth, Storage y Functions ya 100% migrados ─────
-// Estas instancias apuntan a la MISMA app/proyecto que fbApp de arriba (Compat, que solo
-// sigue viva por App Check del lado staff) — no son una segunda conexión, es la misma, vista
-// con la sintaxis nueva.
+// ── SDK modular — Firestore, Auth, Storage, Functions y App Check, 100% migrados ─────
+// Estas instancias apuntan al proyecto configurado en FIREBASE_CONFIG — el sistema entero
+// corre sobre esta unica conexion ahora, sin ningun rastro de Compat.
 let dbModular = null;
 let authModular = null;
 let storageModular = null;
@@ -201,38 +200,9 @@ async function iniciarFirebase() {
   const _tlog = (msg) => console.log(`⏱️ [T+${(performance.now()-_t0).toFixed(0)}ms] ${msg}`);
   _tlog('iniciarFirebase() arranca');
   try {
-    fbApp = firebase.initializeApp(FIREBASE_CONFIG);
-    _tlog('firebase.initializeApp() listo');
-// ── App Check (reCAPTCHA v3) — SDK Compat syntax ────────────────────────
-    // firebase-app-check-compat.js expone firebase.appCheck() directamente
-    // El provider se pasa como objeto {siteKey} — NO como clase constructora
-    try {
-     const appCheckInstance = firebase.appCheck(fbApp);
-appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
-      console.log('[AppCheck] activado correctamente');
-      _tlog('[AppCheck] activate() retorno (no espera token, solo dispara)');
-      // DIAGNOSTICO TEMPORAL — mide CUANTO TARDA REALMENTE generar el primer token de App
-      // Check (reCAPTCHA v3), en paralelo, sin bloquear nada del flujo normal (no lleva
-      // await).
-      const _tAppCheckStart = performance.now();
-      appCheckInstance.getToken().then(() => {
-        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check generado — tardo ${(performance.now()-_tAppCheckStart).toFixed(0)}ms`);
-      }).catch(acTokenErr => {
-        console.log(`⏱️🔬 [DIAGNOSTICO] Token de App Check FALLO tras ${(performance.now()-_tAppCheckStart).toFixed(0)}ms: ${acTokenErr.message}`);
-      });
-      // CRITICO: se eliminó la espera manual de "primer token antes de leer datos" que existía
-      // acá. Firestore YA adjunta el token de App Check a cada pedido automáticamente, por su
-      // cuenta, en cuanto activate() se llama — no hace falta pre-buscarlo a mano antes de
-      // arrancar. Esa espera manual, en la práctica, agregaba varios segundos GARANTIZADOS a
-      // cada login sin necesidad real, y coincidía con las fallas de reconciliación
-      // reportadas ("no se pudo reconciliar caja/datos/gastos frescos") — pedir un token de
-      // más, a mano, justo antes de la ráfaga real de lecturas, competía por el mismo recurso
-      // en vez de ayudar. Si el primerísimo pedido sale sin token adjunto todavía, el manejo
-      // ya construido (Promise.allSettled en el login) lo absorbe sin romper nada.
-    } catch(acErr) {
-      console.warn('[AppCheck] no activado — la app sigue funcionando:', acErr.message);
-      _tlog('[AppCheck] fallo activate(): ' + acErr.message);
-    }
+    // (fbApp/App Check Compat eliminados — completamente redundantes: App Check ya se activa
+    // mas abajo para appModular, la unica conexion real que usa todo el sistema ahora que
+    // Firestore/Auth/Storage/Functions estan 100% migrados a Modular)
     // ────────────────────────────────────────────────────────────────────────
 
    // (fbFS Compat eliminado — Firestore migrado por completo a Modular desde antes, ver dbModular)
@@ -256,13 +226,14 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
           _tlog('initializeAppModular() listo');
 
-          // CRITICO: App Check tambien para la instancia modular — la version compat de arriba
-          // solo protege fbApp (panel de staff, con login). dbModular es la conexion que usa
-          // tienda-publica.js, sin ningun login de por medio, expuesta a cualquiera en
-          // internet — exactamente donde un bot golpeando directo la API de Firestore/Storage
-          // sin pasar por el sitio real podria generar lecturas masivas sin limite. Mismo
-          // patron defensivo que la version compat: no bloqueante, si falla la tienda sigue
-          // funcionando igual, solo sin esta capa de proteccion.
+          // CRITICO: App Check para appModular — protege absolutamente todo el sistema, staff
+          // y tienda publica por igual, ya que ambos usan esta misma conexion Modular ahora
+          // (Firestore/Auth/Storage/Functions 100% migrados, sin ningun rastro de Compat).
+          // Especialmente importante para tienda-publica.js, sin ningun login de por medio,
+          // expuesta a cualquiera en internet — exactamente donde un bot golpeando directo la
+          // API de Firestore/Storage sin pasar por el sitio real podria generar lecturas
+          // masivas sin limite. No bloqueante: si falla, la app sigue funcionando igual, solo
+          // sin esta capa de proteccion.
           try {
             const { initializeAppCheck, ReCaptchaV3Provider } = window.__fbModular.appCheck;
             initializeAppCheck(appModular, {
