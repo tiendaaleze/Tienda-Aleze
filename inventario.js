@@ -277,6 +277,7 @@ function editarProducto(id) {
 }
 
 function onProdImgSelect(e) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede subir imágenes de producto.'); return; }
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -345,6 +346,7 @@ function _toggleDetalleProducto() {
 
 // Fotos extra: mismo patrón que la imagen principal — sube a Storage, guarda solo la URL.
 function onProdImgExtraSelect(e, slot) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede subir imágenes de producto.'); return; }
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -406,6 +408,7 @@ function limpiarImgProd() {
 }
 
 function eliminarProducto(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar productos.'); return; }
   if (!confirm('¿Eliminar este producto?')) return;
   const tieneFiado = DB.fiados.some(f => f.items.some(i => i.prodId === id));
   if (tieneFiado) { alert('Este producto tiene fiados pendientes. Salda los fiados antes de eliminarlo.'); return; }
@@ -712,6 +715,7 @@ function guardarProducto() {
 let editingCatId = null;
 
 function onCatImgSelect(e) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede subir imágenes de categoría.'); return; }
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -974,6 +978,7 @@ function imprimirQrsMasivos() {
 }
 
 function actualizarPreciosCat(modo) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede actualizar precios por categoría.'); return; }
   if (!editingCatId) return;
   const cat = DB.categorias.find(c => c.id === editingCatId);
   const prods = DB.productos.filter(p => p.cat == editingCatId);
@@ -1010,6 +1015,7 @@ function actualizarPreciosCat(modo) {
 }
 
 function aplicarPreciosCatSeleccionados() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede aplicar precios seleccionados.'); return; }
   if (!editingCatId) return;
   const cat = DB.categorias.find(c => c.id === editingCatId);
   const prods = DB.productos.filter(p => p.cat == editingCatId);
@@ -1031,6 +1037,7 @@ function aplicarPreciosCatSeleccionados() {
 }
 
 function eliminarCategoria(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar categorías.'); return; }
   if (DB.productos.some(p => p.cat == id)) { alert('No puedes eliminar una categoría con productos asignados'); return; }
   if (!confirm('¿Eliminar esta categoría?')) return;
   DB.categorias = DB.categorias.filter(c => c.id !== id); fbGuardarProductos();
@@ -1364,6 +1371,7 @@ function actualizarInvMensual(i, campo, valor) {
 }
 
 async function sincronizarMermasInventario() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede sincronizar mermas de inventario.'); return; }
   const sede = sedeAdminEfectiva();
   const fechaInv = document.getElementById('inv-mens-fecha').value || today();
   const _pendientes = []; // {prod, cantidad, mermaObj}
@@ -1456,6 +1464,7 @@ async function sincronizarMermasInventario() {
 // sigue disponible aparte, intacta, para cuando si se quiera registrar una perdida real con
 // motivo.
 async function guardarInventarioMensual() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede guardar el inventario mensual.'); return; }
   const sede = sedeAdminEfectiva();
   const fecha = document.getElementById('inv-mens-fecha').value || today();
 
@@ -1590,6 +1599,7 @@ function abrirSugerirPrecios() {
 
 // FIX: botón Aplicar individual — con feedback visual
 function aplicarSug(i, id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede aplicar sugerencias de precio.'); return; }
   const input = document.getElementById('sg-' + i);
   if (!input) return;
   const v = parseFloat(input.value);
@@ -1610,6 +1620,7 @@ function aplicarSug(i, id) {
 }
 
 function aplicarTodosPrecios() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede aplicar todos los precios.'); return; }
   if (!window._sugData) return;
   const _idsAplicados = [];
   window._sugData.forEach((sd, i) => {
