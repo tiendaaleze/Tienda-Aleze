@@ -2,7 +2,7 @@
 function _uploadConfigImg(fileInput, targetFieldId, storagePath) {
   const file = fileInput.files[0];
   if (!file) return;
-  if (!fbStorage) { alert('Storage no disponible'); return; }
+  if (!storageModular) { alert('Storage no disponible'); return; }
   const btn = fileInput.nextElementSibling;
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
   const reader = new FileReader();
@@ -23,9 +23,9 @@ function _uploadConfigImg(fileInput, targetFieldId, storagePath) {
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(async (blob) => {
         try {
-          const ref = fbStorage.ref(storagePath);
-          await ref.put(blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
-          const url = await ref.getDownloadURL();
+          const ref = refM(storageModular, storagePath);
+          await uploadBytesM(ref, blob, { contentType: 'image/webp', cacheControl: 'public, max-age=2592000' });
+          const url = await getDownloadURLM(ref);
           const field = document.getElementById(targetFieldId);
           if (field) field.value = url;
           if (btn) { btn.disabled = false; btn.textContent = '📁 Subir'; }
