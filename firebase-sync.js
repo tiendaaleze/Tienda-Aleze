@@ -17,21 +17,18 @@ const FIREBASE_CONFIG = {
 };
 
 let fbApp = null;
-let fbFS = null;          // Firestore instance
+// (fbFS Compat eliminado — Firestore migrado por completo a Modular, ver dbModular)
 let _fbEscribiendo = false; // Flag anti-loop: true mientras este dispositivo escribe
 let _fbSaveTimer = null;
 let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ventana debounce
 let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
-let fbAuth = null; // Firebase Authentication
+// (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
 // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver functionsModular)
 
-// ── SDK modular — migración progresiva, paso 1 ──────────────────────────────
-// Estas instancias apuntan a la MISMA app/proyecto que fbApp/fbFS de arriba (Compat) —
-// no son una segunda conexión, es la misma, vista con la sintaxis nueva. Empiezan en null
-// y se completan dentro de iniciarFirebase(), después de que Compat ya inicializó todo.
-// Mientras ninguna función use dbModular/authModular/etc., el sistema entero sigue
-// funcionando exactamente igual que antes — esto no reemplaza nada todavía, solo
-// deja el camino tendido para migrar función por función.
+// ── SDK modular — Firestore, Auth, Storage y Functions ya 100% migrados ─────
+// Estas instancias apuntan a la MISMA app/proyecto que fbApp de arriba (Compat, que solo
+// sigue viva por App Check del lado staff) — no son una segunda conexión, es la misma, vista
+// con la sintaxis nueva.
 let dbModular = null;
 let authModular = null;
 let storageModular = null;
@@ -238,25 +235,8 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
     }
     // ────────────────────────────────────────────────────────────────────────
 
-   fbFS  = firebase.firestore();
-      _tlog('firebase.firestore() (Compat) listo');
-      // fbFS ya no hace ninguna operación real de Firestore — la migración completa al SDK
-      // modular movió todo (las 157 referencias originales) a dbModular. Por eso ya no tiene
-      // enablePersistence() acá — tenerlo generaba una segunda coordinación multi-pestaña vía
-      // IndexedDB compitiendo con la de dbModular, causando permission-denied y demoras de
-      // varios minutos (ya corregido, quitando esa llamada).
-      fbAuth = firebase.auth();
-      _tlog('firebase.auth() (Compat) listo');
-      // CRITICO: sin esto, el SDK de Auth "adivina" el mejor metodo de persistencia segun el
-      // navegador — en ciertos navegadores moviles con proteccion de privacidad fuerte, esa
-      // auto-deteccion intenta requestStorageAccess() (pensado para contextos de iframe de
-      // terceros, que esta app nunca es — corre standalone/PWA). Cuando el navegador la
-      // rechaza ("Permission denied", visto en consola), el SDK puede quedar en un estado
-      // roto que produce el TypeError no capturado que sigue justo despues en los logs.
-      // Fijando el metodo explicito (localStorage simple, mismo origen, sin necesidad de
-      // ningun permiso de terceros) se evita que el SDK intente esa deteccion en absoluto.
-      try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch(persErr) { console.warn('[Auth] No se pudo fijar persistencia explicita (Compat):', persErr.message); }
-      _tlog('setPersistence (Compat) listo');
+   // (fbFS Compat eliminado — Firestore migrado por completo a Modular desde antes, ver dbModular)
+      // (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
       // (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver mas abajo)
       // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver mas abajo)
 
@@ -331,18 +311,26 @@ appCheckInstance.activate(RECAPTCHA_SITE_KEY, true);
           _tlog('dbModular = getFirestore() SIN persistencia offline (desactivada a proposito)');
           authModular = window.__fbModular.auth.getAuth(appModular);
           _tlog('authModular = getAuth() listo');
-          // CRITICO: encontrada la causa real de la demora intermitente de 20-30+ segundos,
-          // confirmada con cronometros reales — setPersistence(authModular, ...) en el SDK
-          // MODULAR podia colgarse mas de 30 SEGUNDOS en un intento y solo ~550ms en el
-          // siguiente, misma linea exacta. browserLocalPersistence en el SDK modular usa
-          // IndexedDB por dentro (a diferencia de la version Compat, que usa localStorage
-          // simple y por eso siempre es instantanea) — el mismo tipo de bloqueo de
-          // coordinacion entre pestañas/IndexedDB ya diagnosticado antes para Firestore
-          // (persistentMultipleTabManager). El login real usa fbAuth (Compat,
-          // signInWithEmailAndPassword en auth.js) — authModular no se usa para ningun login
-          // real todavia, asi que fijarle persistencia no cumplia ningun proposito funcional,
-          // solo el riesgo del cuelgue. Se elimina la llamada por completo — authModular
-          // sigue disponible para cuando se migre el login real al SDK modular.
+          // CRITICO: fijar persistencia explicita evita que el SDK "adivine" el metodo segun
+          // el navegador — en ciertos navegadores con proteccion de privacidad fuerte, esa
+          // auto-deteccion puede intentar requestStorageAccess() y dejar el SDK en un estado
+          // roto (mismo motivo por el que ya se fijaba explicito en Compat). Pero ya se
+          // confirmo con evidencia real (cronometros reales, T+30000ms+) que esta misma
+          // llamada puede colgarse por coordinacion de IndexedDB entre pestañas del mismo
+          // perfil de navegador — con limite de tiempo: si no termina en 4 segundos (el caso
+          // normal tarda ~550ms), se sigue de largo igual con la persistencia por defecto
+          // que el SDK ya trae activa, en vez de bloquear el login entero por otros 25+
+          // segundos como ocurria antes.
+          try {
+            await Promise.race([
+              window.__fbModular.auth.setPersistence(authModular, window.__fbModular.auth.browserLocalPersistence),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout 4s')), 4000))
+            ]);
+            _tlog('setPersistence (Modular) listo');
+          } catch (persErr) {
+            console.warn('[Auth] setPersistence (Modular) no confirmado a tiempo — continuando con la persistencia por defecto del SDK:', persErr.message);
+            _tlog('setPersistence (Modular) FALLO/TIMEOUT (no bloqueante): ' + persErr.message);
+          }
           storageModular = window.__fbModular.storage.getStorage(appModular);
           functionsModular = window.__fbModular.functions.getFunctions(appModular);
           httpsCallableM = window.__fbModular.functions.httpsCallable;
@@ -480,7 +468,7 @@ function fbGuardar() {
 let _fbProdSaveTimers = {}; // debounce por producto individual — {prodId: timerId}
 function fbGuardarProducto(prodId) {
   if (!dbModular) return;
-  if (!fbAuth || !fbAuth.currentUser) return;
+  if (!authModular || !authModular.currentUser) return;
   clearTimeout(_fbProdSaveTimers[prodId]);
   _fbProdSaveTimers[prodId] = setTimeout(() => {
     const prod = DB.productos.find(p => p.id === prodId);
@@ -584,7 +572,7 @@ function fbEscucharProductosColeccion() {
 
 function fbGuardarProductos() {
   if (!dbModular) return; // [SDK modular]
-  if (!fbAuth || !fbAuth.currentUser) return;
+  if (!authModular || !authModular.currentUser) return;
   _fbLastWriteProdTs = Date.now();
   clearTimeout(_fbSaveTimerProd);
  _fbSaveTimerProd = setTimeout(function _tryGuardarProd() {
@@ -646,7 +634,7 @@ function fbGuardarProductos() {
 // doc 'db' → operaciones  |  doc 'db_productos' → catálogo
 let _fbProdCacheTs = 0; // timestamp última carga de db_productos
 function fbEscuchar() {
-  if (!fbFS) return;
+  if (!dbModular) return;
   // CRITICO: el listener de aleze/db se eliminó por completo — desde que fbGuardar() ya no
   // escribe nada ahí (todo migrado a sus propias colecciones/documentos), nada en operación
   // normal vuelve a tocar ese documento, así que este listener nunca se disparaba de verdad.
