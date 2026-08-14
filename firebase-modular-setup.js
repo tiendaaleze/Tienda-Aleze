@@ -8,7 +8,7 @@
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import {
     getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously,
-    setPersistence, browserLocalPersistence
+    setPersistence, browserLocalPersistence, updatePassword, RecaptchaVerifier, signInWithPhoneNumber
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
   import { initializeAppCheck, ReCaptchaV3Provider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
@@ -22,7 +22,7 @@
   window.__fbModular = {
     initializeAppModular,
     firestore: { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, getDocFromServer, getDocs, deleteDoc, updateDoc, addDoc, collection, query, where, orderBy, limit, writeBatch, runTransaction, increment, serverTimestamp, deleteField, onSnapshot, Timestamp },
-    auth: { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously, setPersistence, browserLocalPersistence },
+    auth: { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, signInAnonymously, setPersistence, browserLocalPersistence, updatePassword, RecaptchaVerifier, signInWithPhoneNumber },
     storage: { getStorage, ref, uploadBytes, getDownloadURL, deleteObject },
     appCheck: { initializeAppCheck, ReCaptchaV3Provider, getAppCheckToken },
     messaging: { getMessaging, getMessagingToken, onMessage },
