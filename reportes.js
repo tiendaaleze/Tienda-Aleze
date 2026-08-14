@@ -1505,6 +1505,7 @@ function actualizarContadorAceptados() {
 }
 
 function aplicarCambiosExcel() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede aplicar cambios de Excel.'); return; }
   const aceptados = _excelCambiosPendientes.filter(c => c.aceptado);
   if (!aceptados.length) { alert('No hay cambios aceptados para aplicar.'); return; }
 
