@@ -396,20 +396,20 @@ async function cambiarPassword() {
   if (nueva !== conf) { alert('Las contraseñas no coinciden'); return; }
 
   // Solo el admin puede cambiar su propia contraseña (usuario autenticado actualmente)
-  if (!fbAuth || !fbAuth.currentUser) {
+  if (!authModular || !authModular.currentUser) {
     alert('⚠️ Debes estar autenticado para cambiar la contraseña'); return;
   }
 
   // Verificar que el admin esté cambiando su propia cuenta
   const _usrCfg = (DB.config.usuariosStaff || []).find(u => u.nombre === user);
   const emailEsperado = _usrCfg ? _usrCfg.email : null;
-  if (fbAuth.currentUser.email !== emailEsperado) {
+  if (authModular.currentUser.email !== emailEsperado) {
     alert('⚠️ Solo puedes cambiar tu propia contraseña. Pide al usuario que inicie sesión.'); return;
   }
 
   try {
     // Actualizar en Firebase Auth (fuente de verdad)
-    await fbAuth.currentUser.updatePassword(nueva);
+    await window.__fbModular.auth.updatePassword(authModular.currentUser, nueva);
     document.getElementById('cfg-pass-nueva').value = '';
     document.getElementById('cfg-pass-conf').value = '';
     alert('✅ Contraseña actualizada en Firebase para ' + user);
