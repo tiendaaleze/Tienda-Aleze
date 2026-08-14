@@ -265,7 +265,7 @@ async function _completarSesion(name, role) {
   // ── PASO 3: Cargar datos desde Firebase ANTES de cualquier render ──
   if (btnEl) { btnEl.textContent = '⏳ Cargando datos...'; }
 
-  if (fbFS) {
+  if (dbModular) {
     try {
       // CRITICO: las 14 lecturas de esta seccion son completamente independientes entre si en
       // terminos de RED — ninguna necesita el RESULTADO de otra para saber que pedir. Antes
