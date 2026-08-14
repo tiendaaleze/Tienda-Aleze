@@ -46,31 +46,21 @@ window.addEventListener('error', function(e) {
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="early-loaders.js"></script>
 <script src="early-route-pwa.js"></script>
-<!-- defer: no bloquean el parseo del HTML mientras descargan — se ejecutan en ESTE orden
-     (defer respeta el orden del documento, a diferencia de async) justo antes de
-     DOMContentLoaded. Seguro acá porque el único punto de entrada real, iniciarFirebase(),
-     vive dentro de un listener de DOMContentLoaded — que por especificación del estándar
-     dispara recién DESPUÉS de que todos los scripts con defer ya terminaron de ejecutar, así
-     que firebase.* siempre existe para cuando se necesita. Verificado que ningún otro bloque de
-     script del archivo usa firebase.* fuera de una función (nada corre a nivel superior). -->
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
-<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<!-- (7 scripts Compat de Firebase eliminados — App/AppCheck/Firestore/Auth/Storage/
+     Messaging/Functions, todos migrados al 100% a Modular. El unico lugar que sigue usando
+     Compat es sw.js, el Service Worker — carga su propia copia de forma independiente via
+     importScripts() directo desde gstatic.com, nunca dependio de estos scripts. Se queda asi
+     a proposito: los Service Workers como modulos ES6 (unica forma de usar "import" ahi en
+     vez de importScripts) tienen soporte historicamente mas limitado en Safari/iOS, y romper
+     las notificaciones push de pedidos nuevos en algunos dispositivos es un riesgo real que
+     no se justifica solo por completar la migracion en un archivo que ya funciona bien. -->
 
 <!-- ══════════════════════════════════════════════════════════════════════
-     MIGRACIÓN SDK MODULAR — completa. Firestore migrado al 100% (las 157
-     referencias originales a fbFS.collection()/batch()/runTransaction() ya
-     usan la sintaxis modular: setDoc(doc(dbModular,'x','y'), z) en vez de
-     fbFS.collection('x').doc('y').set(z)). El Compat de arriba se mantiene
-     cargado únicamente por Auth/Storage/Functions/Messaging, que quedaron
-     fuera de esta migración específica — ambos SDK apuntan a la MISMA
-     conexión real (mismo proyecto, misma sesión), sin duplicar ni
-     inicializar dos veces. Este script expone las funciones modulares en
-     window.__fbModular, usadas en todo punto de contacto con Firestore.
+     MIGRACIÓN SDK MODULAR — 100% completa. Firestore, Auth, Storage, Functions,
+     App Check y Messaging (fuera del Service Worker) migrados por completo —
+     sin ningun rastro de Compat cargado en esta pagina. Este script expone
+     las funciones modulares en window.__fbModular, usadas en todo punto de
+     contacto con Firebase.
      ══════════════════════════════════════════════════════════════════════ -->
 <script type="module" src="firebase-modular-setup.js"></script>
 <link rel="stylesheet" href="styles.css">
@@ -124,7 +114,7 @@ window.addEventListener('error', function(e) {
       <div class="stat-item"><span class="stat-num" id="welcome-stat-productos">—</span><span class="stat-lbl">Productos</span></div>
       <div class="stat-item"><span class="stat-num" id="welcome-stat-categorias">—</span><span class="stat-lbl">Categorías</span></div>
     </div>
-    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.14-1400</div>
+    <div style="color:var(--gray-400);font-size:.68rem;margin-top:.5rem">v2026.08.14-1500</div>
     <button type="button" class="btn-personal-icon" title="Ingreso del equipo" aria-label="Ingreso del equipo" onclick="document.getElementById('login-welcome').style.display='none';document.getElementById('login-form-panel').style.display='block';try{if(typeof fbPatchDB==='function')fbPatchDB();if(typeof renderLoginDropdown==='function')renderLoginDropdown();}catch(e){}const _lu=localStorage.getItem('aleze_last_user');const _ls=document.getElementById('login-user');if(_lu&&_ls)_ls.value=_lu;document.getElementById('login-pass').focus();">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="7.5" cy="15.5" r="5.5"></circle>
@@ -148,7 +138,7 @@ window.addEventListener('error', function(e) {
     <div id="login-error" style="color:var(--danger);font-size:0.8rem;margin-bottom:0.5rem;display:none">Contraseña incorrecta</div>
     <button type="button" class="btn-login" id="btn-login" onclick="doLogin()" disabled>⏳ Cargando...</button>
     <button type="button" class="btn-volver" onclick="volverWelcome()">← Volver</button>
-    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.14-1400</div>
+    <div style="text-align:center;font-size:.68rem;color:var(--gray-300);margin-top:.6rem;user-select:none">v2026.08.14-1500</div>
   </div>
 
 </div>
