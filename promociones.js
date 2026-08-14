@@ -186,6 +186,7 @@ function eliminarMerma(id) {
   abrirModal('modal-confirmar-eliminar-merma');
 }
 async function _confirmarElimMerma() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar mermas.'); return; }
   const opcion = document.querySelector('input[name="merma-elim-opcion"]:checked');
   if (!opcion) { alert('Selecciona una opción antes de continuar.'); return; }
   const m = DB.mermas.find(x => x.id === _mermaElimId);
@@ -680,6 +681,7 @@ function togglePromo(id) {
   try { renderMobPosGrid(); } catch(e){}
 }
 function eliminarPromo(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar promociones.'); return; }
   if (!confirm('¿Eliminar?')) return;
   const p = DB.promociones.find(x => x.id === id);
   if (p && p.packProdId) {
