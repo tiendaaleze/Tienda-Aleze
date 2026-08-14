@@ -1,7 +1,8 @@
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/Tienda-Aleze/sw.js', {
-      scope: '/Tienda-Aleze/'
+      scope: '/Tienda-Aleze/',
+      type: 'module'
     }).then(function(reg) {
       console.log('[PWA] Service Worker registrado:', reg.scope);
 
