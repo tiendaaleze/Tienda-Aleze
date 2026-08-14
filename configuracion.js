@@ -271,10 +271,10 @@ async function _cargarComprobantesConError() {
 // reintentarComprobante() en functions/index.js). La venta ya existe de antes; esto nunca la
 // toca, solo reintenta la parte de SUNAT.
 async function reintentarComprobante(coleccion, id, btnEl) {
-  if (!fbFunctions) { alert('Las Cloud Functions no están desplegadas todavía — no hay nada que reintentar.'); return; }
+  if (!functionsModular) { alert('Las Cloud Functions no están desplegadas todavía — no hay nada que reintentar.'); return; }
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳...'; }
   try {
-    const fn = fbFunctions.httpsCallable('reintentarComprobante');
+    const fn = httpsCallableM(functionsModular, 'reintentarComprobante');
     await fn({ coleccion, id });
     alert('✅ Reintento enviado. Actualizando la lista...');
     _cargarComprobantesConError();
