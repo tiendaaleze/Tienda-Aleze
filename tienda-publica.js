@@ -87,16 +87,16 @@ function _tndFormatearTelefonoPeru(tel) {
   return '+51' + limpio.replace(/^51/, '');
 }
 
-// Envía el código por SMS al teléfono dado. Requiere fbAuth (ya inicializado para login
+// Envía el código por SMS al teléfono dado. Requiere authModular (ya inicializado para login
 // de staff — se reutiliza, no es un servicio aparte) y el contenedor reCAPTCHA invisible.
 function tndEnviarCodigoSMS(tel) {
-  if (!fbAuth) { alert('Servicio no disponible por el momento. Intenta más tarde.'); return Promise.resolve(false); }
+  if (!authModular) { alert('Servicio no disponible por el momento. Intenta más tarde.'); return Promise.resolve(false); }
   const telE164 = _tndFormatearTelefonoPeru(tel);
   try {
     if (!_tndRecaptchaVerifier) {
-      _tndRecaptchaVerifier = new firebase.auth.RecaptchaVerifier('tnd-recaptcha-container', { size: 'invisible' });
+      _tndRecaptchaVerifier = new window.__fbModular.auth.RecaptchaVerifier(authModular, 'tnd-recaptcha-container', { size: 'invisible' });
     }
-    return fbAuth.signInWithPhoneNumber(telE164, _tndRecaptchaVerifier)
+    return window.__fbModular.auth.signInWithPhoneNumber(authModular, telE164, _tndRecaptchaVerifier)
       .then(confirmationResult => {
         _tndConfirmationResult = confirmationResult;
         return true;
