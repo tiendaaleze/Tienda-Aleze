@@ -12,10 +12,10 @@
 // Dormido hasta que se configure VAPID_KEY en index.html y se registre al
 // menos un dispositivo — sin eso, esto no recibe nada, no rompe nada.
 try {
-  importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
-  importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
+  const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+  const { getMessaging, onBackgroundMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-sw.js');
 
-  firebase.initializeApp({
+  const app = initializeApp({
     apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
     authDomain: "tienda-aleze.firebaseapp.com",
     projectId: "tienda-aleze",
@@ -24,12 +24,12 @@ try {
     appId: "1:231416120915:web:749a1a6648d0006faf68a6"
   });
 
-  const messaging = firebase.messaging();
+  const messaging = getMessaging(app);
 
   // El mensaje llega como "data" (sin campo "notification", ver Cloud Function) —
   // por eso hay que armar la notificación acá a mano, en vez de que el navegador
   // la muestre solo (eso evitaría poder personalizar el ícono y el clic).
-  messaging.onBackgroundMessage((payload) => {
+  onBackgroundMessage(messaging, (payload) => {
     const datos = payload.data || {};
     self.registration.showNotification(datos.titulo || '🛍️ Nuevo pedido online', {
       body: datos.cuerpo || '',
