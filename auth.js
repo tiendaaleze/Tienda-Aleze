@@ -196,7 +196,13 @@ async function _doLoginInterno() {
     _tlogL('arrancando sincronizacion de rol real (custom claim)');
     try {
       if (fbFunctions) {
-        const _fnSyncRoles = fbFunctions.httpsCallable('sincronizarRolesStaff');
+        // CRITICO: timeout corto explicito (8s) en vez del default del SDK (70s) — causa real
+        // confirmada del retraso de mas de 1 minuto en el primer login: mientras la Cloud
+        // Function no este desplegada (o ante cualquier problema de red real), sin esto cada
+        // intento esperaba el timeout completo antes de que el catch de abajo pudiera
+        // continuar. No cambia el comportamiento no bloqueante ya diseñado, solo lo hace
+        // fallar rapido en vez de tardar casi un minuto en darse cuenta.
+        const _fnSyncRoles = fbFunctions.httpsCallable('sincronizarRolesStaff', { timeout: 8000 });
         await _fnSyncRoles();
         // Forzar refresh del token para que el claim recien asignado se refleje de inmediato
         // en ambas conexiones (Compat y Modular) — sin esto, la sesion seguiria usando el
