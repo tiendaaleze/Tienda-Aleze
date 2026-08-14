@@ -538,14 +538,14 @@ let _miTokenFCM = null;
 // Dormido hasta que VAPID_KEY tenga la clave real (ver comentario junto a esa constante).
 async function _registrarNotificacionesPush() {
   if (VAPID_KEY === 'PENDIENTE') return; // no configurado todavia, no hace nada
-  if (!('Notification' in window) || !('serviceWorker' in navigator) || !firebase.messaging) return;
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !window.__fbModular || !authModular) return;
   try {
     const permiso = await Notification.requestPermission();
     if (permiso !== 'granted') { console.log('[FCM] Notificaciones no autorizadas por el usuario.'); return; }
 
     const reg = await navigator.serviceWorker.ready;
-    const messaging = firebase.messaging();
-    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    const messagingModular = window.__fbModular.messaging.getMessaging(authModular.app);
+    const token = await window.__fbModular.messaging.getMessagingToken(messagingModular, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
     if (!token) { console.warn('[FCM] No se pudo obtener el token del dispositivo.'); return; }
     _miTokenFCM = token;
 
