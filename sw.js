@@ -11,39 +11,46 @@
 // acá, en el Service Worker, que sigue vivo aunque la pestaña este cerrada.
 // Dormido hasta que se configure VAPID_KEY en index.html y se registre al
 // menos un dispositivo — sin eso, esto no recibe nada, no rompe nada.
-try {
-  const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
-  const { getMessaging, onBackgroundMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-sw.js');
+// CRITICO: envuelto en una IIFE async — "top-level await" (await directo, sin envolver, a
+// nivel superior del modulo) esta prohibido en el scope global de un Service Worker en
+// cualquier navegador (restriccion de la especificacion, no de compatibilidad Safari/iOS) —
+// rompia el registro del Service Worker por completo ("ServiceWorker cannot be started"),
+// no solo las notificaciones. Misma logica exacta de adentro, solo el envoltorio cambia.
+(async () => {
+  try {
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+    const { getMessaging, onBackgroundMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-sw.js');
 
-  const app = initializeApp({
-    apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
-    authDomain: "tienda-aleze.firebaseapp.com",
-    projectId: "tienda-aleze",
-    storageBucket: "tienda-aleze.firebasestorage.app",
-    messagingSenderId: "231416120915",
-    appId: "1:231416120915:web:749a1a6648d0006faf68a6"
-  });
-
-  const messaging = getMessaging(app);
-
-  // El mensaje llega como "data" (sin campo "notification", ver Cloud Function) —
-  // por eso hay que armar la notificación acá a mano, en vez de que el navegador
-  // la muestre solo (eso evitaría poder personalizar el ícono y el clic).
-  onBackgroundMessage(messaging, (payload) => {
-    const datos = payload.data || {};
-    self.registration.showNotification(datos.titulo || '🛍️ Nuevo pedido online', {
-      body: datos.cuerpo || '',
-      icon: '/Tienda-Aleze/icon.svg',
-      tag: 'pedido-' + (datos.pedidoId || Date.now()),
-      data: { pedidoId: datos.pedidoId },
-      vibrate: [300, 100, 300, 100, 300], // el sonido lo decide el sistema operativo, no esto —
-      silent: false,                       // pero la vibracion si es confiable en Android
-      requireInteraction: true             // se queda visible hasta que se toque, no desaparece sola
+    const app = initializeApp({
+      apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
+      authDomain: "tienda-aleze.firebaseapp.com",
+      projectId: "tienda-aleze",
+      storageBucket: "tienda-aleze.firebasestorage.app",
+      messagingSenderId: "231416120915",
+      appId: "1:231416120915:web:749a1a6648d0006faf68a6"
     });
-  });
-} catch (e) {
-  console.warn('[SW] Notificaciones push no disponibles:', e);
-}
+
+    const messaging = getMessaging(app);
+
+    // El mensaje llega como "data" (sin campo "notification", ver Cloud Function) —
+    // por eso hay que armar la notificación acá a mano, en vez de que el navegador
+    // la muestre solo (eso evitaría poder personalizar el ícono y el clic).
+    onBackgroundMessage(messaging, (payload) => {
+      const datos = payload.data || {};
+      self.registration.showNotification(datos.titulo || '🛍️ Nuevo pedido online', {
+        body: datos.cuerpo || '',
+        icon: '/Tienda-Aleze/icon.svg',
+        tag: 'pedido-' + (datos.pedidoId || Date.now()),
+        data: { pedidoId: datos.pedidoId },
+        vibrate: [300, 100, 300, 100, 300], // el sonido lo decide el sistema operativo, no esto —
+        silent: false,                       // pero la vibracion si es confiable en Android
+        requireInteraction: true             // se queda visible hasta que se toque, no desaparece sola
+      });
+    });
+  } catch (e) {
+    console.warn('[SW] Notificaciones push no disponibles:', e);
+  }
+})();
 
 // Al tocar la notificación, abrir la app (o enfocar la pestaña si ya está abierta)
 self.addEventListener('notificationclick', (event) => {
