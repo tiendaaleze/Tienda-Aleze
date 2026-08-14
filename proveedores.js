@@ -77,6 +77,7 @@ function guardarProveedor() {
 }
 
 function eliminarProveedor(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar proveedores.'); return; }
   const prodsAsociados = DB.productos.filter(p => p.prov == id);
   if (prodsAsociados.length > 0) {
     if (!confirm(`Este proveedor tiene ${prodsAsociados.length} producto(s) asociado(s).\n¿Deseas eliminarlo de todas formas? Los productos quedarán sin proveedor asignado.`)) return;
