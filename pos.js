@@ -524,10 +524,11 @@ function _posClienteBuscar() {
     // dropdown se hacia visible (display:block) pero completamente vacio, indistinguible de
     // "no funciona" para cualquiera que lo mirara. El HTML ahora empieza en la MISMA linea que
     // el return, sin el salto de linea que disparaba la insercion automatica del punto y coma.
-    sug.innerHTML = matches.map(c => { const _deudaC = clienteDeudaMonto(c); return `<div onclick="_posClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
-        ${escapeHtml(c.alias || c.nombre)}${_deudaC>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(_deudaC)})</span>` : ''}
-       </div>`;
-    }).join('');
+
+   sug.innerHTML = matches.map(c => { const _deudaC = clienteDeudaMonto(c); return `<div onmousedown="event.preventDefault(); _posClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+    ${escapeHtml(c.alias || c.nombre)}${_deudaC>0 ? ` <span style="color:var(--danger);font-size:.72rem">(debe ${sol(_deudaC)})</span>` : ''}
+   </div>`;
+}).join('');
   }
   sug.style.display = 'block';
 }
