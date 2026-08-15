@@ -882,8 +882,8 @@ function _tndRenderHome() {
   };
 
   const hoy = new Date().toISOString().slice(0,10);
-  const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && _promoAplicaSede(p, 'principal'));
-  const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === pr.prod1 && stockTotal(p) > 0)).filter(Boolean);
+const promsActivas = (DB.promociones||[]).filter(p => p.activa && p.hasta >= hoy && _promoAplicaSede(p, 'principal'));
+const prodsPromo = promsActivas.map(pr => (DB.productos||[]).find(p => p.id === (pr.packProdId || pr.prod1) && stockTotal(p) > 0 && !(p.esCombo && p.promoActiva === false))).filter(Boolean);
   const promosHtml = prodsPromo.length ? `<div class="tnd-section-title">🔥 Promociones activas</div><div class="tnd-scroll-wrap"><button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-riel-promos',-1)" aria-label="Anteriores">‹</button><div class="tnd-scroll-row" id="tnd-riel-promos">${prodsPromo.slice(0,10).map(p => _tarjetaProdRail(p, false)).join('')}</div><button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-riel-promos',1)" aria-label="Siguientes">›</button></div>` : '';
 
   // Categorias como riel de burbujas — reemplaza las fotos-collage con texto incrustado (ver
