@@ -1472,17 +1472,13 @@ async function guardarInventarioMensual() {
   // Firestore (getDocFromServer, nunca cache), nunca contra lo que la pantalla tenia en
   // memoria en ese momento — un conteo fisico declara la verdad de lo que hay en el local, y
   // el ajuste nunca debe depender de que la pantalla tenga razon en ese momento.
-  const _itemsResumen = [];
   const _pendientes = []; // {prod, delta}
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   for (let i = 0; i < invMensualData.length; i++) {
     const d = invMensualData[i];
     const p = DB.productos.find(prod => prod.id === d.prodId) || DB.productos[i];
     if (!p) continue;
-    if (d.contado === null || d.contado === '' || !d.verificado) {
-      _itemsResumen.push({ prodId: p.id, nombre: p.nombre, stockSistema: stockEnSede(p), contado: d.contado, diff: null, motivo: d.motivo, verificado: d.verificado });
-      continue;
-    }
+    if (d.contado === null || d.contado === '' || !d.verificado) continue;
     let _stockReal = stockEnSede(p); // valor local como respaldo si la lectura fresca falla
     try {
       const snapFresco = await getDocDelServidorM(docM(dbModular, 'productos', String(p.id)));
@@ -1491,10 +1487,6 @@ async function guardarInventarioMensual() {
       console.warn('No se pudo leer el stock real fresco de ' + p.nombre + ', usando el valor local:', e);
     }
     const _diff = Math.round((d.contado - _stockReal) * 1000) / 1000;
-    _itemsResumen.push({
-      prodId: p.id, nombre: p.nombre, stockSistema: _stockReal,
-      contado: d.contado, diff: _diff, motivo: d.motivo, verificado: d.verificado
-    });
     if (_diff !== 0) _pendientes.push({ prod: p, delta: _diff });
   }
 
@@ -1522,9 +1514,12 @@ async function guardarInventarioMensual() {
     });
   }
 
-  const resumen = { id: getId(), fecha, usuario: currentUser, sedeId: currentUserSedeId || 'principal', items: _itemsResumen };
-  DB_EXT.inventariosMensuales.push(resumen);
-  fbGuardarExt();
+  // CRITICO: ya NO se guarda un registro historico permanente del conteo (antes se acumulaba
+  // en DB_EXT.inventariosMensuales, dentro de db_ext) — con ~1000 productos por sesion, esto
+  // hacia crecer ese documento sin limite hasta superar el tamaño maximo que Firestore permite
+  // por documento, rompiendo el guardado de capital/sueldos/configuracion tambien (comparten
+  // el mismo documento). El ajuste real de stock arriba queda exactamente igual — esto solo
+  // deja de acumular un historial que nadie termina revisando.
   alert('✅ Inventario guardado. ' + (_pendientes.length > 0 ? _pendientes.length + ' producto(s) con stock corregido. ' : '') + 'Total ítems verificados: ' + invMensualData.filter(d=>d.verificado).length);
   updateAlertCount();
   renderInvMensualTable();
