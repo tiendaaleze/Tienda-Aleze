@@ -815,7 +815,7 @@ async function cobrarFiado() {
         const prod = DB.productos.find(p => p.id === i.prodId);
         return { ...i, costoUnitario: prod ? prod.costo : 0 };
       }),
-      total, pagado: 0, fecha: today(), descuentoCombo: comboDesc, descuentoManual: desc, descuentoCantidad: cantidadDesc,
+      total, pagado: 0, fecha: today(), hora: nowTime(), descuentoCombo: comboDesc, descuentoManual: desc, descuentoCantidad: cantidadDesc,
       sedeId: sedeAdminEfectiva(), estado: 'pendiente',
       comprobante: _comprobante
     };
