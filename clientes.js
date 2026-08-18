@@ -206,7 +206,7 @@ function renderFiados() {
       const pend = fiadoMontoPendiente(f);
       return `<div style="border-left:3px solid var(--warning);padding:.5rem .75rem;margin-bottom:.5rem;background:white;border-radius:0 6px 6px 0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
-          <span style="font-size:.75rem;color:var(--gray-500)">${formatDate(f.fecha)}</span>
+          <span style="font-size:.75rem;color:var(--gray-500)">${formatDate(f.fecha)} ${f.hora||''}</span>
           <span style="font-size:.82rem;font-weight:700;color:${pend>0?'var(--danger)':'var(--accent)'}">
             ${pend > 0 ? sol(pend)+' pendiente' : '✅ Pagado'}
           </span>
@@ -297,7 +297,7 @@ function renderDetalleFiado(cid) {
     const pend = fiadoMontoPendiente(f);
     return `<div style="border-left:3px solid var(--warning);padding:.5rem .75rem;margin-bottom:.5rem;background:white;border-radius:0 6px 6px 0">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
-        <span style="font-size:.75rem;color:var(--gray-500)">${formatDate(f.fecha)}</span>
+        <span style="font-size:.75rem;color:var(--gray-500)">${formatDate(f.fecha)} ${f.hora||''}</span>
         <span style="font-size:.82rem;font-weight:700;color:${pend>0?'var(--danger)':'var(--accent)'}">
           ${pend > 0 ? sol(pend)+' pendiente' : '✅ Pagado'}
         </span>
@@ -901,7 +901,7 @@ function renderHistorialCliente() {
         const pagosF = (f.pagos || []);
         return `<div style="border-left:3px solid ${pend>0?'var(--warning)':'var(--accent)'};padding:.6rem .75rem;margin-bottom:.6rem;background:white;border-radius:0 6px 6px 0;box-shadow:var(--shadow)">
           <div style="display:flex;justify-content:space-between;margin-bottom:.3rem">
-            <span style="font-size:.75rem;color:var(--gray-500)">📅 ${formatDate(f.fecha)}</span>
+            <span style="font-size:.75rem;color:var(--gray-500)">📅 ${formatDate(f.fecha)} ${f.hora||''}</span>
             <span style="font-weight:700;font-size:.85rem;color:${pend>0?'var(--danger)':'var(--accent)'}">
               ${pend > 0 ? sol(pend)+' pendiente' : '✅ Saldado'}
             </span>
