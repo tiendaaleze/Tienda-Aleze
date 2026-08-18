@@ -389,6 +389,7 @@ el.innerHTML = _boletaProductos.map((p, i) => {
       <div style="display:flex;align-items:center;gap:.7rem;margin-top:.4rem;flex-wrap:wrap;font-size:.72rem;color:var(--gray-500)">
         <span>📦 Stock aquí: <b style="color:var(--gray-700)">${stockActual}</b> → <b style="color:var(--accent)">${stockFinal}</b></span>
         <span>💰 Costo (compartido entre sedes): <b style="color:var(--gray-700)">${sol(costoActual)}</b>${costoCambia ? ` → <b style="color:var(--warning)">${sol(costoPromedio)}</b> (promedio ponderado)` : ' (sin cambio)'}</span>
+        <span>🧮 Subtotal: <b style="color:var(--gray-700)">${p.esBonif ? 'Bonif. (no suma)' : sol((p.cantidad||0)*(p.costo||0))}</b></span>
         <span>🏷️ Venta: <b style="color:var(--gray-700)">${sol(precio)}</b></span>
       </div>
       <div style="display:flex;align-items:center;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
