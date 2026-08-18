@@ -1,4 +1,21 @@
 // ===================== CLIENTES =====================
+// CRITICO: en movil, wa.me abre la app nativa de WhatsApp directamente — comportamiento
+// correcto, no se toca. En PC/desktop, wa.me deja que el sistema operativo decida como
+// abrirlo (a veces app de escritorio, a veces navegador, de forma ambigua e impredecible) —
+// forzar siempre WhatsApp Web ahi elimina esa pregunta confusa. El usuario sigue teniendo que
+// tocar "Enviar" dentro de WhatsApp una vez que se abre — eso no se puede saltar, es una
+// restriccion del propio WhatsApp (para evitar spam automatizado), no de este sistema.
+function _waEsMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+function _waUrl(tel, texto) {
+  const telLimpio = tel ? String(tel).replace(/\s/g, '') : '';
+  if (_waEsMobile()) {
+    return telLimpio ? `https://wa.me/51${telLimpio}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+  }
+  return telLimpio ? `https://web.whatsapp.com/send?phone=51${telLimpio}&text=${encodeURIComponent(texto)}` : `https://web.whatsapp.com/send?text=${encodeURIComponent(texto)}`;
+}
+
 let editingCliId = null;
 
 function verHistorialCliente(id) {
@@ -383,7 +400,7 @@ function compartirResumenFiadoCliente(cid) {
     msg += pend > 0 ? ` _(pendiente: ${sol(pend)})_\n` : ` ✅\n`;
   });
   msg += `\n*Total pendiente: ${sol(totalPend)}*\nGracias 🙏`;
-  const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  const url = _waUrl(tel, msg);
   window.open(url, '_blank');
 }
 
@@ -786,7 +803,7 @@ function compartirFiadoWhatsapp() {
   const tel = cli && cli.tel ? cli.tel.replace(/\s/g,'') : '';
   const itemsPend = f.items.map(i => `• ${i.nombre} x${i.cant} = ${sol(subtotalItemCarrito(i))}`).join('\n');
   const msg = `Hola ${nombre}, le recordamos su deuda en *${DB.config.nombre||'Tienda Aleze'}*:\n\n${itemsPend}\n\n*Total pendiente: ${sol(pendiente)}*\n\nGracias 🙏`;
-  const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  const url = _waUrl(tel, msg);
   window.open(url, '_blank');
 }
 
@@ -945,7 +962,7 @@ function compartirHistorialWhatsapp() {
     if (tipo !== 'pagados') msg += `\n*Total pendiente: ${sol(totalPend)}*\n`;
   }
   msg += '\nGracias 🙏';
-  const url = tel ? `https://wa.me/51${tel}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  const url = _waUrl(tel, msg);
   window.open(url, '_blank');
 }
 
@@ -979,7 +996,7 @@ async function compartirWhatsapp() {
       } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = 'ticket-aleze.png'; a.click();
-        setTimeout(() => window.open('https://wa.me/', '_blank'), 600);
+        setTimeout(() => window.open(_waUrl(null, ''), '_blank'), 600);
         alert('Imagen descargada. Compártela por WhatsApp.');
       }
     }, 'image/png');
@@ -989,7 +1006,7 @@ async function compartirWhatsapp() {
 
 function fallbackWA() {
   const t = document.getElementById('ticket-print');
-  window.open('https://wa.me/?text=' + encodeURIComponent(t ? t.innerText : ''), '_blank');
+  window.open(_waUrl(null, t ? t.innerText : ''), '_blank');
 }
 
 // ===================== FRECUENTES =====================
