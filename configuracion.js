@@ -384,7 +384,7 @@ function guardarSueldos() {
   DB_EXT.sueldos['Jose Carlos'] = parseFloat(document.getElementById('sueldo-jc').value) || 0;
   DB_EXT.sueldos['Shessira']    = parseFloat(document.getElementById('sueldo-sh').value) || 0;
   DB_EXT.sueldos['José Luis']   = parseFloat(document.getElementById('sueldo-jl').value) || 0;
-  fbGuardarExt();
+  fbGuardarExt('sueldos');
   alert('✅ Sueldos guardados');
 }
 
@@ -469,7 +469,7 @@ const RESET_CONFIG = {
       });
       DB_EXT.gastos = [];
       DB_EXT.capital = { prestamo: 0, cuota: 0, meta: 0 };
-      const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); setDocM(docM(dbModular, 'aleze', 'db'), _payload); fbGuardarExt(); // [SDK modular]
+      const _payload = JSON.parse(JSON.stringify(DB)); delete _payload.productos; delete _payload.categorias; delete _payload.caja; _payload.cajas = DB._cajas; _payload._resetToken = true; _fbLastWriteTs = Date.now(); setDocM(docM(dbModular, 'aleze', 'db'), _payload); fbGuardarExt('capital'); // [SDK modular]
       ['ventas','fiados','mermas','movimientos','gastos','capital_movimientos'].forEach(_vaciarColeccion);
       DB.capitalMovimientos = [];
       try { renderDashboard(); } catch(e) {}
@@ -505,7 +505,8 @@ const RESET_CONFIG = {
     detalle: '• Todo el historial de gastos registrados<br>• (Los gastos recurrentes configurados se conservan)',
     accion: () => {
       DB_EXT.gastos = [];
-      fbGuardarExt();
+      // Sin fbGuardarExt() acá a propósito: 'gastos' nunca vive en el documento db_ext (tiene
+      // su propia colección real), así que no hay ningún campo real de db_ext para escribir.
       _vaciarColeccion('gastos');
       try { renderGastos(); } catch(e) {}
       try { renderDashboard(); } catch(e) {}
@@ -516,7 +517,7 @@ const RESET_CONFIG = {
     detalle: '• Capital total, cuota y meta se reinician a 0<br>• Todo el historial de movimientos de capital',
     accion: () => {
    DB_EXT.capital = { total: 0, cuota: 0, meta: 0, recuperado: 0, prestamo: 0, prestamoPagado: 0, hist: [] };
-      fbGuardarExt();
+      fbGuardarExt('capital');
       try { renderCapital(); } catch(e) {}
       try { renderDashboard(); } catch(e) {}
     }
@@ -528,7 +529,9 @@ const RESET_CONFIG = {
       DB.ventas = [];
       DB_EXT.gastos = [];
       DB.clientes.forEach(c => { c.compras = 0; c.total = 0; });
-      fbGuardar(); fbGuardarExt();
+      // Sin fbGuardarExt() acá a propósito: mismo caso que el reset de 'gastos' — 'gastos'
+      // nunca vive en el documento db_ext, no hay ningún campo real de db_ext para escribir.
+      fbGuardar();
       ['ventas','gastos'].forEach(_vaciarColeccion);
       try { generarReporte(); } catch(e) {}
       try { renderDashboard(); } catch(e) {}
@@ -565,4 +568,3 @@ function ejecutarReset() {
 }
 
 // ===================== FIN RESET =====================
-
