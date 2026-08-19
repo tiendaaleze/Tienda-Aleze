@@ -28,17 +28,20 @@
  *
  * ══════════════════════════════════════════════════════════════════════════
  */
-
+ 
 const { onRequest, onCall } = require("firebase-functions/v2/https");
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
-const admin = require("firebase-admin");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getMessaging } = require("firebase-admin/messaging");
 const crypto = require("crypto");
-
-admin.initializeApp();
-const db = admin.firestore();
-
+ 
+initializeApp();
+const db = getFirestore();
+ 
 // ── Secrets de Izipay — se cargan con `firebase functions:secrets:set` ──
 // NUNCA hardcodear estas llaves acá ni guardarlas en Firestore. La llave
 // pública (para el checkout del cliente) sí puede vivir en Firestore
@@ -46,16 +49,16 @@ const db = admin.firestore();
 // visible en el navegador — la privada y la de verificación de firma no.
 const IZIPAY_LLAVE_PRIVADA = defineSecret("IZIPAY_LLAVE_PRIVADA");
 const IZIPAY_LLAVE_HMAC = defineSecret("IZIPAY_LLAVE_HMAC");
-
+ 
 // ── Secret del proveedor de facturación electrónica (ej. Nubefact) — mismo criterio que
 // Izipay arriba: se carga con `firebase functions:secrets:set NUBEFACT_TOKEN`, nunca en
 // código ni en Firestore.
 const NUBEFACT_TOKEN = defineSecret("NUBEFACT_TOKEN");
-
+ 
 // TODO: confirmar con Izipay la URL exacta de su API de creación de sesión
 // (formToken). Este valor es un placeholder siguiendo el patrón Lyra estándar.
 const IZIPAY_API_URL = "https://api.micuentaweb.pe/api-payment/V4/Charge/CreatePayment";
-
+ 
 /**
  * ── crearSesionPago ──────────────────────────────────────────────────────
  * Llamada desde la tienda pública cuando el cliente elige "Pagar en línea".
@@ -80,13 +83,13 @@ exports.crearSesionPago = onCall(
     if (!cfg.pasarelaPago || !cfg.pasarelaPago.activa) {
       throw new Error("El pago en línea no está activo en este momento.");
     }
-
+ 
     const { pedidoId, monto, moneda } = request.data || {};
-
+ 
     if (!pedidoId || !monto || monto <= 0) {
       throw new Error("Datos de pedido inválidos para iniciar el pago.");
     }
-
+ 
     // Verifica que el pedido exista y que el monto coincida con lo real
     // guardado en Firestore — nunca confiar en el monto que manda el cliente
     // sin cruzarlo contra el pedido real, o alguien podría pagar de menos.
@@ -102,7 +105,7 @@ exports.crearSesionPago = onCall(
     if (pedido.pagoEstado === "confirmado") {
       throw new Error("Este pedido ya fue pagado.");
     }
-
+ 
     // TODO: verificar la forma exacta del payload que espera Izipay — esto
     // sigue el patrón estándar (monto en céntimos, moneda ISO, referencia
     // de orden propia) pero los nombres de campo exactos hay que
@@ -113,7 +116,7 @@ exports.crearSesionPago = onCall(
       orderId: String(pedidoId),
       formAction: "PAYMENT",
     };
-
+ 
     try {
       const resp = await fetch(IZIPAY_API_URL, {
         method: "POST",
@@ -126,15 +129,15 @@ exports.crearSesionPago = onCall(
         body: JSON.stringify(payload),
       });
       const data = await resp.json();
-
+ 
       if (!resp.ok) {
         logger.error("Izipay rechazó la creación de sesión", data);
         throw new Error("No se pudo iniciar el pago. Intenta de nuevo.");
       }
-
+ 
       // Marca el pedido como "esperando pago" — todavía no confirmado.
-      await pedidoRef.update({ pagoEstado: "pendiente", pagoIniciado: admin.firestore.FieldValue.serverTimestamp() });
-
+      await pedidoRef.update({ pagoEstado: "pendiente", pagoIniciado: FieldValue.serverTimestamp() });
+ 
       // TODO: el nombre exacto del campo con el token depende de la
       // respuesta real de Izipay — placeholder siguiendo el patrón Lyra.
       return { formToken: data.answer?.formToken || null };
@@ -144,7 +147,7 @@ exports.crearSesionPago = onCall(
     }
   }
 );
-
+ 
 /**
  * ── webhookIzipay ────────────────────────────────────────────────────────
  * Endpoint HTTP que Izipay llama directo desde SUS servidores (nunca desde
@@ -162,7 +165,7 @@ exports.webhookIzipay = onRequest(
       res.status(405).send("Method not allowed");
       return;
     }
-
+ 
     // ── Verificación de firma — CRÍTICO, nunca procesar sin esto ──
     // TODO: confirmar con Izipay el algoritmo exacto y qué campo trae la
     // firma (header vs. cuerpo). Esto sigue el patrón HMAC-SHA256 estándar
@@ -175,7 +178,7 @@ exports.webhookIzipay = onRequest(
       .createHmac("sha256", IZIPAY_LLAVE_HMAC.value())
       .update(cuerpoParaFirmar)
       .digest("hex");
-
+ 
     if (!firmaRecibida || firmaRecibida !== firmaEsperada) {
       logger.warn("webhookIzipay: firma inválida — posible intento fraudulento", {
         ip: req.ip,
@@ -183,7 +186,7 @@ exports.webhookIzipay = onRequest(
       res.status(401).send("Firma inválida");
       return;
     }
-
+ 
     // TODO: confirmar la estructura exacta de la respuesta de Izipay para
     // extraer el estado del pago y el orderId — placeholder razonable.
     let datos;
@@ -193,29 +196,29 @@ exports.webhookIzipay = onRequest(
       res.status(400).send("Cuerpo inválido");
       return;
     }
-
+ 
     const pedidoId = datos.orderDetails?.orderId || datos.orderId;
     const estadoPago = datos.orderStatus; // ej: "PAID", "UNPAID", "RUNNING"
-
+ 
     if (!pedidoId) {
       res.status(400).send("Sin referencia de pedido");
       return;
     }
-
+ 
     const pedidoRef = db.collection("pedidos_online").doc(String(pedidoId));
-
+ 
     try {
       if (estadoPago === "PAID") {
         await pedidoRef.update({
           pagoEstado: "confirmado",
-          pagoConfirmadoTs: admin.firestore.FieldValue.serverTimestamp(),
+          pagoConfirmadoTs: FieldValue.serverTimestamp(),
           pagoReferencia: datos.transactions?.[0]?.uuid || null,
         });
         logger.info(`Pago confirmado para pedido ${pedidoId}`);
       } else {
         await pedidoRef.update({
           pagoEstado: "fallido",
-          pagoFallidoTs: admin.firestore.FieldValue.serverTimestamp(),
+          pagoFallidoTs: FieldValue.serverTimestamp(),
         });
         logger.info(`Pago no exitoso para pedido ${pedidoId}: ${estadoPago}`);
       }
@@ -227,7 +230,7 @@ exports.webhookIzipay = onRequest(
     }
   }
 );
-
+ 
 /**
  * ══════════════════════════════════════════════════════════════════════════
  * Notificación push real (Firebase Cloud Messaging) — pedido online nuevo
@@ -255,13 +258,13 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
   if (!pedido) return;
   // Solo avisar de pedidos recién llegados, pendientes de atender.
   if (pedido.estado !== "pendiente") return;
-
+ 
   const tokensSnap = await db.collection("staff_tokens").get();
   if (tokensSnap.empty) {
     logger.info("Pedido nuevo, pero no hay dispositivos registrados para avisar.");
     return;
   }
-
+ 
   // Capa de seguridad de privacidad: un dispositivo que cerro sesion normalmente ya se borro
   // de staff_tokens al hacer logout (ver doLogout() en auth.js) — pero si alguien desinstala
   // la app o borra datos SIN cerrar sesion primero, ese borrado nunca llega a ejecutarse y el
@@ -291,7 +294,7 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
     logger.info("Pedido nuevo, pero no hay dispositivos activos para avisar.");
     return;
   }
-
+ 
   // Mensaje solo de datos (sin campo "notification") — así el manejador propio del
   // Service Worker (onBackgroundMessage) decide exactamente cómo se ve, sin que
   // el navegador muestre una notificación genérica por su cuenta y quede duplicada.
@@ -309,9 +312,9 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
     },
     tokens,
   };
-
+ 
   try {
-    const resp = await admin.messaging().sendEachForMulticast(mensaje);
+    const resp = await getMessaging().sendEachForMulticast(mensaje);
     // Limpiar tokens que ya no sirven (dispositivo desinstaló la app, permiso revocado, etc.)
     // — sin esto, staff_tokens acumula basura para siempre y cada envío se pone más lento.
     const tokensVencidos = [];
@@ -331,7 +334,7 @@ exports.notificarPedidoNuevo = onDocumentCreated("pedidos_online/{pedidoId}", as
     logger.error("Error enviando notificación push de pedido nuevo:", err);
   }
 });
-
+ 
 /**
  * ══════════════════════════════════════════════════════════════════════════
  * Emisión de comprobante electrónico (SUNAT) — dormido hasta activarse
@@ -374,19 +377,19 @@ async function _procesarComprobante(snap) {
   // CREACION del documento, nunca a una actualizacion posterior, asi que permitir 'error'
   // aca es seguro: la unica forma de que esto se ejecute de nuevo es un reintento explicito.
   if (!venta.comprobante || (venta.comprobante.estado !== "pendiente" && venta.comprobante.estado !== "error")) return;
-
+ 
   const ventaRef = snap.ref;
   const cfgSnap = await db.collection("aleze").doc("config").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
   const ce = cfg.comprobanteElectronico || {};
-
+ 
   if (!ce.activa) {
     // El sistema se desactivó entre que esta venta pidió número y que esta función corrió —
     // no intentar nada, dejar marcado para que el admin decida qué hacer.
     await ventaRef.update({ "comprobante.estado": "no_emitido_inactivo" }).catch(() => {});
     return;
   }
-
+ 
   try {
     const _esRus = cfg.regimenTributario === "RUS";
     const _total = venta.total || 0;
@@ -395,7 +398,7 @@ async function _procesarComprobante(snap) {
     // catalogo estandar SUNAT (17 = Operacion inafecta), no verificado contra Token real.
     const _totalGravada = _esRus ? 0 : Math.round((_total / 1.18) * 100) / 100;
     const _totalIgv = _esRus ? 0 : Math.round((_total - _total / 1.18) * 100) / 100;
-
+ 
     const trama = {
       operacion: "generar_comprobante",
       tipo_de_comprobante: venta.comprobante.tipo === "factura" ? 1 : 2,
@@ -429,7 +432,7 @@ async function _procesarComprobante(snap) {
         };
       }),
     };
-
+ 
     // TODO: confirmar URL exacta del endpoint contra el panel/documentacion del proveedor —
     // este valor sigue el patron publico documentado, no verificado contra Token real.
     const resp = await fetch("https://api.nubefact.com/api/v1/" + (ce.rucONumero || ""), {
@@ -441,12 +444,12 @@ async function _procesarComprobante(snap) {
       body: JSON.stringify(trama),
     });
     const data = await resp.json().catch(() => null);
-
+ 
     if (resp.ok && data && !data.errors) {
       await ventaRef.update({
         "comprobante.estado": "emitido",
         "comprobante.enlacePdf": data.enlace_del_pdf || null,
-        "comprobante.emitidoTs": admin.firestore.FieldValue.serverTimestamp(),
+        "comprobante.emitidoTs": FieldValue.serverTimestamp(),
       });
       logger.info(`Comprobante emitido para venta ${ventaRef.id}: ${trama.serie}-${trama.numero}`);
     } else {
@@ -466,17 +469,17 @@ async function _procesarComprobante(snap) {
     }).catch(() => {});
   }
 }
-
+ 
 exports.emitirComprobanteVenta = onDocumentCreated(
   { document: "ventas/{ventaId}", region: "southamerica-east1", secrets: [NUBEFACT_TOKEN] },
   async (event) => { await _procesarComprobante(event.data); }
 );
-
+ 
 exports.emitirComprobanteFiado = onDocumentCreated(
   { document: "fiados/{fiadoId}", region: "southamerica-east1", secrets: [NUBEFACT_TOKEN] },
   async (event) => { await _procesarComprobante(event.data); }
 );
-
+ 
 /**
  * ── reintentarComprobante ────────────────────────────────────────────────
  * Llamada explícita desde Configuración → Comprobante electrónico, cuando el admin ve un
@@ -502,7 +505,7 @@ exports.reintentarComprobante = onCall(
     return { ok: true };
   }
 );
-
+ 
 // CRITICO: las reglas de Firestore validan que pedidoValido() tenga total > 0, pero no que
 // coincida con lo que realmente cuestan los items — un cliente malicioso podria enviar items
 // reales por S/100 con total: 0.01, y la regla lo aceptaria igual. Esta funcion no intenta
@@ -515,7 +518,7 @@ exports.reintentarComprobante = onCall(
 exports.validarTotalPedido = onDocumentCreated("pedidos_online/{pedidoId}", async (event) => {
   const pedido = event.data?.data();
   if (!pedido || !Array.isArray(pedido.items) || pedido.items.length === 0) return;
-
+ 
   try {
     let sumaCatalogo = 0;
     for (const item of pedido.items) {
@@ -525,7 +528,7 @@ exports.validarTotalPedido = onDocumentCreated("pedidos_online/{pedidoId}", asyn
       sumaCatalogo += (prodSnap.data().precio || 0) * item.cant;
     }
     if (sumaCatalogo === 0) return; // sin items validos en catalogo, nada que comparar
-
+ 
     const UMBRAL_MINIMO = 0.4; // ningun descuento/combo legitimo baja el total a menos del 40% del precio de lista
     if (pedido.total < sumaCatalogo * UMBRAL_MINIMO) {
       await event.data.ref.set({
@@ -538,7 +541,7 @@ exports.validarTotalPedido = onDocumentCreated("pedidos_online/{pedidoId}", asyn
     logger.error("validarTotalPedido: error", e);
   }
 });
-
+ 
 // CRITICO: con catalogos grandes (varios cientos de productos), cada visita a tienda publica
 // releyendo la coleccion completa de productos se vuelve muy caro muy rapido — 1000
 // productos = 1000 lecturas por visita, agotando la cuota diaria gratuita con apenas unas
@@ -558,26 +561,26 @@ exports.validarTotalPedido = onDocumentCreated("pedidos_online/{pedidoId}", asyn
 exports.marcarCatalogoActualizado_productos = onDocumentWritten("productos/{prodId}", async (event) => {
   try {
     await db.collection("aleze").doc("catalogo_meta").set({
-      ultimaActualizacion: admin.firestore.FieldValue.serverTimestamp()
+      ultimaActualizacion: FieldValue.serverTimestamp()
     }, { merge: true });
   } catch (e) {
     logger.error("marcarCatalogoActualizado_productos: error", e);
   }
 });
-
+ 
 exports.marcarCatalogoActualizado_categorias = onDocumentWritten("aleze/db_productos", async (event) => {
   // Las categorias viven dentro de aleze/db_productos (campo 'categorias'), no en su propia
   // coleccion — mismo documento que ya se re-escribe completo cada vez que se edita una
   // categoria o la configuracion de tienda. Mismo mecanismo, misma razon.
   try {
     await db.collection("aleze").doc("catalogo_meta").set({
-      ultimaActualizacion: admin.firestore.FieldValue.serverTimestamp()
+      ultimaActualizacion: FieldValue.serverTimestamp()
     }, { merge: true });
   } catch (e) {
     logger.error("marcarCatalogoActualizado_categorias: error", e);
   }
 });
-
+ 
 // CRITICO: el rol de cada usuario vivia solo en una variable de JavaScript en el navegador
 // (currentRole), leida una vez al iniciar sesion y nunca reverificada contra el servidor. Las
 // reglas de Firestore solo distinguian "autenticado" de "anonimo" — cualquier staff con
@@ -598,7 +601,7 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
     throw new Error("No autorizado.");
   }
   logger.info(`sincronizarRolesStaff: llamado por uid=${request.auth.uid} email=${request.auth.token.email || '(sin email en token)'}`);
-
+ 
   const configSnap = await db.collection("aleze").doc("db_productos").get();
   // CRITICO: usuariosStaff vive dentro de config (db_productos.config.usuariosStaff), no en
   // la raiz del documento — fbGuardarProductos() (cliente) siempre lo escribio anidado asi.
@@ -609,17 +612,17 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
   // real si tenia los 3 usuarios — solo que en config.usuariosStaff, no en la raiz.
   const usuariosStaff = configSnap.exists ? (configSnap.data().config?.usuariosStaff || []) : [];
   logger.info(`sincronizarRolesStaff: usuariosStaff encontrados = ${usuariosStaff.length}`);
-
+ 
   const resultados = [];
   for (const u of usuariosStaff) {
     if (!u.email || !u.rol) { logger.warn(`sincronizarRolesStaff: entrada sin email/rol, se salta: ${JSON.stringify(u)}`); continue; }
     try {
-      const userRecord = await admin.auth().getUserByEmail(u.email);
-      await admin.auth().setCustomUserClaims(userRecord.uid, { role: u.rol });
+      const userRecord = await getAuth().getUserByEmail(u.email);
+      await getAuth().setCustomUserClaims(userRecord.uid, { role: u.rol });
       // Verificacion inmediata: releer el usuario justo despues de asignarle el rol, para
       // confirmar si el servidor YA lo tiene grabado en este mismo instante — aisla si el
       // problema es de propagacion hacia el token del navegador, o si nunca se guardo.
-      const userVerificado = await admin.auth().getUser(userRecord.uid);
+      const userVerificado = await getAuth().getUser(userRecord.uid);
       const esQuienLlama = userRecord.uid === request.auth.uid;
       logger.info(`sincronizarRolesStaff: ${u.email} -> uid=${userRecord.uid}${esQuienLlama ? ' (ES quien llama)' : ''}, rol asignado=${u.rol}, claims verificados justo despues=${JSON.stringify(userVerificado.customClaims)}`);
       resultados.push({ email: u.email, rol: u.rol, ok: true });
@@ -631,7 +634,7 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
   logger.info(`sincronizarRolesStaff: TERMINO — ${resultados.filter(r=>r.ok).length}/${resultados.length} sincronizados ok`);
   return { ok: true, resultados };
 });
-
+ 
 // CRITICO: App Check (activado en una ronda anterior) protege contra bots puros hablando
 // directo con la API de Firestore, pero no contra un navegador real automatizado (por ejemplo
 // con Puppeteer) que si pasa esa verificacion. Esta funcion es la segunda capa: cuenta cuantos
@@ -644,15 +647,15 @@ exports.sincronizarRolesStaff = onCall(async (request) => {
 exports.detectarPedidosSospechosos = onDocumentCreated("pedidos_online/{pedidoId}", async (event) => {
   const pedido = event.data?.data();
   if (!pedido || !pedido.telefono) return;
-
+ 
   try {
     const VENTANA_MINUTOS = 5;
     const UMBRAL = 3; // mas de 3 pedidos del mismo telefono en la ventana es sospechoso
-
+ 
     const snap = await db.collection("pedidos_online").where("telefono", "==", pedido.telefono).get();
     const ahora = Date.now();
     const recientes = snap.docs.filter(d => (ahora - d.createTime.toMillis()) <= VENTANA_MINUTOS * 60 * 1000);
-
+ 
     if (recientes.length > UMBRAL) {
       await event.data.ref.set({
         pedidosRecientesSospechoso: true,
