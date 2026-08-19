@@ -1042,7 +1042,7 @@ function cambiarMultiplicadorCategoria(catId, valor) {
   const cat = DB.categorias.find(c => c.id === catId);
   if (!cat) return;
   cat.multiplicadorPuntos = parseFloat(valor) || 1;
-  fbGuardarProductos();
+  fbGuardarProductos('categorias');
 }
  
 function renderCanjesHistorial() {
