@@ -5,7 +5,7 @@
 //   • Flag _fbEscribiendo evita el loop escritura→listener→escritura
 //   • Debounce 1200ms agrupa operaciones rápidas en UNA sola escritura
 //   • Toda la DB en 1 documento Firestore → mínimo de operaciones posible
-
+ 
 const APP_VERSION = '1.0.1';
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
@@ -15,7 +15,7 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "231416120915",
   appId: "1:231416120915:web:749a1a6648d0006faf68a6"
 };
-
+ 
 // (fbApp Compat eliminado — App Check ahora vive por completo en appModular, ver mas abajo)
 // (fbFS Compat eliminado — Firestore migrado por completo a Modular, ver dbModular)
 let _fbEscribiendo = false; // Flag anti-loop: true mientras este dispositivo escribe
@@ -24,7 +24,7 @@ let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ven
 let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
 // (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
 // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver functionsModular)
-
+ 
 // ── SDK modular — Firestore, Auth, Storage, Functions y App Check, 100% migrados ─────
 // Estas instancias apuntan al proyecto configurado en FIREBASE_CONFIG — el sistema entero
 // corre sobre esta unica conexion ahora, sin ningun rastro de Compat.
@@ -40,7 +40,7 @@ let docM, setDocM, getDocM, getDocDelServidorM, getDocsM, deleteDocM, updateDocM
     serverTimestampM, deleteFieldM, onSnapshotM;
 let refM, uploadBytesM, getDownloadURLM, deleteObjectM;
 let functionsModular, httpsCallableM;
-
+ 
 // ══════════════════════════════════════════════════════════════════════════
 // Visibilidad real de sincronización — camino completo, no un parche.
 //
@@ -58,7 +58,7 @@ let functionsModular, httpsCallableM;
 // ══════════════════════════════════════════════════════════════════════════
 let _pendingSyncCount = 0;
 let _pendingSyncDetalle = []; // [{tipo, id}] — para depuración si hace falta
-
+ 
 const _ERRORES_PERMANENTES = new Set([
   'permission-denied', 'invalid-argument', 'not-found', 'resource-exhausted',
   'failed-precondition', 'out-of-range', 'unauthenticated', 'already-exists'
@@ -66,7 +66,7 @@ const _ERRORES_PERMANENTES = new Set([
 function _esErrorPermanente(e) {
   return !!(e && _ERRORES_PERMANENTES.has(e.code));
 }
-
+ 
 // ── Diagnóstico real: cuenta cuántas veces se dispara cada tipo por ventana de 5s. Si algo
 // se repite sospechosamente (>10 veces en 5s, mucho más que lo que una operación normal
 // generaría), lo grita en consola con el tipo/id exactos — así la próxima vez que el punto
@@ -82,7 +82,7 @@ function _sincDiagRegistrar(tipo, id) {
     console.warn(`⚠️ [Sync-Diag] "${tipo}" se disparó ${delMismoTipo.length} veces en 5 segundos — esto es sospechoso, no es una venta normal. IDs recientes:`, delMismoTipo.map(x => x.id));
   }
 }
-
+ 
 function _sincIniciar(tipo, id) {
   _sincDiagRegistrar(tipo, id);
   _pendingSyncCount++;
@@ -104,7 +104,7 @@ function _sincError(tipo, id, e, descripcionUsuario, contextoPublico) {
     const msg = contextoPublico
       ? `⚠️ No se pudo guardar ${descripcionUsuario || tipo}. Intenta de nuevo en unos minutos.`
       : `⚠️ No se pudo guardar ${descripcionUsuario || tipo}.
-
+ 
 Este error no se resuelve solo reintentando — avisa al administrador.
 Código: ${e.code || e.message || 'desconocido'}`;
     alert(msg);
@@ -113,7 +113,7 @@ Código: ${e.code || e.message || 'desconocido'}`;
   // reintenta solo — el badge ya venía reflejando "pendiente" desde _sincIniciar, no hace
   // falta nada más acá.
 }
-
+ 
 let _syncBadgeHideTimer = null;
 // Red de seguridad: con conexión activa, ningún pendiente debería tardar más de 15s en
 // confirmarse o fallar. Si algo queda atascado ahí (mismo patrón que el bug de _fbEscribiendo
@@ -133,7 +133,7 @@ setInterval(() => {
     _actualizarBadgeSync();
   }
 }, 5000);
-
+ 
 let _sincTraceUltimo = 0;
 function _actualizarBadgeSync() {
   // Diagnostico definitivo: un rastro completo (que funcion llamo a que funcion) cada vez
@@ -180,18 +180,18 @@ let _fbMermasMesUnsub = null;
 let _fbGastosUnsub = null;
 let _fbCapitalUnsub = null;
 let _fbCanjesUnsub = null;
-
+ 
 // ── Inicializar Firestore ──
 // RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
 // Si aún no tienes clave, usa 'debug' temporalmente solo en localhost
 const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
-
+ 
 // VAPID_KEY: clave publica para notificaciones push (Firebase Console > Configuracion del
 // proyecto > Cloud Messaging > Certificados push web > "Generar par de claves"). Es publica
 // a proposito, va en el codigo igual que RECAPTCHA_SITE_KEY. Mientras diga 'PENDIENTE', las
 // notificaciones push quedan dormidas — no rompe nada, solo no se activan hasta pegarla acá.
 const VAPID_KEY = 'BBWLZJaIhkWmkeYT9B2GG9D0lK1uljNgCA7Jkelm8I06o6269EO-uywu-FoH4iicBksg5i1vSgeWhrL9l87bNng';
-
+ 
 async function iniciarFirebase() {
   // DIAGNOSTICO TEMPORAL — cronometro real en cada etapa, para encontrar exactamente donde
   // se va el tiempo en las cargas lentas, en vez de seguir adivinando por orden de aparicion
@@ -204,12 +204,12 @@ async function iniciarFirebase() {
     // mas abajo para appModular, la unica conexion real que usa todo el sistema ahora que
     // Firestore/Auth/Storage/Functions estan 100% migrados a Modular)
     // ────────────────────────────────────────────────────────────────────────
-
+ 
    // (fbFS Compat eliminado — Firestore migrado por completo a Modular desde antes, ver dbModular)
       // (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
       // (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver mas abajo)
       // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver mas abajo)
-
+ 
       // ── SDK modular — inicializar su PROPIA conexión al mismo proyecto ─────────
       // CORRECCION: getApp() fallaba con "No Firebase App '[DEFAULT]' has been created" —
       // Compat y el modulo ES son 2 paquetes cargados por separado desde el CDN (uno como
@@ -225,7 +225,7 @@ async function iniciarFirebase() {
           _tlog('window.__fbModular SI esta disponible — arrancando rama modular');
           const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
           _tlog('initializeAppModular() listo');
-
+ 
           // CRITICO: App Check para appModular — protege absolutamente todo el sistema, staff
           // y tienda publica por igual, ya que ambos usan esta misma conexion Modular ahora
           // (Firestore/Auth/Storage/Functions 100% migrados, sin ningun rastro de Compat).
@@ -246,7 +246,7 @@ async function iniciarFirebase() {
             console.warn('[AppCheck modular] no activado — tienda pública sigue funcionando:', acModErr.message);
             _tlog('[AppCheck modular] fallo activate(): ' + acModErr.message);
           }
-
+ 
           // CRITICO: persistentMultipleTabManager() (coordinación entre pestañas vía
           // IndexedDB) tiene problemas conocidos y documentados en navegadores móviles —
           // especialmente Safari iOS y los WebView de apps instaladas — donde la negociación
@@ -321,7 +321,7 @@ async function iniciarFirebase() {
         console.warn('[SDK modular] No se pudo inicializar (el sistema sigue por Compat sin problema):', modErr.message);
         _tlog('rama modular completa fallo con excepcion: ' + modErr.message);
       }
-
+ 
       _tlog('iniciarFirebase() a punto de RETORNAR true');
       return true;
   } catch(e) {
@@ -330,34 +330,62 @@ async function iniciarFirebase() {
     return false;
   }
 }
-
+ 
 // ── Referencia al documento DB_EXT (sueldos, gastos, capital, niveles, etc.) ──
-// CRITICO: mismo problema real ya encontrado y corregido en fbGuardarConfig() (ver esa
-// funcion mas abajo) — sin esto, escribia el documento completo cada vez que CUALQUIER
-// funcion llamaba fbGuardarExt(), aunque nada de lo que realmente vive aca (sueldos, capital,
-// gastosRec) hubiera cambiado. Misma proteccion aplicada por consistencia.
-let _ultimoExtGuardadoJSON = null;
-function fbGuardarExt() {
+// CRITICO: antes escribia SIEMPRE el documento db_ext COMPLETO (sueldos + capital +
+// fidelizacion + gastosRec + inventariosMensuales juntos), sin importar cual de esas 5 areas
+// realmente cambio. Con 2 sesiones abiertas a la vez (ej. 2 pestañas de admin), si una
+// guardaba sueldos y la otra guardaba fidelizacion casi al mismo tiempo, la segunda escritura
+// podia pisar por completo el cambio de la primera, aunque nunca hubiera tocado ese campo —
+// cada escritura mandaba su propia copia (posiblemente vieja) de TODO lo demas. Ahora
+// fbGuardarExt(campo) solo escribe el/los campo(s) que realmente cambiaron, vía updateDocM
+// (actualizacion parcial real de Firestore) — el resto del documento nunca se toca, sin
+// importar que tan desactualizada este la copia local de esta sesion para esos otros campos.
+let _extDirty = new Set();
+function _extBuildPayload() {
+  const payload = {};
+  _extDirty.forEach(campo => {
+    // 'gastos' nunca vive en db_ext — tiene su propia colección real (gastos/{id}) como
+    // fuente de verdad. Si algo marca 'gastos' como sucio, se ignora acá a propósito.
+    if (campo === 'gastos') return;
+    if (campo === 'capital') {
+      // Solo prestamo/cuota/meta son datos propios — total/recuperado/prestamoPagado son
+      // getters calculados desde DB.capitalMovimientos (ver core.js), nunca se guardan.
+      payload.capital = { prestamo: DB_EXT.capital.prestamo, cuota: DB_EXT.capital.cuota, meta: DB_EXT.capital.meta };
+      return;
+    }
+    if (campo in DB_EXT) payload[campo] = DB_EXT[campo];
+  });
+  return payload;
+}
+function fbGuardarExt(campo) {
   if (!dbModular) return; // [SDK modular]
+  if (campo) _extDirty.add(campo);
   clearTimeout(window._fbExtTimer);
   window._fbExtTimer = setTimeout(() => {
-    // 'gastos' se excluye — ya tiene su propia colección real como fuente de verdad
-    // (gastos/{id}), escribirlo también acá sería una copia redundante que además arriesga
-    // pisar, con un reemplazo completo del documento, un gasto recién creado desde otro
-    // dispositivo. 'capital' se reduce a solo prestamo/cuota/meta — total/recuperado/
-    // prestamoPagado son getters calculados desde DB.capitalMovimientos, no datos propios.
-    const { gastos, ...extSinGastos } = DB_EXT;
-    const payload = { ...extSinGastos, capital: { prestamo: DB_EXT.capital.prestamo, cuota: DB_EXT.capital.cuota, meta: DB_EXT.capital.meta } };
-    const _extActualJSON = JSON.stringify(payload);
-    if (_extActualJSON === _ultimoExtGuardadoJSON) return; // sin cambios reales, no escribir nada
+    if (_extDirty.size === 0) return;
+    const payload = _extBuildPayload();
+    _extDirty.clear();
+    if (Object.keys(payload).length === 0) return; // ej. solo 'gastos' estaba sucio, nada real que escribir
     _fbEscribiendo = true;
     _sincIniciar('db_ext', 'db_ext');
-    setDocM(docM(dbModular, 'aleze', 'db_ext'), JSON.parse(_extActualJSON))
-      .then(() => { _ultimoExtGuardadoJSON = _extActualJSON; setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); })
-      .catch(e => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'capital/configuración extendida'); });
+    const _onOk = () => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); };
+    const _onFail = (e) => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'capital/configuración extendida'); };
+    updateDocM(docM(dbModular, 'aleze', 'db_ext'), payload)
+      .then(_onOk)
+      .catch(e => {
+        // El documento no existe todavia (nunca se guardo nada aca) — updateDoc exige que
+        // exista. setDoc con merge:true lo crea sin arriesgar sobrescribir campos que otra
+        // sesion haya guardado justo en el instante entre el error y este reintento.
+        if (e.code === 'not-found') {
+          setDocM(docM(dbModular, 'aleze', 'db_ext'), payload, { merge: true }).then(_onOk).catch(_onFail);
+          return;
+        }
+        _onFail(e);
+      });
   }, 1200);
 }
-
+ 
 // ── Configuración: documento propio, separado de aleze/db ──────────────────────────────────
 // Antes vivía como un campo más dentro de aleze/db, guardado y cargado junto con
 // ventas/clientes/etc — misma duplicidad que ya se corrigió para esos 6 campos. config es un
@@ -385,7 +413,7 @@ function fbGuardarConfig() {
       .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
   }, 1200);
 }
-
+ 
 // ── Guardar operaciones (excluye productos y categorias) ──
 // Debounce 1200ms — agrupa cambios rápidos en 1 sola escritura
 let _fbSaveTimerProd = null;
@@ -421,7 +449,7 @@ function fbGuardar() {
   }
   fbGuardarConfig();
 }
-
+ 
 // ── Guardar solo productos y categorias en documento separado ──
 // Se llama únicamente cuando el admin edita inventario/categorias
 // ── NUEVO: escritura individual de productos (colección 'productos/{id}') ──
@@ -540,7 +568,7 @@ function fbEscucharProductosColeccion() {
     } catch(e){}
   }, err => { console.warn('Firestore listener error (productos):', err.code); });
 }
-
+ 
 function fbGuardarProductos() {
   if (!dbModular) return; // [SDK modular]
   if (!authModular || !authModular.currentUser) return;
@@ -599,8 +627,8 @@ function fbGuardarProductos() {
       .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; _sincError('db_productos', 'db_productos', e, 'el catálogo de productos y el stock'); });
   }, 1200);
 }
-
-
+ 
+ 
 // ── Escuchar cambios de OTROS dispositivos ──
 // doc 'db' → operaciones  |  doc 'db_productos' → catálogo
 let _fbProdCacheTs = 0; // timestamp última carga de db_productos
@@ -610,7 +638,7 @@ function fbEscuchar() {
   // escribe nada ahí (todo migrado a sus propias colecciones/documentos), nada en operación
   // normal vuelve a tocar ese documento, así que este listener nunca se disparaba de verdad.
   // El listener de db_productos (catálogo) sigue siendo necesario y activo, abajo.
-
+ 
   // Listener db_productos (categorías/config — solo si otro dispositivo admin cambia algo.
   // CRITICO FASE 4/4 migracion de productos: productos ya NO se lee de aca — este documento
   // guarda una copia vieja congelada de antes de la migracion (fbGuardarProductos() ya no la
@@ -635,7 +663,7 @@ function fbEscuchar() {
       if (pageId === 'categorias') { renderCategorias(); }
     } catch(e){}
   }, err => { console.warn('Firestore db_productos listener error:', err.code); });
-
+ 
   // Migra el historial viejo de capital (antes vivia como capital.hist dentro de db_ext) a
   // su propia colección real, una entrada por documento. ID determinístico (no getId()) a
   // propósito: si 2 dispositivos ven el mismo db_ext viejo y migran "al mismo tiempo", generan
@@ -655,7 +683,7 @@ function fbEscuchar() {
       .then(() => { nuevos.forEach(n => { if (!DB.capitalMovimientos.find(m=>m.id===n.id)) DB.capitalMovimientos.push(n); }); try { renderCapital(); } catch(e){} })
       .catch(e => console.warn('No se pudo migrar el historial viejo de capital', e));
   }
-
+ 
   // Listener para DB_EXT (sueldos, capital, config extendida)
   onSnapshotM(docM(dbModular, 'aleze', 'db_ext'), snapshot => { // [SDK modular]
     if (_fbEscribiendo) return;
@@ -701,7 +729,7 @@ function fbEscuchar() {
     } catch(e){}
   }, err => { console.warn('Firestore db_ext listener error:', err.code); });
 }
-
+ 
 // ── Listener dedicado a la colección caja — única fuente de verdad para DB._cajas ──────────
 // Escucha las 2 sedes a la vez. Cualquier cambio en cualquier dispositivo (o el propio,
 // una vez confirmado por el servidor) se refleja acá, en tiempo real, en cualquier otro
@@ -726,7 +754,7 @@ function fbEscucharCaja() {
     if (pageId === 'caja') { try { renderCaja(); } catch(e){} }
   }, err => { console.warn('Firestore listener error (caja):', err.code); });
 }
-
+ 
 // ── Helper generico: aplica los cambios de un snapshot (docChanges) sobre un array local en
 // memoria, SIN reemplazarlo entero — solo agrega/actualiza/quita lo que realmente cambio. Esto
 // es CRITICO para listeners filtrados (hoy, pendientes, mes actual): el array local tiene datos
@@ -750,7 +778,7 @@ function _aplicarCambiosSnapshot(snapshot, arr, idKey = 'id') {
   });
   return huboCambio;
 }
-
+ 
 // ── Ventas y movimientos de HOY. Se acotan a hoy a proposito: es lo que
 // resuelve "verlo mientras pasa" sin pagar por escuchar años de historial que ya nadie
 // necesita ver en vivo — el historial viejo lo sigue trayendo la reconciliacion de login.
@@ -772,7 +800,7 @@ function fbEscucharVentasHoy() {
       } catch(e){}
     }, err => { console.warn('Firestore listener error (ventas hoy):', err.code); });
 }
-
+ 
 function fbEscucharMovimientosHoy() {
   if (!dbModular) return;
   if (_fbMovimientosHoyUnsub) { _fbMovimientosHoyUnsub(); _fbMovimientosHoyUnsub = null; }
@@ -787,7 +815,7 @@ function fbEscucharMovimientosHoy() {
       try { if (pageId === 'caja') renderCaja(); } catch(e){}
     }, err => { console.warn('Firestore listener error (movimientos hoy):', err.code); });
 }
-
+ 
 // ── Fiados pendientes de la sede activa — filtrado por estado, no por fecha (un fiado puede
 // llevar meses sin pagarse y sigue siendo relevante verlo). Cuando un fiado se paga y deja de
 // cumplir "pendiente", el propio listener lo saca de la vista en todos los dispositivos, en
@@ -814,7 +842,7 @@ function fbEscucharFiadosPendientes() {
       try { if (pageId === 'fiados') renderFiados(); } catch(e){}
     }, err => { console.warn('Firestore listener error (fiados pendientes):', err.code); });
 }
-
+ 
 // ── Recordatorios: sin filtro — modulo de proposito general (envases, herramientas, o
 // cualquier otra cosa pendiente con un cliente), se necesita ver tanto pendientes como ya
 // devueltos para el historial completo. Sin filtro de sede, mismo criterio que clientes.
@@ -831,7 +859,7 @@ function fbEscucharRecordatorios() {
       try { if (pageId === 'recordatorios') renderRecordatorios(); } catch(e){}
     }, err => { console.warn('Firestore listener error (recordatorios):', err.code); });
 }
-
+ 
 // ── Clientes: sin filtro — compartidos entre sedes a proposito (puntos/compras/total son del
 // negocio completo). Resuelve el riesgo real de que 2 cajeros, en sedes distintas o la misma,
 // creen el mismo cliente sin saberlo.
@@ -872,7 +900,7 @@ function fbEscucharClientes() {
     } catch(e){}
   }, err => { console.warn('Firestore listener error (clientes):', err.code); });
 }
-
+ 
 // ── Promociones: sin filtro — pocas activas a la vez, y ya se habia pedido explicitamente
 // que la sincronizacion de productos y promociones fuera inmediata.
 function fbEscucharPromociones() {
@@ -886,7 +914,7 @@ function fbEscucharPromociones() {
     try { if (pageId === 'promociones') renderPromociones(); } catch(e){}
   }, err => { console.warn('Firestore listener error (promociones):', err.code); });
 }
-
+ 
 // ── Mermas del MES ACTUAL — no depende de sede (mermas se ven en conjunto), filtrado por mes
 // calendario porque un mes ya cerrado ya se cuadro, no hace falta seguir pagando por verlo en
 // vivo. La reconciliacion de login sigue trayendo TODAS, sin limite — este listener es solo
@@ -906,7 +934,7 @@ function fbEscucharMermasMes() {
       try { if (pageId === 'mermas') renderMermas(); } catch(e){}
     }, err => { console.warn('Firestore listener error (mermas mes):', err.code); });
 }
-
+ 
 // ── Canjes: sin filtro — cierra el riesgo real de doble canje del mismo premio por 2
 // dispositivos que no se veian entre si, mismo motivo que fiados pendientes.
 function fbEscucharCanjes() {
@@ -920,7 +948,7 @@ function fbEscucharCanjes() {
     try { if (pageId === 'frecuentes') renderFrecuentes(); } catch(e){}
   }, err => { console.warn('Firestore listener error (canjes):', err.code); });
 }
-
+ 
 // ── Gastos: colección propia dedicada (gastos/{id}), sin filtro — bajo volumen, mismo
 // criterio que clientes/promociones/mermas. CRITICO: antes, la única vía de sincronización de
 // gastos era el documento compartido db_ext (ver listener de db_ext más abajo, que YA NO
@@ -943,7 +971,7 @@ function fbEscucharGastos() {
     } catch(e){}
   }, err => { console.warn('Firestore listener error (gastos):', err.code); });
 }
-
+ 
 // ── Capital: colección propia dedicada (capital_movimientos/{id}), sin filtro — bajo
 // volumen (aportes/pagos de préstamo/cierres de mes no son frecuentes). CRITICO: antes, la
 // única vía era el documento compartido db_ext, sin ninguna colección propia de respaldo —
@@ -962,7 +990,7 @@ function fbEscucharCapitalMovimientos() {
     try { if (pageId === 'capital') renderCapital(); } catch(e){}
   }, err => { console.warn('Firestore listener error (capital_movimientos):', err.code); });
 }
-
+ 
 // ── Arranca los 10 listeners operativos de una — se llama una vez en el login (PASO 6, junto
 // a los que ya existian) y de vuelta cada vez que el admin cambia de sede activa (los 3 que
 // dependen de sede se reconectan solos, los otros 7 no necesitan tocarse de nuevo).
@@ -981,7 +1009,7 @@ function _iniciarListenersOperativos() {
   setTimeout(() => { fbEscucharMermasMes(); fbEscucharCanjes(); fbEscucharRecordatorios(); }, 360);
   setTimeout(() => { fbEscucharGastos(); fbEscucharCapitalMovimientos(); }, 480);
 }
-
+ 
 // ── Patch DB: interceptar asignaciones de array para auto-guardar ──
 // Solo las colecciones que el usuario modifica activamente
 // Columnas que van al doc 'db' (operaciones)
@@ -994,7 +1022,7 @@ function _iniciarListenersOperativos() {
 const _fbPatchColsOp   = ['proveedores'];
 // Columnas que van al doc 'db_productos' (catálogo)
 const _fbPatchColsProd = ['productos','categorias'];
-
+ 
 function fbPatchDB() {
   // Ensure new fields exist for users upgrading from older versions
   if (!DB.config) DB.config = {};
@@ -1089,7 +1117,7 @@ function fbPatchDB() {
     });
   });
 }
-
+ 
 function aplicarNombreNegocio() {
   const nombre = (DB.config && DB.config.nombre) || 'Tienda Aleze';
   document.title = nombre;
@@ -1097,4 +1125,3 @@ function aplicarNombreNegocio() {
   const el2 = document.getElementById('brand-nombre-2'); if (el2) el2.textContent = nombre;
   const el3 = document.getElementById('header-nombre');  if (el3) el3.textContent = nombre;
 }
-
