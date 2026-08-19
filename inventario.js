@@ -617,7 +617,7 @@ function guardarCategoria() {
   } else {
     DB.categorias.push({ id: getId(), nombre, emoji, margen, imagen, oculta });
   }
-  fbGuardarProductos();
+  fbGuardarProductos('categorias');
   cerrarModal('modal-categoria');
   renderCategorias();
   try { renderPos(); } catch(e){}
@@ -1040,7 +1040,7 @@ function eliminarCategoria(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar categorías.'); return; }
   if (DB.productos.some(p => p.cat == id)) { alert('No puedes eliminar una categoría con productos asignados'); return; }
   if (!confirm('¿Eliminar esta categoría?')) return;
-  DB.categorias = DB.categorias.filter(c => c.id !== id); fbGuardarProductos();
+  DB.categorias = DB.categorias.filter(c => c.id !== id); fbGuardarProductos('categorias');
   renderCategorias();
 }
 
