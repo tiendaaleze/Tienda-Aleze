@@ -15,9 +15,9 @@ function _waUrl(tel, texto) {
   }
   return telLimpio ? `https://web.whatsapp.com/send?phone=51${telLimpio}&text=${encodeURIComponent(texto)}` : `https://web.whatsapp.com/send?text=${encodeURIComponent(texto)}`;
 }
-
+ 
 let editingCliId = null;
-
+ 
 function verHistorialCliente(id) {
   navigate('historial-ventas');
   const el = document.getElementById('hv-buscar');
@@ -27,7 +27,7 @@ function verHistorialCliente(id) {
     renderHistorialVentas();
   }
 }
-
+ 
 function renderClientes() {
   const buscar = (document.getElementById('cli-buscar')?.value || '').toLowerCase();
   const lista = buscar ? DB.clientes.filter(c =>
@@ -51,14 +51,14 @@ _norm(c.tel||'').includes(_norm(buscar))
     </td>
   </tr>`; }).join('') || '<tr><td colspan="8" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin clientes</td></tr>';
 }
-
+ 
 function abrirModalCliente() {
   editingCliId = null;
   document.getElementById('cli-modal-titulo').textContent = 'Nuevo Cliente';
   ['cli-nombre','cli-alias','cli-tel','cli-dir','cli-cumple'].forEach(id => document.getElementById(id).value = '');
   abrirModal('modal-cliente');
 }
-
+ 
 function editarCliente(id) {
   editingCliId = id;
   const c = DB.clientes.find(x => x.id === id);
@@ -70,7 +70,7 @@ function editarCliente(id) {
   document.getElementById('cli-cumple').value = c.cumple || '';
   abrirModal('modal-cliente');
 }
-
+ 
 function guardarCliente() {
   const nombre = document.getElementById('cli-nombre').value.trim();
   if (!nombre) { alert('Ingresa el nombre'); return; }
@@ -98,7 +98,7 @@ function guardarCliente() {
   updatePosClientes();
   updateAlertCount();
 }
-
+ 
 function eliminarCliente(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar clientes.'); return; }
   const c = DB.clientes.find(x => x.id === id);
@@ -111,7 +111,7 @@ function eliminarCliente(id) {
   renderClientes();
   updatePosClientes();
 }
-
+ 
 // ===================== FIADOS =====================
 function limpiarFiltrosFiados() {
   document.getElementById('fi-desde').value = '';
@@ -120,19 +120,19 @@ function limpiarFiltrosFiados() {
   document.getElementById('fi-cliente').value = '';
   renderFiados();
 }
-
+ 
 function renderFiados() {
   const desde    = document.getElementById('fi-desde')?.value || '';
   const hasta    = document.getElementById('fi-hasta')?.value || '';
   const estado   = document.getElementById('fi-estado')?.value || '';
   const cliFilter = parseInt(document.getElementById('fi-cliente')?.value) || 0;
-
+ 
   // Por sede, mismo criterio que el resto — solo la LISTA que se ve (de donde se originó la
   // deuda). Cobrar, editar, o el mensaje de WhatsApp de un cliente puntual siguen sin filtrar
   // por sede más abajo en el archivo — pagar una deuda no depende de en qué sede se originó.
   const _sedeF = sedeAdminEfectiva();
   const _fiadosSede = DB.fiados.filter(f => (f.sedeId||'principal') === _sedeF);
-
+ 
   // Poblar selector de clientes — respeta el filtro de estado actual (por defecto "pendiente"),
   // así no lista clientes que la tarjeta de abajo ya está ocultando.
   const selCli = document.getElementById('fi-cliente');
@@ -149,29 +149,29 @@ function renderFiados() {
     });
     selCli.value = valorActual;
   }
-
+ 
   const porCliente = {};
   _fiadosSede.forEach(f => {
     if (!porCliente[f.clienteId]) porCliente[f.clienteId] = [];
     porCliente[f.clienteId].push(f);
   });
-
+ 
   let clienteIds = Object.keys(porCliente).map(Number);
-
+ 
   // Filtro por cliente
   if (cliFilter) clienteIds = clienteIds.filter(cid => cid === cliFilter);
-
+ 
   // Filtro por estado
   if (estado === 'pendiente') clienteIds = clienteIds.filter(cid => porCliente[cid].some(f => fiadoPendiente(f)));
   if (estado === 'pagado') clienteIds = clienteIds.filter(cid => porCliente[cid].every(f => !fiadoPendiente(f)));
-
+ 
   // Filtro por fecha — aplica sobre fiados individuales
   if (desde || hasta) {
     clienteIds = clienteIds.filter(cid => porCliente[cid].some(f =>
       (!desde || f.fecha >= desde) && (!hasta || f.fecha <= hasta)
     ));
   }
-
+ 
   const totalDeuda = _fiadosSede.reduce((s, f) => s + fiadoMontoPendiente(f), 0);
   const clientesConDeuda = [...new Set(_fiadosSede.map(f => f.clienteId))].filter(cid =>
     _fiadosSede.filter(f => f.clienteId === cid).some(f => fiadoPendiente(f))
@@ -183,12 +183,12 @@ function renderFiados() {
   document.getElementById('fiados-total').textContent = sol(totalDeuda);
   document.getElementById('fiados-clientes').textContent = clientesConDeuda;
   document.getElementById('fiados-mayor').textContent = sol(mayor);
-
+ 
   if (clienteIds.length === 0) {
     document.getElementById('fiados-list').innerHTML = '<p style="color:var(--gray-500)">Sin fiados que coincidan con los filtros</p>';
     return;
   }
-
+ 
   const _hace30dias = new Date(); _hace30dias.setDate(_hace30dias.getDate() - 30);
   const _hace30diasStr = _hace30dias.toISOString().split('T')[0];
   document.getElementById('fiados-list').innerHTML = clienteIds.map(cid => {
@@ -274,14 +274,14 @@ function renderFiados() {
     if (arr) arr.textContent = '▲';
   });
 }
-
+ 
 function limpiarFiltrosInternosFiado(cid) {
   document.getElementById('fi-tipo-' + cid).value = 'todo';
   document.getElementById('fi-int-desde-' + cid).value = '';
   document.getElementById('fi-int-hasta-' + cid).value = '';
   renderDetalleFiado(cid);
 }
-
+ 
 function renderDetalleFiado(cid) {
   const tipo  = document.getElementById('fi-tipo-' + cid)?.value || 'todo';
   const desde = document.getElementById('fi-int-desde-' + cid)?.value || '';
@@ -314,7 +314,7 @@ function renderDetalleFiado(cid) {
   }).join('') || '<p style="color:var(--gray-400);font-size:.82rem;padding:.5rem">Sin registros para los filtros seleccionados</p>';
   document.getElementById('fi-detalle-content-' + cid).innerHTML = html;
 }
-
+ 
 // ── Conceptos adicionales en fiados: para lo que se vende fuera del catálogo (arreglos a
 // pedido, preparaciones puntuales) — se anota como texto libre + monto, suma al total del
 // fiado para el cobro y el WhatsApp, pero vive en un campo APARTE de "items". Rentabilidad,
@@ -342,14 +342,14 @@ function agregarNotaFiado() {
   if (!desc || !desc.trim()) return;
   const montoRaw = prompt('Monto de referencia (S/) — opcional, solo para recordar cuánto cobrar, no se suma a nada:');
   const monto = parseFloat(montoRaw);
-
+ 
   if (!cli.notasFiado) cli.notasFiado = [];
   cli.notasFiado.push({ id: getId(), desc: desc.trim(), monto: (!isNaN(monto) && monto > 0) ? Math.round(monto*100)/100 : null, fecha: today() });
   fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
   alert(`✅ Nota guardada para ${cli.alias||cli.nombre}. No afecta su deuda ni su caja — es solo para recordarlo.`);
 }
-
+ 
 function editarNotaFiado(clienteId, notaId) {
   const cli = DB.clientes.find(c => c.id === clienteId);
   const nota = cli?.notasFiado?.find(n => n.id === notaId);
@@ -363,7 +363,7 @@ function editarNotaFiado(clienteId, notaId) {
   fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
 }
-
+ 
 function eliminarNotaFiado(clienteId, notaId) {
   const cli = DB.clientes.find(c => c.id === clienteId);
   if (!cli || !cli.notasFiado) return;
@@ -372,7 +372,7 @@ function eliminarNotaFiado(clienteId, notaId) {
   fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
 }
-
+ 
 function compartirResumenFiadoCliente(cid) {
   const cli   = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
@@ -403,7 +403,7 @@ function compartirResumenFiadoCliente(cid) {
   const url = _waUrl(tel, msg);
   window.open(url, '_blank');
 }
-
+ 
 function abrirPagoGlobal(cid) {
   const cli = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Cliente';
@@ -418,7 +418,7 @@ function abrirPagoGlobal(cid) {
   const metodo = (_idxMetodo >= 1 && _idxMetodo <= _metodosPago.length) ? _metodosPago[_idxMetodo-1] : 'Efectivo';
   ejecutarPagoGlobal(cid, monto, metodo);
 }
-
+ 
 // ── Asigna un pago a items específicos del fiado (más baratos primero) y devuelve el costo real cubierto ──
 // Mismo criterio en confirmarPagoFiado() y ejecutarPagoGlobal() — así el costo reconocido en
 // Dashboard/Capital coincide exactamente con qué se pagó, no una proporción uniforme sobre todo el fiado.
@@ -439,12 +439,12 @@ function _asignarPagoAItems(fiado, monto) {
   });
   return Math.round(costo * 10000) / 10000;
 }
-
+ 
 async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   metodo = metodo || 'Efectivo';
   const _sedeEPG = sedeAdminEfectiva();
   const fiadosLocal = DB.fiados.filter(f => f.clienteId === cid && (f.sedeId||'principal') === _sedeEPG && fiadoPendiente(f)).sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.id - b.id);
-
+ 
   // CRITICO: runTransaction en vez de writeBatch — un batch es atomico DENTRO de una sola
   // llamada, pero no protege contra que un pago individual (confirmarPagoFiado) o otro pago
   // global casi simultaneo sobre el MISMO cliente lean el mismo estado viejo y se pisen entre
@@ -453,7 +453,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   // pero no con este: la lectura seguia siendo de memoria local, potencialmente vieja.
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
-
+ 
   let _r;
   try {
     _r = await runTransactionM(dbModular, async (tx) => {
@@ -465,7 +465,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
         const snap = await tx.get(ref); // lectura garantizada real del servidor, nunca cache
         if (snap.exists()) _snapsFiados.push({ ref, data: snap.data() }); // en modular, exists es un METODO
       }
-
+ 
       // FASE 2 — calcular y escribir usando los valores REALES del servidor, nunca los de
       // memoria local (que podrian estar desactualizados si algo mas ya toco estos fiados).
       let saldo = montoTotal;
@@ -489,29 +489,29 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
         _hvPagosGlobal.push(_entry);
         _cambiosLocales.push({ fiadoId: fServidor.id, _fPagoEntry, _fPagado, _fEstado });
       }
-
+ 
       const _montoRealAplicado = Math.round((montoTotal - saldo) * 100) / 100;
       if (_montoRealAplicado <= 0) {
         throw new Error('No se pudo aplicar el pago — la deuda pendiente ya no coincide (puede que se haya saldado por otro pago mientras tanto). Revisa el estado actualizado del cliente.');
       }
-
+ 
       tx.set(docM(dbModular, 'clientes', String(cid)), { deuda: incrementM(-_montoRealAplicado) }, { merge: true });
-
+ 
       const _movId = getId();
       const _movData = { id:_movId, tipo:'ingreso', desc:`Pago global fiado (${metodo}): ` + getClienteNombre(cid), monto: _montoRealAplicado, hora: nowTime(), fecha: today(), sedeId: _sedeEPG };
       tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
+ 
       const _cajaUpdate = { ingresos: incrementM(_montoRealAplicado) };
       if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(_montoRealAplicado);
       tx.set(docM(dbModular, 'caja', _sedeEPG), _cajaUpdate, { merge: true });
-
+ 
       return { _cambiosLocales, _hvPagosGlobal, _movData, _montoRealAplicado, _saldoSobrante: saldo };
     });
   } catch (e) {
     alert('⚠️ No se pudo registrar el pago global: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
-
+ 
   // La transaccion ya fue aceptada — recien ahora se aplican los cambios en memoria local.
   _r._cambiosLocales.forEach(({ fiadoId, _fPagoEntry, _fPagado, _fEstado }) => {
     const f = DB.fiados.find(x => x.id === fiadoId);
@@ -530,7 +530,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
   DB.caja.ingresos += _r._montoRealAplicado;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r._montoRealAplicado;
-
+ 
   if (!DB.historialVentas) DB.historialVentas = [];
   _r._hvPagosGlobal.forEach(entry => DB.historialVentas.push(entry));
   if (!DB.movimientos) DB.movimientos = [];
@@ -542,7 +542,7 @@ async function ejecutarPagoGlobal(cid, montoTotal, metodo) {
   try { renderCaja(); } catch(e) {}
   alert('✅ Pago global de ' + sol(_r._montoRealAplicado) + ' registrado correctamente.' + (_r._saldoSobrante > 0 ? '\n\n⚠️ Quedó un saldo de ' + sol(_r._saldoSobrante) + ' sin aplicar — la deuda pendiente cambió durante el proceso.' : ''));
 }
-
+ 
 function confirmarEliminarFiado(id) {
   const fLocal = DB.fiados.find(x => x.id === id);
   if (!fLocal) return;
@@ -557,13 +557,13 @@ function confirmarEliminarFiado(id) {
   const pendLocal = fiadoMontoPendiente(fLocal); // solo decide que texto de prompt mostrar — el monto real se relee dentro de la transaccion
   const opciones = pendLocal > 0
     ? `¿Cómo deseas eliminar este fiado de ${sol(fLocal.total)}?
-
+ 
 1. ERROR DE REGISTRO → restaura stock
 2. PÉRDIDA/INCOBRABLE → registra en mermas
-
+ 
 Escribe 1 o 2:`
     : `¿Eliminar este fiado ya pagado?
-
+ 
 Escribe 1 para confirmar:`;
   const resp = prompt(opciones);
   if (!resp) return;
@@ -572,7 +572,7 @@ Escribe 1 para confirmar:`;
   if (opcion === '2' && pendLocal <= 0) { alert('Opción no válida. No se realizó ningún cambio.'); return; }
   _confirmarEliminarFiadoTx(id, opcion);
 }
-
+ 
 // CRITICO: runTransaction en vez de escrituras independientes — antes, restaurar stock
 // (fbIncrementarStock), borrar el fiado (deleteDocM), ajustar la deuda (ajustarDeudaCliente)
 // y registrar mermas (fbSincronizarMerma) eran 4 operaciones completamente separadas, sin
@@ -592,7 +592,7 @@ async function _confirmarEliminarFiadoTx(id, opcion) {
       const fServidor = snap.data();
       const pendReal = Math.max(0, Math.round(((fServidor.total||0) - (fServidor.pagado||0)) * 100) / 100);
       const _items = fServidor.items || [];
-
+ 
       let _prodSnaps = [];
       if (opcion === '1') {
         for (const i of _items) {
@@ -601,7 +601,7 @@ async function _confirmarEliminarFiadoTx(id, opcion) {
           _prodSnaps.push({ item: i, ref: prodRef, existe: prodSnap.exists() });
         }
       }
-
+ 
       // FASE 2 — escrituras, todas juntas.
       if (opcion === '1') {
         _prodSnaps.forEach(({ item, ref, existe }) => {
@@ -638,7 +638,7 @@ async function _confirmarEliminarFiadoTx(id, opcion) {
     alert('⚠️ No se pudo eliminar el fiado: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
-
+ 
   // La transaccion ya fue aceptada — recien ahora se aplica en memoria local.
   DB.fiados = DB.fiados.filter(x => x.id !== id);
   const cli = DB.clientes.find(c => c.id === _r.fServidor.clienteId);
@@ -660,7 +660,7 @@ async function _confirmarEliminarFiadoTx(id, opcion) {
     alert('✅ Fiado eliminado y registrado como merma.');
   }
 }
-
+ 
 function toggleFiadoDetalle(id) {
   const el = document.getElementById(id);
   const arr = document.getElementById('arr-' + id);
@@ -670,7 +670,7 @@ function toggleFiadoDetalle(id) {
   if (arr) arr.textContent = open ? '▼' : '▲';
   if (open) _fiadosAbiertos.delete(id); else _fiadosAbiertos.add(id);
 }
-
+ 
 function abrirPagoFiado(id) {
   editingFiadoId = id;
   const f = DB.fiados.find(x => x.id === id);
@@ -703,7 +703,7 @@ function abrirPagoFiado(id) {
   document.getElementById('fiado-pago-monto').value = '';
   abrirModal('modal-pago-fiado');
 }
-
+ 
 async function confirmarPagoFiado() {
   const f = DB.fiados.find(x => x.id === editingFiadoId);
   if (!f) return;
@@ -719,7 +719,7 @@ async function confirmarPagoFiado() {
   const sede = sedeAdminEfectiva();
   if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
   await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
-
+ 
   // CRITICO: runTransaction en vez de writeBatch — un batch es atomico DENTRO de una sola
   // llamada (todo o nada), pero no protege contra que 2 pagos casi simultaneos sobre el MISMO
   // fiado (2 cajeros, o el mismo cajero cobrando rapido) lean el mismo estado viejo y se pisen
@@ -743,28 +743,28 @@ async function confirmarPagoFiado() {
       const _fPagoEntry = { fecha: today(), hora: nowTime(), cajero: currentUser, monto, metodo };
       const _fPagado = Math.round(((fServidor.pagado||0) + monto) * 100) / 100;
       const _fEstado = (Math.round(((fServidor.total||0) - _fPagado) * 100) / 100) <= 0 ? 'pagado' : 'pendiente';
-
+ 
       tx.set(fiadoRef, { ...fServidor, pagado: _fPagado, pagos: [...(fServidor.pagos||[]), _fPagoEntry], sedeId: fServidor.sedeId || sede, estado: _fEstado });
       tx.set(docM(dbModular, 'clientes', String(fServidor.clienteId)), { deuda: incrementM(-monto) }, { merge: true });
-
+ 
       const _movId = getId();
       const _movData = { id:_movId, tipo:'ingreso', desc:`Pago fiado (${metodo}): ` + getClienteNombre(fServidor.clienteId), monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
       tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
-
+ 
       const _cajaUpdate = { ingresos: incrementM(monto) };
       if (metodo === 'Efectivo') _cajaUpdate.ingresosEfectivo = incrementM(monto);
       tx.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
-
+ 
       const _pagoFiado = { id: getId(), fecha: today(), hora: nowTime(), origen: 'pago_fiado', estado: 'completado', clienteId: fServidor.clienteId, fiadoId: fServidor.id, total: monto, metodo, cajero: currentUser, costoAsociado, sedeId: sede };
       tx.set(docM(dbModular, 'ventas', String(_pagoFiado.id)), _pagoFiado);
-
+ 
       return { _fPagoEntry, _fPagado, _fEstado, _movData, _pagoFiado };
     });
   } catch (e) {
     alert('⚠️ No se pudo registrar el pago: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
     return;
   }
-
+ 
   // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
   if (!f.pagos) f.pagos = [];
   f.pagos.push(_r._fPagoEntry);
@@ -779,7 +779,7 @@ async function confirmarPagoFiado() {
   // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
   DB.caja.ingresos += monto;
   if (metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
-
+ 
   if (!DB.historialVentas) DB.historialVentas = [];
   DB.historialVentas.push(_r._pagoFiado);
   if (!DB.movimientos) DB.movimientos = [];
@@ -792,7 +792,7 @@ async function confirmarPagoFiado() {
   try { renderCaja(); } catch(e){}
   try { generarReporte(); } catch(e){}
 }
-
+ 
 function compartirFiadoWhatsapp() {
   const f = DB.fiados.find(x => x.id === editingFiadoId);
   if (!f) return;
@@ -806,22 +806,22 @@ function compartirFiadoWhatsapp() {
   const url = _waUrl(tel, msg);
   window.open(url, '_blank');
 }
-
+ 
 let historialClienteId = null;
-
+ 
 async function abrirHistorialCliente(cid, e) {
   if (e) e.stopPropagation();
   historialClienteId = cid;
   const cli = DB.clientes.find(c => c.id === cid);
   const nombre = cli ? (cli.alias || cli.nombre) : 'Anónimo';
-
+ 
   abrirModal('modal-historial-cliente');
   document.getElementById('hcli-titulo').textContent = '📋 Historial — ' + nombre;
   document.getElementById('hcli-resumen').innerHTML = '⏳ Trayendo historial completo...';
   document.getElementById('hcli-filtro-tipo').value = 'todo';
   document.getElementById('hcli-desde').value = '';
   document.getElementById('hcli-hasta').value = '';
-
+ 
   // "Historial completo" de verdad: la vista local puede tener recortado lo ya pagado más
   // viejo de 90 días (poda de escalabilidad) — acá se consulta fiados/{id} directo por este
   // cliente puntual, trayendo lo que falte sin tener que cargar la colección entera cada vez.
@@ -835,7 +835,7 @@ async function abrirHistorialCliente(cid, e) {
       });
     } catch(e) { console.warn('abrirHistorialCliente: no se pudo traer historial completo, mostrando lo local', e); }
   }
-
+ 
   const fiados = DB.fiados.filter(f => f.clienteId === cid);
   const totalCli = fiados.reduce((s, f) => s + f.total, 0);
   const pagadoCli = fiados.reduce((s, f) => s + f.pagado, 0);
@@ -847,24 +847,24 @@ async function abrirHistorialCliente(cid, e) {
 <span style="color:${pendienteCli>0?'var(--danger)':'var(--accent)'}">${pendienteCli>0?'⏳ Pendiente':'✅ Sin deuda'}: <strong>${sol(pendienteCli)}</strong></span>`;
   renderHistorialCliente();
 }
-
+ 
 function renderHistorialCliente() {
   const cid = historialClienteId;
   const tipo = document.getElementById('hcli-filtro-tipo').value;
   const desde = document.getElementById('hcli-desde').value;
   const hasta = document.getElementById('hcli-hasta').value;
   let fiados = DB.fiados.filter(f => f.clienteId === cid);
-
+ 
   // Filtro por rango de fechas
   if (desde) fiados = fiados.filter(f => f.fecha >= desde);
   if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
-
+ 
   // Filtro por tipo
   if (tipo === 'pendientes') fiados = fiados.filter(f => fiadoPendiente(f));
   else if (tipo === 'pagados') fiados = fiados.filter(f => !fiadoPendiente(f));
-
+ 
   const contenido = document.getElementById('hcli-contenido');
-
+ 
   if (tipo === 'pagos') {
     // Mostrar solo los registros de pagos realizados
     let pagos = [];
@@ -891,7 +891,7 @@ function renderHistorialCliente() {
         </div>`).join('');
     return;
   }
-
+ 
   const totalPend = fiados.reduce((s, f) => s + fiadoMontoPendiente(f), 0);
   document.getElementById('hcli-resumen-filtro').textContent = `${fiados.length} venta(s) encontrada(s) · Pendiente: ${sol(totalPend)}`;
   contenido.innerHTML = fiados.length === 0
@@ -915,14 +915,14 @@ function renderHistorialCliente() {
         </div>`;
       }).join('');
 }
-
+ 
 function limpiarFiltrosHistorial() {
   document.getElementById('hcli-filtro-tipo').value = 'todo';
   document.getElementById('hcli-desde').value = '';
   document.getElementById('hcli-hasta').value = '';
   renderHistorialCliente();
 }
-
+ 
 function compartirHistorialWhatsapp() {
   const cid = historialClienteId;
   const cli = DB.clientes.find(c => c.id === cid);
@@ -934,11 +934,11 @@ function compartirHistorialWhatsapp() {
   let fiados = DB.fiados.filter(f => f.clienteId === cid);
   if (desde) fiados = fiados.filter(f => f.fecha >= desde);
   if (hasta) fiados = fiados.filter(f => f.fecha <= hasta);
-
+ 
   let msg = `Hola ${nombre}, aquí su resumen en *${DB.config.nombre||'Tienda Aleze'}*:\n`;
   if (desde || hasta) msg += `📅 Período: ${desde ? formatDate(desde) : 'inicio'} al ${hasta ? formatDate(hasta) : 'hoy'}\n`;
   msg += '\n';
-
+ 
   if (tipo === 'pagos') {
     let pagos = [];
     DB.fiados.filter(f => f.clienteId === cid).forEach(f => {
@@ -965,7 +965,7 @@ function compartirHistorialWhatsapp() {
   const url = _waUrl(tel, msg);
   window.open(url, '_blank');
 }
-
+ 
 // ===================== WHATSAPP IMAGEN =====================
 async function compartirWhatsapp() {
   const ticket = document.getElementById('ticket-print');
@@ -1003,12 +1003,12 @@ async function compartirWhatsapp() {
   } catch(e) { fallbackWA(); }
   finally { clon.remove(); }
 }
-
+ 
 function fallbackWA() {
   const t = document.getElementById('ticket-print');
   window.open(_waUrl(null, t ? t.innerText : ''), '_blank');
 }
-
+ 
 // ===================== FRECUENTES =====================
 // ── Fidelización: configuración de puntos, tasa de canje y multiplicadores por categoría ──
 function renderFidelizacionConfig() {
@@ -1017,16 +1017,16 @@ function renderFidelizacionConfig() {
   renderMultiplicadoresCategorias();
   renderCanjesHistorial();
 }
-
+ 
 function guardarFidelizacionConfig() {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cambiar las reglas del programa de puntos.'); return; }
   const tasaBase = parseFloat(document.getElementById('fid-tasa-base').value) || 1;
   const tasaCanje = parseFloat(document.getElementById('fid-tasa-canje').value) || 300;
   DB_EXT.fidelizacion = { tasaBase, tasaCanje };
-  fbGuardarExt();
+  fbGuardarExt('fidelizacion');
   alert('✅ Configuración guardada.');
 }
-
+ 
 function renderMultiplicadoresCategorias() {
   const el = document.getElementById('fid-multiplicadores-list');
   el.innerHTML = DB.categorias.map(c => `
@@ -1036,7 +1036,7 @@ function renderMultiplicadoresCategorias() {
         onchange="cambiarMultiplicadorCategoria(${c.id}, this.value)" />
     </div>`).join('');
 }
-
+ 
 function cambiarMultiplicadorCategoria(catId, valor) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cambiar el multiplicador de puntos por categoría.'); return; }
   const cat = DB.categorias.find(c => c.id === catId);
@@ -1044,7 +1044,7 @@ function cambiarMultiplicadorCategoria(catId, valor) {
   cat.multiplicadorPuntos = parseFloat(valor) || 1;
   fbGuardarProductos();
 }
-
+ 
 function renderCanjesHistorial() {
   const el = document.getElementById('fid-canjes-historial');
   if (!el) return;
@@ -1060,7 +1060,7 @@ function renderCanjesHistorial() {
     }).join('');
   }).catch(() => { el.innerHTML = 'Error cargando canjes.'; });
 }
-
+ 
 function renderFrecuentes() {
   renderFidelizacionConfig();
   const crowns = ['🥇','🥈','🥉','4️⃣','5️⃣'];
@@ -1087,6 +1087,5 @@ function renderFrecuentes() {
       }).join('')}</tbody>
     </table></div>`;
 }
-
+ 
 // Premio sugerido al vender
-
