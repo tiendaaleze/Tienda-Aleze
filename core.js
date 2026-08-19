@@ -404,7 +404,7 @@ function resetAppState() {
       let _val = emptyVal;
       Object.defineProperty(DB, key, {
         get() { return _val; },
-        set(v) { _val = v; key === 'productos' || key === 'categorias' ? fbGuardarProductos() : fbGuardar(); },
+        set(v) { _val = v; key === 'productos' || key === 'categorias' ? fbGuardarProductos(key) : fbGuardar(); },
         configurable: true,
         enumerable: true
       });
@@ -874,7 +874,10 @@ function ignorarAlerta(key) {
   if (!DB.config.alertasIgnoradas) DB.config.alertasIgnoradas = {};
   DB.config.alertasIgnoradas[key] = Date.now();
   fbGuardar();
-  fbGuardarProductos();
+  // Sin fbGuardarProductos() acá a propósito: 'alertasIgnoradas' es dato interno de staff,
+  // nunca formó parte del subconjunto público que ese documento manda a la tienda — la llamada
+  // de antes solo reescribía categorias+config completos sin necesidad real, en cada alerta
+  // que alguien ignoraba.
   showAlerts();
   updateAlertCount();
 }
@@ -1077,5 +1080,3 @@ function checkRoute() {
     _mostrarBloqueo(bloqueoTs);
   }
 }
-
-
