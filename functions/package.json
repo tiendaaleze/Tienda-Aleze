@@ -2,7 +2,7 @@
   "name": "tienda-aleze-functions",
   "description": "Cloud Functions para Tienda Aleze — pasarela de pago (Izipay), construidas dormidas hasta que se active la configuracion",
   "engines": {
-    "node": "20"
+   "node": "22"
   },
   "main": "index.js",
   "scripts": {
