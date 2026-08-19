@@ -569,62 +569,96 @@ function fbEscucharProductosColeccion() {
   }, err => { console.warn('Firestore listener error (productos):', err.code); });
 }
  
-function fbGuardarProductos() {
+// CRITICO: antes escribia SIEMPRE el documento db_productos COMPLETO (categorias + 17 campos
+// publicos de config juntos) via setDoc sin merge, cada vez que CUALQUIER cosa lo disparaba —
+// crear/editar/eliminar una categoria, guardar cualquier seccion de Configuracion, o incluso
+// el Proxy reactivo de mas abajo. Con 2 sesiones abiertas a la vez (ej. admin editando
+// categorias mientras otro admin guarda Configuracion), la segunda escritura podia pisar por
+// completo el cambio de la primera, aunque nunca hubiera tocado ese campo — cada escritura
+// mandaba su propia copia (posiblemente vieja) de TODO lo demas. Ya causo perdida de datos
+// real confirmada mas de una vez con este mismo mecanismo (ver hoja de ruta, seccion 6).
+// Ahora fbGuardarProductos(campo) solo escribe el/los campo(s) que realmente cambiaron, via
+// updateDocM (actualizacion parcial real de Firestore) — el resto del documento nunca se toca.
+let _prodDirty = new Set();
+function _prodBuildPayload() {
+  const payload = {};
+  _prodDirty.forEach(campo => {
+    // 'productos' ya NO vive en este documento desde la migracion Fase 4/4 (cada producto
+    // vive en su propia coleccion) — si algo todavia marca 'productos' como sucio (el Proxy
+    // reactivo de mas abajo lo hace por costumbre), se ignora acá a propósito, nunca se manda.
+    if (campo === 'productos') return;
+    if (campo === 'categorias') { payload.categorias = JSON.parse(JSON.stringify(DB.categorias)); return; }
+    if (campo === 'config') {
+      // CRITICO: usuariosStaff SI tiene que estar acá, con email incluido — el propio proceso
+      // de login lo necesita ANTES de autenticar (el selector de usuario se llena desde acá, y
+      // doLogin() usa el email para el signInWithEmailAndPassword real). Una ronda anterior lo
+      // sacó pensando que era un dato sensible innecesario en un documento público, sin darse
+      // cuenta de que el login entero depende de que esté ahí — eso dejó el selector vacío y el
+      // login roto por completo. El email de un cajero, solo, no es una credencial (todavía
+      // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
+      // exposición que cualquier login por correo público en cualquier sistema.
+      const _configPublico = {
+        nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
+        whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
+        requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
+        pasarelaPago: DB.config?.pasarelaPago,
+        usuariosStaff: DB.config?.usuariosStaff || [],
+        // CRITICO: faltaban acá — sin esto, cada fbGuardarProductos() (que corre en cualquier
+        // edición de producto/categoría, no solo al guardar Configuración) borraba en silencio
+        // estos campos del documento remoto, aunque siguieran viéndose bien en memoria local del
+        // admin. Un visitante nuevo, leyendo el documento remoto fresco, nunca los recibía.
+        eslogan: DB.config?.eslogan, bannerVisible: DB.config?.bannerVisible,
+        banners: DB.config?.banners || [], serviciosBannerUrl: DB.config?.serviciosBannerUrl,
+        serviciosBanners: DB.config?.serviciosBanners || [],
+        tiendasTexto: DB.config?.tiendasTexto, tiendasExternas: DB.config?.tiendasExternas || [],
+        serviciosWa: DB.config?.serviciosWa || [],
+        // CRITICO: faltaba este campo — tienda publica lee su configuracion especificamente de
+        // este documento (aleze/db_productos), nunca de aleze/db. Sin deliveryMinimo aca, el valor
+        // configurado en Configuracion nunca llegaba a tienda publica, sin importar que boton se
+        // tocara para guardar — siempre caia al fallback de 20 en tienda-publica.js.
+        deliveryMinimo: DB.config?.deliveryMinimo
+      };
+      payload.config = JSON.parse(JSON.stringify(_configPublico));
+    }
+  });
+  return payload;
+}
+function fbGuardarProductos(campo) {
   if (!dbModular) return; // [SDK modular]
   if (!authModular || !authModular.currentUser) return;
   _fbLastWriteProdTs = Date.now();
+  if (campo) _prodDirty.add(campo);
   clearTimeout(_fbSaveTimerProd);
  _fbSaveTimerProd = setTimeout(function _tryGuardarProd() {
     if (_fbWritingProd) { _fbSaveTimerProd = setTimeout(_tryGuardarProd, 500); return; }
+    if (_prodDirty.size === 0) return;
+    const payload = _prodBuildPayload();
+    _prodDirty.clear();
+    if (Object.keys(payload).length === 0) return; // ej. solo 'productos' estaba sucio, nada real que escribir
     _fbEscribiendo = true;
     _fbWritingProd = true;
-    // CRITICO: usuariosStaff SI tiene que estar acá, con email incluido — el propio proceso
-    // de login lo necesita ANTES de autenticar (el selector de usuario se llena desde acá, y
-    // doLogin() usa el email para el signInWithEmailAndPassword real). Una ronda anterior lo
-    // sacó pensando que era un dato sensible innecesario en un documento público, sin darse
-    // cuenta de que el login entero depende de que esté ahí — eso dejó el selector vacío y el
-    // login roto por completo. El email de un cajero, solo, no es una credencial (todavía
-    // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
-    // exposición que cualquier login por correo público en cualquier sistema.
-    const _configPublico = {
-  nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
-  whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
-  requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
-  pasarelaPago: DB.config?.pasarelaPago,
-  usuariosStaff: DB.config?.usuariosStaff || [],
-  // CRITICO: faltaban acá — sin esto, cada fbGuardarProductos() (que corre en cualquier
-  // edición de producto/categoría, no solo al guardar Configuración) borraba en silencio
-  // estos campos del documento remoto, aunque siguieran viéndose bien en memoria local del
-  // admin. Un visitante nuevo, leyendo el documento remoto fresco, nunca los recibía.
- eslogan: DB.config?.eslogan, bannerVisible: DB.config?.bannerVisible,
-  banners: DB.config?.banners || [], serviciosBannerUrl: DB.config?.serviciosBannerUrl,
-  serviciosBanners: DB.config?.serviciosBanners || [],
-  tiendasTexto: DB.config?.tiendasTexto, tiendasExternas: DB.config?.tiendasExternas || [],
-  serviciosWa: DB.config?.serviciosWa || [],
-  // CRITICO: faltaba este campo — tienda publica lee su configuracion especificamente de
-  // este documento (aleze/db_productos), nunca de aleze/db. Sin deliveryMinimo aca, el valor
-  // configurado en Configuracion nunca llegaba a tienda publica, sin importar que boton se
-  // tocara para guardar — siempre caia al fallback de 20 en tienda-publica.js.
-  deliveryMinimo: DB.config?.deliveryMinimo
-};
-    // FASE 4/4 migracion de productos: 'productos' ya NO se escribe aca — cada producto vive
-    // en su propia coleccion (ver fbGuardarProducto/fbGuardarProductosLote mas arriba), la
-    // misma razon por la que ventas/clientes/fiados/stock ya no viven en un documento unico.
-    // setDocM (sin merge) limpia el campo 'productos' viejo del documento apenas esto corra
-    // una vez, sin necesitar un script de limpieza aparte.
-    const payload = {
-      categorias: JSON.parse(JSON.stringify(DB.categorias)),
-      config:     JSON.parse(JSON.stringify(_configPublico))
-    };
     _sincIniciar('db_productos', 'db_productos');
-    setDocM(docM(dbModular, 'aleze', 'db_productos'), payload) // [SDK modular]
-      .then(() => {
-        _fbProdCacheTs = Date.now(); // actualizar timestamp caché
-        _fbWritingProd = false;
-        setTimeout(() => { _fbEscribiendo = false; }, 300);
-        _sincTerminar('db_productos', 'db_productos');
-      })
-      .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; _sincError('db_productos', 'db_productos', e, 'el catálogo de productos y el stock'); });
+    const _onOk = () => {
+      _fbProdCacheTs = Date.now(); // actualizar timestamp caché
+      _fbWritingProd = false;
+      setTimeout(() => { _fbEscribiendo = false; }, 300);
+      _sincTerminar('db_productos', 'db_productos');
+    };
+    const _onFail = (e) => { _fbWritingProd = false; _fbEscribiendo = false; _sincError('db_productos', 'db_productos', e, 'el catálogo de productos y el stock'); };
+    updateDocM(docM(dbModular, 'aleze', 'db_productos'), payload) // [SDK modular]
+      .then(_onOk)
+      .catch(e => {
+        // El documento no existe todavia — updateDoc exige que exista. setDoc con merge:true
+        // lo crea sin arriesgar sobrescribir campos que otra sesion haya guardado justo en el
+        // instante entre el error y este reintento. En la practica no deberia pasar nunca (este
+        // documento se lee en cada login), es solo la misma red de seguridad ya aplicada en
+        // fbGuardarExt().
+        if (e.code === 'not-found') {
+          setDocM(docM(dbModular, 'aleze', 'db_productos'), payload, { merge: true }).then(_onOk).catch(_onFail);
+          return;
+        }
+        _onFail(e);
+      });
   }, 1200);
 }
  
@@ -1062,7 +1096,7 @@ function fbPatchDB() {
     if (_huboMigracion) {
       console.warn('[Migración] usuariosStaff actualizado (nombres/eliminación de sede 2) — guardando de vuelta.');
       try { fbGuardarConfig(); } catch(e) {}
-      try { fbGuardarProductos(); } catch(e) {}
+      try { fbGuardarProductos('config'); } catch(e) {}
     }
   }
   // CRITICO: causa raiz real del "saldo heredado S/0.00" persistente incluso con lectura
@@ -1111,7 +1145,7 @@ function fbPatchDB() {
         // Misma protección preventiva que en _fbPatchColsOp — si fbGuardarProductos() alguna
         // vez reasigna productos/categorias (poda, etc.), esto evita el mismo ciclo infinito.
         if (_fbEscribiendo) return;
-        fbGuardarProductos();
+        fbGuardarProductos(col); // 'col' ya es exactamente 'productos' o 'categorias'
       },
       configurable: true
     });
