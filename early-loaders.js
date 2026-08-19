@@ -1,10 +1,10 @@
 // Carga de JsBarcode con fallback a CDN secundaria
 (function() {
   var s = document.createElement('script');
-  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.6/JsBarcode.all.min.js';
+s.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js';
   s.onerror = function() {
     var s2 = document.createElement('script');
-    s2.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js';
+s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.6/JsBarcode.all.min.js';
     document.head.appendChild(s2);
   };
   document.head.appendChild(s);
