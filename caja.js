@@ -1,1127 +1,968 @@
-// ===================== FIREBASE — CLOUD FIRESTORE =====================
-// Estrategia anti-quota:
-//   • 1 lectura al iniciar (getDoc) — NO listener permanente sobre toda la DB
-//   • onSnapshot solo en doc 'db' — 1 documento = 1 lectura por cambio externo
-//   • Flag _fbEscribiendo evita el loop escritura→listener→escritura
-//   • Debounce 1200ms agrupa operaciones rápidas en UNA sola escritura
-//   • Toda la DB en 1 documento Firestore → mínimo de operaciones posible
- 
-const APP_VERSION = '1.0.1';
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyC9pGcFJG1XNyVgcZNp2NKcxW0d1oat2qI",
-  authDomain: "tienda-aleze.firebaseapp.com",
-  projectId: "tienda-aleze",
-  storageBucket: "tienda-aleze.firebasestorage.app",
-  messagingSenderId: "231416120915",
-  appId: "1:231416120915:web:749a1a6648d0006faf68a6"
-};
- 
-// (fbApp Compat eliminado — App Check ahora vive por completo en appModular, ver mas abajo)
-// (fbFS Compat eliminado — Firestore migrado por completo a Modular, ver dbModular)
-let _fbEscribiendo = false; // Flag anti-loop: true mientras este dispositivo escribe
-let _fbSaveTimer = null;
-let _fbLastWriteTs = 0;     // timestamp del último fbGuardar() — protege ventana debounce
-let _fbLastWriteProdTs = 0; // timestamp del último fbGuardarProductos()
-// (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
-// (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver functionsModular)
- 
-// ── SDK modular — Firestore, Auth, Storage, Functions y App Check, 100% migrados ─────
-// Estas instancias apuntan al proyecto configurado en FIREBASE_CONFIG — el sistema entero
-// corre sobre esta unica conexion ahora, sin ningun rastro de Compat.
-let dbModular = null;
-let authModular = null;
-let storageModular = null;
-let messagingModular = null;
-// Alias cortos para las funciones modulares de Firestore — se asignan dentro de
-// iniciarFirebase() una vez que window.__fbModular esta confirmado disponible. Evita repetir
-// "window.__fbModular.firestore.X" en cada uno de los puntos de contacto que se van migrando.
-let docM, setDocM, getDocM, getDocDelServidorM, getDocsM, deleteDocM, updateDocM, addDocM, collectionM,
-    queryM, whereM, orderByM, limitM, writeBatchM, runTransactionM, incrementM,
-    serverTimestampM, deleteFieldM, onSnapshotM;
-let refM, uploadBytesM, getDownloadURLM, deleteObjectM;
-let functionsModular, httpsCallableM;
- 
-// ══════════════════════════════════════════════════════════════════════════
-// Visibilidad real de sincronización — camino completo, no un parche.
-//
-// El problema que resuelve: con persistencia offline activada, Firestore acepta
-// cada escritura en una cola local y la reintenta solo cuando vuelve la señal —
-// eso significa que, si NO hay conexión, la Promise de .set()/.update() queda
-// simplemente PENDIENTE (ni resuelta ni rechazada), no falla. Por eso un
-// .catch() nunca debería tratarse como "seguro, ya se resuelve solo" ni como
-// "listo, ignoralo" — hay que distinguir 2 situaciones muy distintas:
-//   1. Sigue pendiente (sin señal, o el servidor tarda) → normal, se resuelve
-//      solo, no amerita interrumpir a nadie. Se refleja en un badge chico.
-//   2. Falló de verdad (permisos, datos invalidos, cuota) → NUNCA se va a
-//      resolver reintentando — el cajero tiene que enterarse ya, con una
-//      alerta real, no una línea en la consola que nadie lee.
-// ══════════════════════════════════════════════════════════════════════════
-let _pendingSyncCount = 0;
-let _pendingSyncDetalle = []; // [{tipo, id}] — para depuración si hace falta
- 
-const _ERRORES_PERMANENTES = new Set([
-  'permission-denied', 'invalid-argument', 'not-found', 'resource-exhausted',
-  'failed-precondition', 'out-of-range', 'unauthenticated', 'already-exists'
-]);
-function _esErrorPermanente(e) {
-  return !!(e && _ERRORES_PERMANENTES.has(e.code));
-}
- 
-// ── Diagnóstico real: cuenta cuántas veces se dispara cada tipo por ventana de 5s. Si algo
-// se repite sospechosamente (>10 veces en 5s, mucho más que lo que una operación normal
-// generaría), lo grita en consola con el tipo/id exactos — así la próxima vez que el punto
-// parpadee, con la consola abierta (F12) se ve EXACTAMENTE qué lo está disparando, en vez
-// de seguir adivinando desde el código estático.
-let _sincDiagVentana = [];
-function _sincDiagRegistrar(tipo, id) {
-  const ahora = Date.now();
-  _sincDiagVentana.push({ tipo, id, ts: ahora });
-  _sincDiagVentana = _sincDiagVentana.filter(x => ahora - x.ts < 5000);
-  const delMismoTipo = _sincDiagVentana.filter(x => x.tipo === tipo);
-  if (delMismoTipo.length === 11) { // recien cruza el umbral, avisa una sola vez por racha
-    console.warn(`⚠️ [Sync-Diag] "${tipo}" se disparó ${delMismoTipo.length} veces en 5 segundos — esto es sospechoso, no es una venta normal. IDs recientes:`, delMismoTipo.map(x => x.id));
-  }
-}
- 
-function _sincIniciar(tipo, id) {
-  _sincDiagRegistrar(tipo, id);
-  _pendingSyncCount++;
-  _pendingSyncDetalle.push({ tipo, id, ts: Date.now() });
-  _actualizarBadgeSync();
-}
-function _sincTerminar(tipo, id) {
-  _pendingSyncCount = Math.max(0, _pendingSyncCount - 1);
-  const idx = _pendingSyncDetalle.findIndex(x => x.tipo === tipo && x.id === id);
-  if (idx >= 0) _pendingSyncDetalle.splice(idx, 1);
-  _actualizarBadgeSync();
-}
-// descripcionUsuario: texto legible para el cajero ("la venta", "el fiado") — solo se usa
-// si el error es permanente, para que la alerta diga qué NO se guardó, no un código técnico solo.
-function _sincError(tipo, id, e, descripcionUsuario, contextoPublico) {
-  _sincTerminar(tipo, id);
-  console.warn(`[Sync] ${tipo}/${id}:`, e);
-  if (_esErrorPermanente(e)) {
-    const msg = contextoPublico
-      ? `⚠️ No se pudo guardar ${descripcionUsuario || tipo}. Intenta de nuevo en unos minutos.`
-      : `⚠️ No se pudo guardar ${descripcionUsuario || tipo}.
- 
-Este error no se resuelve solo reintentando — avisa al administrador.
-Código: ${e.code || e.message || 'desconocido'}`;
-    alert(msg);
-  }
-  // Si NO es permanente (típico: sin señal), Firestore ya lo tiene en su cola offline y lo
-  // reintenta solo — el badge ya venía reflejando "pendiente" desde _sincIniciar, no hace
-  // falta nada más acá.
-}
- 
-let _syncBadgeHideTimer = null;
-// Red de seguridad: con conexión activa, ningún pendiente debería tardar más de 15s en
-// confirmarse o fallar. Si algo queda atascado ahí (mismo patrón que el bug de _fbEscribiendo
-// que ya encontramos con las promociones), esto lo destraba solo y deja rastro en consola en
-// vez de dejar el indicador prendido para siempre sin explicación.
-setInterval(() => {
-  if (!_pendingSyncDetalle.length) return;
-  const ahora = Date.now();
-  const atascados = _pendingSyncDetalle.filter(x => (ahora - x.ts) > 15000);
-  if (atascados.length) {
-    console.warn('[Sync] Pendientes atascados más de 15s, limpiando y dejando rastro:', atascados);
-    atascados.forEach(x => {
-      const idx = _pendingSyncDetalle.indexOf(x);
-      if (idx >= 0) _pendingSyncDetalle.splice(idx, 1);
-    });
-    _pendingSyncCount = Math.max(0, _pendingSyncCount - atascados.length);
-    _actualizarBadgeSync();
-  }
-}, 5000);
- 
-let _sincTraceUltimo = 0;
-function _actualizarBadgeSync() {
-  // Diagnostico definitivo: un rastro completo (que funcion llamo a que funcion) cada vez
-  // que esto se dispara, pero como maximo cada 3 segundos para no saturar la consola.
-  // Esto va a mostrar EXACTAMENTE quien esta disparando esto, sin necesidad de seguir
-  // adivinando desde el codigo estatico.
-  if (_pendingSyncCount > 0 && Date.now() - _sincTraceUltimo > 3000) {
-    _sincTraceUltimo = Date.now();
-    console.trace('🔍 [Sync-Trace] _actualizarBadgeSync disparado, pendientes:', _pendingSyncCount, _pendingSyncDetalle.map(x=>x.tipo+'/'+x.id));
-  }
-  // Con la causa real corregida (App Check/reCAPTCHA), esto ya no debería quedar trabado —
-  // vuelve a mostrar el número, para que un vendedor entienda qué es de un vistazo.
-  ['sync-badge', 'sync-badge-tienda'].forEach(elId => {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    if (_pendingSyncCount > 0) {
-      clearTimeout(_syncBadgeHideTimer);
-      el.style.display = 'inline-flex';
-      el.textContent = '↻ ' + _pendingSyncCount;
-      el.title = _pendingSyncCount + ' cambio(s) guardados en este equipo, sincronizando con la nube...';
-    } else {
-      clearTimeout(_syncBadgeHideTimer);
-      _syncBadgeHideTimer = setTimeout(() => {
-        if (_pendingSyncCount <= 0) el.style.display = 'none';
-      }, 700);
+// ===================== CAJA =====================
+function renderCaja() {
+  const _esAdmin = currentRole === 'admin';
+  // Vendedor: solo lectura — ve los mismos números que admin, pero sin controles para
+  // abrir/cerrar caja, retirar efectivo, ni registrar movimientos manuales.
+  const _accionesAdmin = document.getElementById('caja-acciones-admin');
+  if (_accionesAdmin) _accionesAdmin.style.display = _esAdmin ? '' : 'none';
+  const _registrarAdmin = document.getElementById('caja-registrar-admin');
+  if (_registrarAdmin) _registrarAdmin.style.display = _esAdmin ? '' : 'none';
+  const _cerradaAdmin = document.getElementById('caja-cerrada-admin');
+  if (_cerradaAdmin) _cerradaAdmin.style.display = _esAdmin ? '' : 'none';
+  const _cerradaVendedor = document.getElementById('caja-cerrada-vendedor');
+  if (_cerradaVendedor) _cerradaVendedor.style.display = _esAdmin ? 'none' : '';
+
+  if (DB.caja.abierta) {
+    document.getElementById('caja-cerrada').style.display = 'none';
+    document.getElementById('caja-abierta').style.display = 'block';
+    updateCajaStats();
+  } else {
+    document.getElementById('caja-cerrada').style.display = 'block';
+    document.getElementById('caja-abierta').style.display = 'none';
+    if (_esAdmin) {
+      const montoAuto = parseFloat(DB.config && DB.config.montoAperturaAuto) || 0;
+      const saldoHeredado = typeof DB.caja.saldoFinal === 'number' ? DB.caja.saldoFinal : montoAuto;
+      const elMonto = document.getElementById('caja-monto-inicial');
+      const hint = document.getElementById('caja-auto-hint');
+      if (elMonto) elMonto.value = saldoHeredado;
+      if (hint) hint.textContent = typeof DB.caja.saldoFinal === 'number'
+        ? `Saldo real heredado del cierre anterior: S/ ${saldoHeredado.toFixed(2)} (editable si hiciste un conteo físico distinto)`
+        : (montoAuto > 0 ? `Monto automático configurado: S/ ${montoAuto.toFixed(2)}` : 'Sin monto automático — configúralo en Configuración');
     }
-  });
+  }
 }
-// (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver storageModular)
-let _fbSnapshotUnsub = null; // Para desuscribirse si fuera necesario
-let _pedidosOnlineUnsub = null; // Listener colección pedidos_online
-let _fbCajaUnsub = null; // Listener dedicado a la colección caja — unica fuente de verdad
-// ── Listeners operativos nuevos — 3 dependen de la sede activa (se reconectan al cambiar de
-// sede), 5 son globales (no dependen de sede: stock trae ambas sedes en cada documento,
-// clientes/promociones/canjes son compartidos, mermas es de bajo volumen). ──
-let _fbStockUnsub = null;
-let _fbVentasHoyUnsub = null;      // depende de sede
-let _fbMovimientosHoyUnsub = null; // depende de sede
-let _fbFiadosPendUnsub = null;     // depende de sede
-let _fbClientesUnsub = null;
-let _fbRecordatoriosUnsub = null;
-let _fbPromocionesUnsub = null;
-let _fbMermasMesUnsub = null;
-let _fbGastosUnsub = null;
-let _fbCapitalUnsub = null;
-let _fbCanjesUnsub = null;
- 
-// ── Inicializar Firestore ──
-// RECAPTCHA_SITE_KEY: reemplaza con tu clave de reCAPTCHA v3 desde Google reCAPTCHA Admin
-// Si aún no tienes clave, usa 'debug' temporalmente solo en localhost
-const RECAPTCHA_SITE_KEY = '6Le9bWMtAAAAAPWAyieo6txt9gh618Jk4FDp7OtF';
- 
-// VAPID_KEY: clave publica para notificaciones push (Firebase Console > Configuracion del
-// proyecto > Cloud Messaging > Certificados push web > "Generar par de claves"). Es publica
-// a proposito, va en el codigo igual que RECAPTCHA_SITE_KEY. Mientras diga 'PENDIENTE', las
-// notificaciones push quedan dormidas — no rompe nada, solo no se activan hasta pegarla acá.
-const VAPID_KEY = 'BBWLZJaIhkWmkeYT9B2GG9D0lK1uljNgCA7Jkelm8I06o6269EO-uywu-FoH4iicBksg5i1vSgeWhrL9l87bNng';
- 
-async function iniciarFirebase() {
-  // DIAGNOSTICO TEMPORAL — cronometro real en cada etapa, para encontrar exactamente donde
-  // se va el tiempo en las cargas lentas, en vez de seguir adivinando por orden de aparicion
-  // en consola. Se puede quitar una vez encontrada la causa real de la demora intermitente.
-  const _t0 = performance.now();
-  const _tlog = (msg) => console.log(`⏱️ [T+${(performance.now()-_t0).toFixed(0)}ms] ${msg}`);
-  _tlog('iniciarFirebase() arranca');
+
+async function abrirCaja() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede abrir caja. Puedes ver el estado actual, pero no modificarlo.'); return; }
+  const monto = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
+  const sede = sedeAdminEfectiva();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+
+  // CRITICO: runTransaction() en vez de lote — garantiza que la lectura es siempre real del
+  // servidor (nunca de cache), igual criterio que ensureCajaAbierta(). Si dos personas abren
+  // caja al mismo instante, Firestore resuelve el orden solo, sin que se pisen entre si.
+  const _movId = getId();
+  let _resultado;
+  _sincIniciar('apertura_caja_manual', sede);
   try {
-    // (fbApp/App Check Compat eliminados — completamente redundantes: App Check ya se activa
-    // mas abajo para appModular, la unica conexion real que usa todo el sistema ahora que
-    // Firestore/Auth/Storage/Functions estan 100% migrados a Modular)
-    // ────────────────────────────────────────────────────────────────────────
- 
-   // (fbFS Compat eliminado — Firestore migrado por completo a Modular desde antes, ver dbModular)
-      // (fbAuth Compat eliminado — Auth migrado por completo a Modular, ver authModular)
-      // (fbStorage Compat eliminado — Storage migrado por completo a Modular, ver mas abajo)
-      // (fbFunctions Compat eliminado — Functions migrado por completo a Modular, ver mas abajo)
- 
-      // ── SDK modular — inicializar su PROPIA conexión al mismo proyecto ─────────
-      // CORRECCION: getApp() fallaba con "No Firebase App '[DEFAULT]' has been created" —
-      // Compat y el modulo ES son 2 paquetes cargados por separado desde el CDN (uno como
-      // script clasico, otro como modulo), cada uno con su PROPIO registro interno de apps
-      // en memoria — no comparten estado aunque sean la "misma version". La solucion real es
-      // que el lado modular inicialice SU PROPIA conexion con el mismo FIREBASE_CONFIG —
-      // apunta al mismo proyecto/base de datos real, son 2 conexiones tecnicas distintas a
-      // la misma fuente de verdad, no 2 proyectos distintos. Si esto falla, el sistema entero
-      // sigue funcionando igual por Compat — esto es un agregado, nunca un reemplazo.
-      try {
-        _tlog('a punto de chequear window.__fbModular');
-        if (window.__fbModular) {
-          _tlog('window.__fbModular SI esta disponible — arrancando rama modular');
-          const appModular = window.__fbModular.initializeAppModular(FIREBASE_CONFIG);
-          _tlog('initializeAppModular() listo');
- 
-          // CRITICO: App Check para appModular — protege absolutamente todo el sistema, staff
-          // y tienda publica por igual, ya que ambos usan esta misma conexion Modular ahora
-          // (Firestore/Auth/Storage/Functions 100% migrados, sin ningun rastro de Compat).
-          // Especialmente importante para tienda-publica.js, sin ningun login de por medio,
-          // expuesta a cualquiera en internet — exactamente donde un bot golpeando directo la
-          // API de Firestore/Storage sin pasar por el sitio real podria generar lecturas
-          // masivas sin limite. No bloqueante: si falla, la app sigue funcionando igual, solo
-          // sin esta capa de proteccion.
-          try {
-            const { initializeAppCheck, ReCaptchaV3Provider } = window.__fbModular.appCheck;
-            initializeAppCheck(appModular, {
-              provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
-              isTokenAutoRefreshEnabled: true
-            });
-            console.log('[AppCheck modular] activado correctamente');
-            _tlog('[AppCheck modular] activado para appModular');
-          } catch (acModErr) {
-            console.warn('[AppCheck modular] no activado — tienda pública sigue funcionando:', acModErr.message);
-            _tlog('[AppCheck modular] fallo activate(): ' + acModErr.message);
-          }
- 
-          // CRITICO: persistentMultipleTabManager() (coordinación entre pestañas vía
-          // IndexedDB) tiene problemas conocidos y documentados en navegadores móviles —
-          // especialmente Safari iOS y los WebView de apps instaladas — donde la negociación
-          // de "qué pestaña tiene el control" puede colgarse por minutos enteros, exactamente
-          // el patrón reportado: escritorio rápido, móvil/PWA demorando mas de un minuto. En
-          // un teléfono casi nunca hay 2 pestañas reales de la misma sesión compitiendo, así
-          // que el beneficio es minimo comparado con el riesgo. Se usa persistencia de una
-          // sola pestaña — sigue funcionando sin señal igual, solo que si alguien abre 2
-          // pestañas del sistema a la vez en la misma compu, la segunda cae al respaldo sin
-          // persistencia de mas abajo (no rompe nada, solo pierde cache offline en esa pestaña
-          // extra puntual).
-          // CRITICO: persistencia offline en disco DESACTIVADA por completo. Confirmado con
-          // evidencia real y repetida (3 rondas de intentos de arreglo distintos, mismo
-          // patron de fondo cada vez): onSnapshot() con persistencia activa SIEMPRE entrega
-          // primero lo que tiene en cache local antes de sincronizar con el servidor — esto
-          // es el diseño normal de Firestore, no un bug — pero sigue encontrando formas de
-          // filtrarse en calculos criticos de stock (inventario mensual, entre otros),
-          // causando corrupcion silenciosa de datos financieros reales que erosiona la
-          // confianza del vendedor. Firestore sigue encolando escrituras en memoria mientras
-          // la app este abierta AUNQUE no haya persistencia en disco — la app sigue pudiendo
-          // vender durante un corte breve de red (el caso real y comun, ej. wifi que titila),
-          // solo se pierde la proteccion contra el caso mucho mas raro de cerrar la app por
-          // completo durante ese corte especifico. Ese costo raro es muchisimo menor que el
-          // de la corrupcion silenciosa de stock que veniamos sufriendo repetidamente.
-          dbModular = window.__fbModular.firestore.initializeFirestore(appModular, {
-            // Redes moviles con proxy/firewall restrictivo a veces bloquean o retrasan
-            // WebSockets — sin esto, Firestore espera un timeout completo antes de caer a
-            // HTTP normal. Con esto, detecta el bloqueo de entrada y cambia de inmediato,
-            // sin hacer esperar al usuario por ese timeout. Independiente de localCache —
-            // se mantiene aunque la persistencia en disco este desactivada.
-            experimentalAutoDetectLongPolling: true
-          });
-          _tlog('dbModular = getFirestore() SIN persistencia offline (desactivada a proposito)');
-          authModular = window.__fbModular.auth.getAuth(appModular);
-          _tlog('authModular = getAuth() listo');
-          // CRITICO: fijar persistencia explicita evita que el SDK "adivine" el metodo segun
-          // el navegador — en ciertos navegadores con proteccion de privacidad fuerte, esa
-          // auto-deteccion puede intentar requestStorageAccess() y dejar el SDK en un estado
-          // roto (mismo motivo por el que ya se fijaba explicito en Compat). Pero ya se
-          // confirmo con evidencia real (cronometros reales, T+30000ms+) que esta misma
-          // llamada puede colgarse por coordinacion de IndexedDB entre pestañas del mismo
-          // perfil de navegador — con limite de tiempo: si no termina en 4 segundos (el caso
-          // normal tarda ~550ms), se sigue de largo igual con la persistencia por defecto
-          // que el SDK ya trae activa, en vez de bloquear el login entero por otros 25+
-          // segundos como ocurria antes.
-          try {
-            await Promise.race([
-              window.__fbModular.auth.setPersistence(authModular, window.__fbModular.auth.browserLocalPersistence),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout 4s')), 4000))
-            ]);
-            _tlog('setPersistence (Modular) listo');
-          } catch (persErr) {
-            console.warn('[Auth] setPersistence (Modular) no confirmado a tiempo — continuando con la persistencia por defecto del SDK:', persErr.message);
-            _tlog('setPersistence (Modular) FALLO/TIMEOUT (no bloqueante): ' + persErr.message);
-          }
-          storageModular = window.__fbModular.storage.getStorage(appModular);
-          functionsModular = window.__fbModular.functions.getFunctions(appModular);
-          httpsCallableM = window.__fbModular.functions.httpsCallable;
-          ({ doc: docM, setDoc: setDocM, getDoc: getDocM, getDocFromServer: getDocDelServidorM, getDocs: getDocsM, deleteDoc: deleteDocM,
-             updateDoc: updateDocM, addDoc: addDocM, collection: collectionM, query: queryM,
-             where: whereM, orderBy: orderByM, limit: limitM, writeBatch: writeBatchM,
-             runTransaction: runTransactionM, increment: incrementM, serverTimestamp: serverTimestampM,
-             deleteField: deleteFieldM, onSnapshot: onSnapshotM } = window.__fbModular.firestore);
-          ({ ref: refM, uploadBytes: uploadBytesM, getDownloadURL: getDownloadURLM, deleteObject: deleteObjectM } = window.__fbModular.storage);
-          console.log('[SDK modular] Conexión propia inicializada con persistencia offline — listo para empezar a migrar funciones.');
-          _tlog('[SDK modular] TODO listo — docM y el resto de funciones ya asignadas');
-        } else {
-          console.warn('[SDK modular] window.__fbModular no está disponible (¿el script type="module" no cargó?) — el sistema sigue funcionando por Compat sin problema.');
-          _tlog('window.__fbModular NO disponible');
-        }
-      } catch(modErr) {
-        console.warn('[SDK modular] No se pudo inicializar (el sistema sigue por Compat sin problema):', modErr.message);
-        _tlog('rama modular completa fallo con excepcion: ' + modErr.message);
-      }
- 
-      _tlog('iniciarFirebase() a punto de RETORNAR true');
-      return true;
-  } catch(e) {
-    console.error('Firebase init error:', e);
-    _tlog('iniciarFirebase() a punto de RETORNAR false — error: ' + e.message);
-    return false;
-  }
-}
- 
-// ── Referencia al documento DB_EXT (sueldos, gastos, capital, niveles, etc.) ──
-// CRITICO: antes escribia SIEMPRE el documento db_ext COMPLETO (sueldos + capital +
-// fidelizacion + gastosRec + inventariosMensuales juntos), sin importar cual de esas 5 areas
-// realmente cambio. Con 2 sesiones abiertas a la vez (ej. 2 pestañas de admin), si una
-// guardaba sueldos y la otra guardaba fidelizacion casi al mismo tiempo, la segunda escritura
-// podia pisar por completo el cambio de la primera, aunque nunca hubiera tocado ese campo —
-// cada escritura mandaba su propia copia (posiblemente vieja) de TODO lo demas. Ahora
-// fbGuardarExt(campo) solo escribe el/los campo(s) que realmente cambiaron, vía updateDocM
-// (actualizacion parcial real de Firestore) — el resto del documento nunca se toca, sin
-// importar que tan desactualizada este la copia local de esta sesion para esos otros campos.
-let _extDirty = new Set();
-function _extBuildPayload() {
-  const payload = {};
-  _extDirty.forEach(campo => {
-    // 'gastos' nunca vive en db_ext — tiene su propia colección real (gastos/{id}) como
-    // fuente de verdad. Si algo marca 'gastos' como sucio, se ignora acá a propósito.
-    if (campo === 'gastos') return;
-    if (campo === 'capital') {
-      // Solo prestamo/cuota/meta son datos propios — total/recuperado/prestamoPagado son
-      // getters calculados desde DB.capitalMovimientos (ver core.js), nunca se guardan.
-      payload.capital = { prestamo: DB_EXT.capital.prestamo, cuota: DB_EXT.capital.cuota, meta: DB_EXT.capital.meta };
-      return;
-    }
-    if (campo in DB_EXT) payload[campo] = DB_EXT[campo];
-  });
-  return payload;
-}
-function fbGuardarExt(campo) {
-  if (!dbModular) return; // [SDK modular]
-  if (campo) _extDirty.add(campo);
-  clearTimeout(window._fbExtTimer);
-  window._fbExtTimer = setTimeout(() => {
-    if (_extDirty.size === 0) return;
-    const payload = _extBuildPayload();
-    _extDirty.clear();
-    if (Object.keys(payload).length === 0) return; // ej. solo 'gastos' estaba sucio, nada real que escribir
-    _fbEscribiendo = true;
-    _sincIniciar('db_ext', 'db_ext');
-    const _onOk = () => { setTimeout(() => { _fbEscribiendo = false; }, 300); _sincTerminar('db_ext', 'db_ext'); };
-    const _onFail = (e) => { _fbEscribiendo = false; _sincError('db_ext', 'db_ext', e, 'capital/configuración extendida'); };
-    updateDocM(docM(dbModular, 'aleze', 'db_ext'), payload)
-      .then(_onOk)
-      .catch(e => {
-        // El documento no existe todavia (nunca se guardo nada aca) — updateDoc exige que
-        // exista. setDoc con merge:true lo crea sin arriesgar sobrescribir campos que otra
-        // sesion haya guardado justo en el instante entre el error y este reintento.
-        if (e.code === 'not-found') {
-          setDocM(docM(dbModular, 'aleze', 'db_ext'), payload, { merge: true }).then(_onOk).catch(_onFail);
-          return;
-        }
-        _onFail(e);
-      });
-  }, 1200);
-}
- 
-// ── Configuración: documento propio, separado de aleze/db ──────────────────────────────────
-// Antes vivía como un campo más dentro de aleze/db, guardado y cargado junto con
-// ventas/clientes/etc — misma duplicidad que ya se corrigió para esos 6 campos. config es un
-// objeto único (no una lista de registros), así que le alcanza con su propio documento, no
-// necesita una colección con un documento por registro como ventas o clientes.
-// CRITICO: sin esto, fbGuardarConfig() escribia el documento COMPLETO (sin merge) cada vez
-// que se llamaba fbGuardar() desde CUALQUIER funcion — incluidas confirmarPagoFiado() y
-// ejecutarPagoGlobal(), que nunca tocan config para nada. Confirmado con evidencia real de
-// consola: un pago de fiado disparaba una escritura de "config/config" innecesaria, justo
-// en el momento en que se reporto perdida de sincronizacion entre sesiones abiertas — 2
-// sesiones escribiendo el mismo documento compartido sin necesidad real, compitiendo entre
-// si por la ultima escritura, es exactamente el tipo de condicion de carrera que puede dejar
-// una sesion con datos viejos. Ahora se compara contra el ultimo estado ya guardado antes de
-// escribir — si config no cambio de verdad, no se dispara ninguna escritura.
-let _ultimoConfigGuardadoJSON = null;
-function fbGuardarConfig() {
-  if (!dbModular) return; // [SDK modular]
-  clearTimeout(window._fbConfigTimer);
-  window._fbConfigTimer = setTimeout(() => {
-    const _configActualJSON = JSON.stringify(DB.config || {});
-    if (_configActualJSON === _ultimoConfigGuardadoJSON) return; // sin cambios reales, no escribir nada
-    _sincIniciar('config', 'config');
-    setDocM(docM(dbModular, 'aleze', 'config'), JSON.parse(_configActualJSON))
-      .then(() => { _ultimoConfigGuardadoJSON = _configActualJSON; _sincTerminar('config', 'config'); })
-      .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
-  }, 1200);
-}
- 
-// ── Guardar operaciones (excluye productos y categorias) ──
-// Debounce 1200ms — agrupa cambios rápidos en 1 sola escritura
-let _fbSaveTimerProd = null;
-let _fbWritingDB = false;   // Previene escrituras paralelas a aleze/db
-let _fbWritingProd = false; // Previene escrituras paralelas a aleze/db_productos
-// CRITICO: aleze/db quedo completamente vacio de contenido real — cada campo que tenia
-// (ventas, clientes, fiados, mermas, movimientos, historialVentas, config, promociones,
-// proveedores) ya fue migrado a su propia coleccion/documento, y lo unico que quedaba
-// (payload.cajas) era un espejo que nadie leia desde que caja tiene su propio listener
-// dedicado. Ya no hay ninguna razon para seguir escribiendo este documento — se elimina la
-// escritura por completo. Esta funcion sigue existiendo (la llaman decenas de funciones en
-// todo el archivo) para no tener que tocar cada una de ellas — ahora solo hace la poda de
-// memoria local (que sigue siendo util, independiente de si se persiste o no) y dispara el
-// guardado de configuración, que sí sigue siendo necesario.
-function fbGuardar() {
-  // Poda de memoria local — el historial completo de cada uno ya vive en su propia colección
-  // (ventas/{id}, movimientos/{id}, fiados/{id}); esto solo evita que los arrays en memoria
-  // crezcan sin límite durante una sesión larga, sin persistir el recorte en ningún lado.
-  if (DB.historialVentas && DB.historialVentas.length) {
-    const _limitePoda = new Date(); _limitePoda.setDate(_limitePoda.getDate() - 30);
-    const _limitePodaStr = _limitePoda.toISOString().split('T')[0];
-    DB.historialVentas = DB.historialVentas.filter(v => v.fecha >= _limitePodaStr);
-  }
-  if (DB.movimientos && DB.movimientos.length) {
-    const _limitePodaMov = new Date(); _limitePodaMov.setDate(_limitePodaMov.getDate() - 30);
-    const _limitePodaMovStr = _limitePodaMov.toISOString().split('T')[0];
-    DB.movimientos = DB.movimientos.filter(m => m.fecha >= _limitePodaMovStr);
-  }
-  if (DB.fiados && DB.fiados.length) {
-    const _limitePodaFiados = new Date(); _limitePodaFiados.setDate(_limitePodaFiados.getDate() - 90);
-    const _limitePodaFiadosStr = _limitePodaFiados.toISOString().split('T')[0];
-    DB.fiados = DB.fiados.filter(f => fiadoPendiente(f) || f.fecha >= _limitePodaFiadosStr);
-  }
-  fbGuardarConfig();
-}
- 
-// ── Guardar solo productos y categorias en documento separado ──
-// Se llama únicamente cuando el admin edita inventario/categorias
-// ── NUEVO: escritura individual de productos (colección 'productos/{id}') ──
-// CRITICO: fbGuardarProductos() de abajo reescribe el catalogo COMPLETO en un solo documento
-// cada vez que se llama, para cualquier cambio por chico que sea — si 2 sesiones distintas
-// escriben casi al mismo tiempo (ej. un cajero vendiendo mientras otro edita un producto), la
-// que llega despues al servidor pisa por completo los cambios de la que llego primero, sin
-// fusionar nada. Confirmado en la practica: un pack recien creado se perdio asi. Mismo
-// principio ya aplicado a ventas/clientes/fiados/mermas/movimientos/promociones/proveedores
-// — cada producto ahora se puede escribir solo, sin tocar el resto del catalogo. Migracion
-// gradual: esta funcion nueva convive con fbGuardarProductos() (que se mantiene sin tocar)
-// mientras cada llamador se pasa uno por uno a usar esta — stock se excluye a proposito, para
-// no pisar una venta/ajuste concurrente que este tocando el stock al mismo tiempo desde otra
-// sesion (stock es un campo plano simple, un solo numero — ya no hay mas de una sede).
-let _fbProdSaveTimers = {}; // debounce por producto individual — {prodId: timerId}
-function fbGuardarProducto(prodId) {
-  if (!dbModular) return;
-  if (!authModular || !authModular.currentUser) return;
-  clearTimeout(_fbProdSaveTimers[prodId]);
-  _fbProdSaveTimers[prodId] = setTimeout(() => {
-    const prod = DB.productos.find(p => p.id === prodId);
-    if (!prod) { // producto eliminado localmente — reflejar el borrado en la coleccion nueva tambien
-      deleteDocM(docM(dbModular, 'productos', String(prodId))).catch(() => {});
-      return;
-    }
-    const { stock, ...prodSinStock } = prod;
-    _sincIniciar('productos', String(prodId));
-    // CRITICO: merge:true es obligatorio aca. stock se excluye del payload a proposito (para
-    // no pisar una venta/ajuste concurrente que este tocando el stock al mismo tiempo desde
-    // otra sesion) — pero SIN merge, una escritura de Firestore reemplaza el documento ENTERO
-    // con solo los campos del payload, borrando cualquier campo no incluido. Eso es lo que
-    // estaba pasando antes: cada vez que se guardaba un producto (crear, editar cualquier
-    // campo, o incluso el propio alta con "stock inicial"), el stock que ya se habia escrito
-    // correctamente quedaba borrado 600ms despues por esta misma funcion. Con merge:true,
-    // stock nunca se toca en absoluto — ni se borra ni se sobrescribe.
-    setDocM(docM(dbModular, 'productos', String(prodId)), JSON.parse(JSON.stringify(prodSinStock)), { merge: true })
-      .then(() => _sincTerminar('productos', String(prodId)))
-      .catch(e => _sincError('productos', String(prodId), e, 'el producto ' + (prod.nombre || prodId)));
-  }, 600);
-}
-// Version en lote — para cambios que tocan muchos productos a la vez (ej. importacion Excel,
-// sincronizar mermas de inventario mensual). Un batch atomico por cada 200 productos (limite
-// real de Firestore por batch), sin reescribir nada de los productos que NO estan en la lista.
-async function fbGuardarProductosLote(prodIds) {
-  if (!dbModular || !prodIds || !prodIds.length) return;
-  const ids = [...new Set(prodIds)];
-  const CHUNK = 200;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const trozo = ids.slice(i, i + CHUNK);
-    const batch = writeBatchM(dbModular);
-    trozo.forEach(id => {
-      const prod = DB.productos.find(p => p.id === id);
-      if (!prod) return;
-      const { stock, ...prodSinStock } = prod;
-      // CRITICO: merge:true obligatorio, mismo motivo que fbGuardarProducto() (ver arriba) —
-      // sin esto, cada actualizacion masiva (Excel, precios por categoria, migracion de
-      // imagenes) borraba el stock de TODOS los productos incluidos en el lote.
-      batch.set(docM(dbModular, 'productos', String(id)), JSON.parse(JSON.stringify(prodSinStock)), { merge: true });
+    _resultado = await runTransactionM(dbModular, async (tx) => {
+      const cajaRef = docM(dbModular, 'caja', sede);
+      await tx.get(cajaRef); // lectura formal — garantiza consistencia real con el servidor
+      const cajaNueva = { abierta:true, inicial:monto, inicialEfectivo:monto, ingresos:0, ingresosEfectivo:0, egresos:0, retiros:0, turnoInicio:nowTime(), cajero:currentUser, fecha:today(), apertura:'manual' };
+      tx.set(cajaRef, cajaNueva);
+      const _movData = { id:_movId, tipo:'ingreso', desc:'Apertura de caja', monto, hora:nowTime(), fecha:today(), sedeId: sede };
+      tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+      return { cajaNueva, _movData };
     });
-    _sincIniciar('productos_lote', 'lote_' + i);
+    _sincTerminar('apertura_caja_manual', sede);
+  } catch (e) {
+    _sincError('apertura_caja_manual', sede, e, 'la apertura de caja — no se aplicó nada. Revisa tu conexión e intenta de nuevo');
+    return;
+  }
+
+  // La escritura real ya la hizo la transacción de arriba — esto solo actualiza la copia local.
+  DB._cajas[sede] = _resultado.cajaNueva;
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_resultado._movData);
+  renderCaja();
+}
+
+function guardarMontoAperturaDefault() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede configurar el monto de apertura.'); return; }
+  const m = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
+  DB.config.montoAperturaAuto = m;
+  fbGuardar();
+  const hint = document.getElementById('caja-auto-hint');
+  if (hint) { hint.textContent = `✅ Monto default guardado: S/ ${m.toFixed(2)}`; hint.style.color='var(--accent)'; }
+  setTimeout(() => { try { renderConfiguracion(); } catch(e){} }, 300);
+}
+
+// ── Arqueo de caja (Fase 4): compara efectivo físico contra el teórico SOLO en efectivo — ──
+// Yape/tarjeta/transferencia nunca pasan por el cajón, no se cuentan acá. No bloquea el cierre.
+function _saldoEfectivoTeorico() {
+  return (DB.caja.inicialEfectivo ?? DB.caja.inicial ?? 0) + (DB.caja.ingresosEfectivo||0) - (DB.caja.egresosEfectivo||0) - (DB.caja.retiros||0);
+}
+async function abrirRetiroEfectivo() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede retirar efectivo. Puedes ver el estado actual, pero no modificarlo.'); return; }
+  // CRITICO: ensureCajaAbierta() (con su lectura real al servidor) va PRIMERO, antes de
+  // calcular "disponible" — si esto se calculaba antes, con la cache local todavia fria,
+  // podia bloquear un retiro real diciendo "no hay efectivo" aunque el servidor si lo
+  // tuviera. Ahora el monto disponible siempre se calcula con el estado ya confirmado.
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  await ensureCajaAbierta();
+  const disponible = _saldoEfectivoTeorico();
+  if (disponible <= 0) { alert('No hay efectivo disponible para retirar.'); return; }
+  const monto = parseFloat(prompt(`Efectivo disponible en caja: ${sol(disponible)}\n\n¿Cuánto vas a retirar?`));
+  if (!monto || isNaN(monto) || monto <= 0) return;
+  if (monto > disponible && !confirm(`El monto supera el efectivo disponible (${sol(disponible)}). ¿Continuar de todas formas?`)) return;
+  const destino = prompt('¿A dónde va? (ej. "Depósito BCP", "Guardado en casa")') || 'Sin especificar';
+
+  // Paquete atomico: el retiro (campo de caja) y su movimiento de auditoria viajan juntos.
+  const sede = sedeAdminEfectiva();
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede),
+    { retiros: incrementM(monto) }, { merge: true });
+  const _movId = getId();
+  const _movData = { id:_movId, tipo:'retiro', desc:`Retiro de efectivo — ${destino}`, monto, hora:nowTime(), fecha:today(), cajero:currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+  _sincIniciar('retiro_caja_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('retiro_caja_lote', _movId);
+  } catch (e) {
+    _sincError('retiro_caja_lote', _movId, e, 'el retiro de efectivo — no se aplicó nada');
+    return;
+  }
+
+  // El lote ya fue aceptado — recien ahora se refleja en memoria local. Caja es un objeto
+  // plano, esta asignacion solo actualiza la copia local.
+  DB.caja.retiros = (DB.caja.retiros||0) + monto;
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
+  renderCaja();
+  alert(`✅ Retiro registrado: ${sol(monto)}`);
+}
+function abrirModalCerrarCaja() {
+  document.getElementById('cc-teorico').textContent = sol(_saldoEfectivoTeorico());
+  document.getElementById('cc-contado').value = '';
+  document.getElementById('cc-diferencia').textContent = '';
+  document.getElementById('cc-nota-wrap').style.display = 'none';
+  document.getElementById('cc-nota').value = '';
+  abrirModal('modal-cerrar-caja');
+}
+function actualizarDiferenciaCierre() {
+  const contado = parseFloat(document.getElementById('cc-contado').value);
+  const diffEl = document.getElementById('cc-diferencia');
+  const notaWrap = document.getElementById('cc-nota-wrap');
+  if (isNaN(contado)) { diffEl.textContent = ''; notaWrap.style.display = 'none'; return; }
+  const diff = Math.round((contado - _saldoEfectivoTeorico()) * 100) / 100;
+  diffEl.textContent = diff === 0 ? '✅ Cuadra exacto' : (diff > 0 ? `Sobrante: +${sol(diff)}` : `Faltante: ${sol(diff)}`);
+  diffEl.style.color = diff === 0 ? 'var(--accent)' : 'var(--danger)';
+  notaWrap.style.display = Math.abs(diff) > 5 ? 'block' : 'none';
+}
+async function confirmarCierreCaja() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cerrar caja. Puedes ver el estado actual, pero no modificarlo.'); return; }
+  const contado = parseFloat(document.getElementById('cc-contado').value);
+  if (isNaN(contado) || contado < 0) { alert('Ingresa el efectivo contado.'); return; }
+  const nota = document.getElementById('cc-nota').value.trim();
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+
+  // CRITICO: runTransaction() en vez de lote — el saldo a cerrar se calcula DENTRO de la
+  // transaccion, leyendo el estado real del servidor en ese instante (nunca de cache local
+  // ni de lo que esta pantalla venia mostrando) — asi una venta de ultimo segundo, ya
+  // confirmada por el servidor pero todavia no reflejada en esta pantalla, no se pierde del
+  // cierre. Si dos personas cierran al mismo instante, Firestore resuelve el orden solo.
+  const sede = sedeAdminEfectiva();
+  let _resultado;
+  _sincIniciar('cierre_caja_manual', sede);
+  try {
+    _resultado = await runTransactionM(dbModular, async (tx) => {
+      const cajaRef = docM(dbModular, 'caja', sede);
+      const snap = await tx.get(cajaRef);
+      if (!snap.exists()) throw new Error('No se encontró la caja de esta sede en el servidor.'); // en modular, exists es un METODO
+      const cajaServidor = snap.data();
+      const saldo = (cajaServidor.inicial||0) + (cajaServidor.ingresos||0) - (cajaServidor.egresos||0);
+      const saldoEfectivo = (cajaServidor.inicialEfectivo ?? cajaServidor.inicial ?? 0) + (cajaServidor.ingresosEfectivo||0) - (cajaServidor.egresosEfectivo||0) - (cajaServidor.retiros||0);
+      const diff = Math.round((contado - saldoEfectivo) * 100) / 100;
+
+      tx.set(cajaRef, { abierta:false, fechaCierre: today(), saldoFinal: saldo, saldoFinalEfectivo: contado }, { merge: true });
+
+      const _movCierreId = getId();
+      const _movCierre = { id:_movCierreId, tipo:'cierre', desc:`Cierre de caja — Saldo total: ${sol(saldo)}`, monto:saldo, hora:nowTime(), fecha:today(), sedeId: sede };
+      tx.set(docM(dbModular, 'movimientos', String(_movCierreId)), _movCierre);
+
+      let _movArqueo = null;
+      if (diff !== 0) {
+        const _movArqueoId = getId();
+        _movArqueo = {
+          id: _movArqueoId, tipo: 'arqueo',
+          desc: `Arqueo — esperado ${sol(saldoEfectivo)}, contado ${sol(contado)} (${diff>0?'sobrante':'faltante'} ${sol(Math.abs(diff))})${nota?' — '+nota:''}`,
+          monto: diff, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede
+        };
+        tx.set(docM(dbModular, 'movimientos', String(_movArqueoId)), _movArqueo);
+      }
+      return { saldo, saldoEfectivo, _movCierre, _movArqueo };
+    });
+    _sincTerminar('cierre_caja_manual', sede);
+  } catch (e) {
+    _sincError('cierre_caja_manual', sede, e, 'el cierre de caja — no se aplicó nada, la caja sigue abierta. Revisa tu conexión e intenta de nuevo');
+    return;
+  }
+
+  // La transacción ya fue aceptada — recién ahora se refleja en memoria local.
+  DB.caja.abierta = false;
+  DB.caja.fechaCierre = today();
+  DB.caja.saldoFinal = _resultado.saldo;
+  DB.caja.saldoFinalEfectivo = contado;
+  
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_resultado._movCierre);
+  if (_resultado._movArqueo) DB.movimientos.push(_resultado._movArqueo);
+
+  cerrarModal('modal-cerrar-caja');
+  renderCaja();
+}
+
+function updateCajaStats() {
+  const ingresos = DB.caja.ingresos;
+  const egresos = DB.caja.egresos;
+  document.getElementById('caja-inicial').textContent = sol(DB.caja.inicial);
+  document.getElementById('caja-ingresos').textContent = sol(ingresos);
+  document.getElementById('caja-egresos').textContent = sol(egresos);
+const saldo = DB.caja.inicial + ingresos - egresos;
+  const saldoEl = document.getElementById('caja-saldo');
+  saldoEl.textContent = sol(saldo);
+  saldoEl.style.color = saldo < 0 ? 'var(--danger)' : '';
+  const efectivoEl = document.getElementById('caja-efectivo');
+  const noEfectivoEl = document.getElementById('caja-noefectivo');
+  if (efectivoEl) efectivoEl.textContent = sol(_saldoEfectivoTeorico());
+  if (noEfectivoEl) noEfectivoEl.textContent = sol(Math.max(0, ingresos - (DB.caja.ingresosEfectivo||0)));
+
+  const fDesde  = document.getElementById('caja-filtro-desde')?.value  || '';
+  const fHasta  = document.getElementById('caja-filtro-hasta')?.value  || '';
+  const fTipo   = document.getElementById('caja-filtro-tipo')?.value   || '';
+
+  const _limiteLocalMov = new Date(); _limiteLocalMov.setDate(_limiteLocalMov.getDate() - 30);
+  const _limiteLocalMovStr = _limiteLocalMov.toISOString().split('T')[0];
+
+  if (fDesde && fDesde < _limiteLocalMovStr) {
+    // Fuera de la ventana local podada (30 días) — consultar movimientos/{id} directo
+    document.getElementById('caja-mov-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--gray-400)">⏳ Cargando...</td></tr>';
+    _fetchMovimientosRango(fDesde, fHasta || today()).then(lista => {
+      const _sedeCajaExt = sedeAdminEfectiva();
+      let movsVis = [...lista].filter(m => (m.sedeId||'principal') === _sedeCajaExt).reverse();
+      if (fTipo) movsVis = movsVis.filter(m => m.tipo === fTipo);
+      _renderMovsTabla(movsVis);
+    }).catch(e => {
+      console.warn('updateCajaStats: error consultando movimientos/{id}', e);
+      document.getElementById('caja-mov-tbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--danger)">⚠️ Error cargando. Intenta de nuevo.</td></tr>';
+    });
+  } else {
+    // CRITICO — fuga real de datos entre sedes, confirmada: esta tabla mostraba movimientos de
+    // AMBAS sedes mezclados siempre, sin ningun filtro — a diferencia de los totales de arriba
+    // (ingresos/egresos/saldo), que si estan bien aislados por sede porque usan el getter
+    // DB.caja, que resuelve segun sedeAdminEfectiva(). Caja es inherentemente por sede — a
+    // diferencia de Historial de Ventas, acá no hace falta una opcion de "ver todas", ni para
+    // admin: cada sede tiene su propia caja, mezclarlas nunca tiene sentido de negocio real.
+    const _sedeCaja = sedeAdminEfectiva();
+    let movsVis = [...DB.movimientos].filter(m => (m.sedeId||'principal') === _sedeCaja).reverse();
+    if (fDesde)  movsVis = movsVis.filter(m => m.fecha >= fDesde);
+    if (fHasta)  movsVis = movsVis.filter(m => m.fecha <= fHasta);
+    if (fTipo)   movsVis = movsVis.filter(m => m.tipo === fTipo);
+    _renderMovsTabla(movsVis);
+  }
+}
+
+// ── Fase 4: pintar tabla de movimientos — separado para reusar entre ruta local y ruta consultada ──
+function _renderMovsTabla(movsVis) {
+  // CRITICO: esta variable vivia en updateCajaStats() pero nunca se usaba ahi — se usa ACA,
+  // para el grafico de "Ventas por metodo de pago". Como _renderMovsTabla() es una funcion
+  // separada (se llama tambien desde la ruta de _fetchMovimientosRango), nunca tenia acceso
+  // a esa variable — tiraba ReferenceError sin capturar, cortando la funcion a mitad de
+  // camino cada vez que se pintaba Caja (por eso el grafico salia vacio, y cualquier cosa
+  // que dependiera de que esta funcion terminara bien tambien se veia afectada).
+  const _sedeVentasHoy = sedeAdminEfectiva();
+  const ventasHoy = DB.historialVentas.filter(v => v.fecha === today() &&
+    (v.sedeId||'principal') === _sedeVentasHoy &&
+    ((v.origen === 'pos' && v.estado === 'completado') ||
+     (v.origen === 'online' && v.estado === 'completado')));
+  document.getElementById('caja-mov-tbody').innerHTML = movsVis.map(m => {
+    const esFiado = m.tipo === 'fiado';
+    const esNeutro = esFiado || m.tipo === 'info' || m.tipo === 'arqueo' || m.tipo === 'traslado';
+    const badgeColor = esNeutro ? 'gray' : (m.tipo==='ingreso'?'green':'red');
+    const signo = esNeutro ? '' : (m.tipo==='ingreso'?'+':'-');
+    const color = esNeutro ? 'var(--gray-500)' : (m.tipo==='ingreso'?'var(--accent)':'var(--danger)');
+    return `<tr>
+    <td>${m.fecha ? m.fecha + ' ' : ''}${m.hora}</td>
+    <td><span class="badge badge-${badgeColor}">${m.tipo}</span></td>
+    <td>${m.desc}${esFiado ? ' <span style="color:var(--gray-400);font-size:.72rem">(sin movimiento de caja)</span>' : ''}</td>
+    <td style="color:${color};font-weight:700">${signo}${sol(Math.abs(m.monto))}</td>
+  </tr>`;
+  }).join('') || '<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin movimientos</td></tr>';
+
+  const metodos = {};
+  ventasHoy.forEach(v => metodos[v.metodo] = (metodos[v.metodo]||0) + v.total);
+  if (chartMetodos) chartMetodos.destroy();
+  const _canvasMetodos = document.getElementById('chart-metodos');
+  if (!_canvasMetodos) return; // defensivo: si el canvas no esta en el DOM en este momento, no truena
+  const ctx2 = _canvasMetodos.getContext('2d');
+  chartMetodos = new Chart(ctx2, {
+    type: 'doughnut',
+    data: { labels: Object.keys(metodos), datasets: [{ data: Object.values(metodos), backgroundColor: ['#7C3AED','#10B981','#F59E0B','#3B82F6','#EF4444','#8B5CF6','#06B6D4','#84CC16'] }] },
+    options: { plugins: { legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: false }
+  });
+}
+
+async function registrarMovimiento() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar movimientos manuales. Puedes ver el estado actual, pero no modificarlo.'); return; }
+  const tipo = document.getElementById('mov-tipo').value;
+  const monto = parseFloat(document.getElementById('mov-monto').value) || 0;
+  const desc = document.getElementById('mov-desc').value;
+  if (monto <= 0) { alert('Ingresa un monto válido'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  const sede = sedeAdminEfectiva();
+  const campo = tipo === 'ingreso' ? 'ingresos' : 'egresos';
+  const campoEfectivo = tipo === 'ingreso' ? 'ingresosEfectivo' : 'egresosEfectivo';
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede), {
+    [campo]: incrementM(monto),
+    [campoEfectivo]: incrementM(monto)
+  }, { merge: true });
+  const _movId = getId();
+  const _movData = { id:_movId, tipo, desc: desc || tipo, monto, hora: nowTime(), fecha: today(), sedeId: sede };
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+  _sincIniciar('mov_manual_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('mov_manual_lote', _movId);
+  } catch (e) {
+    _sincError('mov_manual_lote', _movId, e, 'el movimiento — no se aplicó nada');
+    return;
+  }
+
+  if (tipo === 'ingreso') { DB.caja.ingresos += monto; DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto; }
+  else { DB.caja.egresos += monto; DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto; }
+  
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
+  document.getElementById('mov-monto').value = ''; document.getElementById('mov-desc').value = '';
+  updateCajaStats();
+}
+
+// ===================== GASTOS =====================
+let chartGastos = null;
+
+function renderGastos() {
+  const mes = getMesActual();
+  // Gastos variables (DB_EXT.gastos) son por sede — sueldos/recurrentes son costos
+  // compartidos de todo el negocio, no atribuibles a una sola sede, quedan sin filtrar.
+  const _sedeG = sedeAdminEfectiva();
+  const _gastosVarSede = DB_EXT.gastos.filter(g => (g.sedeId||'principal') === _sedeG);
+  const gastosMes = _gastosVarSede.filter(g => g.fecha && g.fecha.startsWith(mes));
+  const totVar = gastosMes.reduce((s, g) => s + g.monto, 0);
+  const totFij = DB_EXT.gastosRec.reduce((s, g) => s + g.monto, 0);
+  const totSu  = Object.values(DB_EXT.sueldos).reduce((s, v) => s + v, 0);
+  document.getElementById('g-mes').textContent     = sol(totVar + totFij + totSu);
+  document.getElementById('g-fijos').textContent   = sol(totFij);
+  document.getElementById('g-var').textContent     = sol(totVar);
+  document.getElementById('g-sueldos').textContent = sol(totSu);
+
+  document.getElementById('gastos-rec-list').innerHTML = DB_EXT.gastosRec.map(g => `
+    <div class="flex-between" style="padding:.4rem 0;border-bottom:1px solid var(--gray-100)">
+      <span style="font-size:.82rem">${g.tipo} — ${g.desc}</span>
+      <div style="display:flex;align-items:center;gap:.5rem">
+        <span style="font-weight:700">${sol(g.monto)}/mes</span>
+        <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger)" onclick="elimGastoRec(${g.id})">🗑️</button>
+      </div>
+    </div>`).join('') || '<p style="font-size:.82rem;color:var(--gray-500)">Sin gastos recurrentes configurados</p>';
+// Filtros historial
+  const fDesde  = document.getElementById('g-filtro-desde')?.value  || '';
+  const fHasta  = document.getElementById('g-filtro-hasta')?.value  || '';
+  const fBuscar = (document.getElementById('g-filtro-buscar')?.value || '').toLowerCase();
+  let gastosVis = [..._gastosVarSede].reverse();
+  if (fDesde)  gastosVis = gastosVis.filter(g => g.fecha >= fDesde);
+  if (fHasta)  gastosVis = gastosVis.filter(g => g.fecha <= fHasta);
+  if (fBuscar) gastosVis = gastosVis.filter(g =>
+    _norm(g.desc||'').includes(_norm(fBuscar)) ||
+_norm(g.tipo||'').includes(_norm(fBuscar)));
+
+  document.getElementById('gastos-tbody').innerHTML = gastosVis.map(g => `
+    <tr>
+      <td>${formatDate(g.fecha)}</td>
+      <td><span class="badge badge-orange">${g.tipo}</span></td>
+      <td>${g.desc}</td>
+      <td style="font-weight:700;color:var(--danger)">${sol(g.monto)}</td>
+      <td>
+        <button class="btn btn-xs btn-outline" onclick="editarGasto(${g.id})" title="Editar">✏️</button>
+        <button class="btn btn-xs" style="background:var(--danger-light);color:var(--danger);margin-left:.25rem" onclick="eliminarGasto(${g.id})" title="Eliminar">🗑️</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin gastos registrados</td></tr>';
+  // Chart
+  const tipos = {};
+  gastosMes.forEach(g => tipos[g.tipo] = (tipos[g.tipo]||0) + g.monto);
+  tipos['Sueldos'] = totSu;
+  tipos['Fijos recurrentes'] = totFij;
+  if (chartGastos) chartGastos.destroy();
+  chartGastos = new Chart(document.getElementById('chart-gastos').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: Object.keys(tipos), datasets: [{ data: Object.values(tipos), backgroundColor: ['#7C3AED','#EF4444','#F59E0B','#10B981','#3B82F6','#EC4899','#06B6D4'] }] },
+    options: { plugins: { legend: { position: 'right', labels: { font: { size: 10 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: false }
+  });
+}
+
+let _editingGastoId = null;
+
+function abrirModalGasto() {
+  _editingGastoId = null;
+  ['g-desc','g-monto'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('g-fecha').value = today();
+  document.getElementById('g-tipo').value = 'Energía';
+  document.getElementById('g-modal-titulo').textContent = 'Registrar Gasto';
+  document.getElementById('g-btn-guardar').textContent = 'Registrar';
+  // Poblar selector de recurrentes si hay alguno
+  const recWrap = document.getElementById('g-rec-wrap');
+  const recSel  = document.getElementById('g-rec-sel');
+  if (DB_EXT.gastosRec.length > 0) {
+    recSel.innerHTML = '<option value="">— Ninguna —</option>' +
+      DB_EXT.gastosRec.map(g => `<option value="${g.id}">${g.tipo} — ${g.desc} (S/${g.monto})</option>`).join('');
+    recWrap.style.display = '';
+  } else {
+    recWrap.style.display = 'none';
+  }
+  abrirModal('modal-gasto');
+}
+
+function onGastoRecChange() {
+  const id = parseInt(document.getElementById('g-rec-sel').value);
+  if (!id) return;
+  const g = DB_EXT.gastosRec.find(x => x.id === id);
+  if (!g) return;
+  document.getElementById('g-tipo').value  = g.tipo;
+  document.getElementById('g-desc').value  = g.desc;
+  document.getElementById('g-monto').value = g.monto;
+}
+
+function editarGasto(id) {
+  const g = DB_EXT.gastos.find(x => x.id === id);
+  if (!g) return;
+  _editingGastoId = id;
+  document.getElementById('g-modal-titulo').textContent = 'Editar Gasto';
+  document.getElementById('g-btn-guardar').textContent  = 'Guardar cambios';
+  document.getElementById('g-tipo').value  = g.tipo;
+  document.getElementById('g-desc').value  = g.desc;
+  document.getElementById('g-monto').value = g.monto;
+  document.getElementById('g-fecha').value = g.fecha;
+  document.getElementById('g-rec-wrap').style.display = 'none';
+  abrirModal('modal-gasto');
+}
+
+async function guardarGasto() {
+  // Vendedor puede registrar gastos operativos chicos de su sede (pagar por instalar un foco,
+  // etc.) sin depender de admin. Solo eliminar sigue siendo de admin.
+  const monto = parseFloat(document.getElementById('g-monto').value) || 0;
+  if (monto <= 0) { alert('Ingresa un monto válido'); return; }
+  const tipo  = document.getElementById('g-tipo').value;
+  const desc  = document.getElementById('g-desc').value;
+  const fecha = document.getElementById('g-fecha').value;
+  const metodo = document.getElementById('g-metodo')?.value || 'Efectivo';
+  const sede = sedeAdminEfectiva();
+
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  await ensureCajaAbierta(); // antes de armar el lote/transaccion — ver nota en ensureCajaAbierta()
+
+  if (_editingGastoId) {
+    // CRITICO: runTransaction — lee el gasto real del servidor antes de calcular el diff
+    // (diferencia entre el monto nuevo y el viejo), para no calcular mal el ajuste de caja si
+    // el gasto cambio por otro proceso justo antes de esta edicion.
+    const gastoRef = docM(dbModular, 'gastos', String(_editingGastoId));
+    let _r;
+    try {
+      _r = await runTransactionM(dbModular, async (tx) => {
+        const snap = await tx.get(gastoRef); // lectura garantizada real del servidor
+        if (!snap.exists()) throw new Error('Este gasto ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+        const oldServidor = snap.data();
+        const diff = Math.round((monto - (oldServidor.monto||0)) * 100) / 100;
+
+        tx.set(gastoRef, { tipo, desc, monto, fecha, metodo }, { merge: true });
+
+        let _movData = null;
+        if (diff !== 0) {
+          const _cajaUpdate = {};
+          let _movTipo, _movDesc, _movMonto;
+          if (diff > 0) {
+            _cajaUpdate.egresos = incrementM(diff);
+            if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
+            _movTipo = 'egreso'; _movDesc = `Ajuste gasto (aumento): ${desc} (${tipo}, ${metodo})`; _movMonto = diff;
+          } else {
+            _cajaUpdate.egresos = incrementM(diff); // diff negativo, resta
+            if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(diff);
+            _cajaUpdate.ingresos = incrementM(Math.abs(diff));
+            _cajaUpdate.ingresosEfectivo = incrementM(Math.abs(diff));
+            _movTipo = 'ingreso'; _movDesc = `Ajuste gasto (reducción): ${desc} (${tipo}, ${metodo})`; _movMonto = Math.abs(diff);
+          }
+          tx.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
+          const _movId = getId();
+          _movData = { id:_movId, tipo:_movTipo, desc:_movDesc, monto:_movMonto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+          tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+        }
+        return { diff, _movData };
+      });
+    } catch (e) {
+      alert('⚠️ No se pudo guardar el gasto editado: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
+      return;
+    }
+
+    // La transaccion ya fue aceptada — recien ahora se refleja en memoria local.
+    const old = DB_EXT.gastos.find(x => x.id === _editingGastoId);
+    if (old) { old.tipo = tipo; old.desc = desc; old.monto = monto; old.fecha = fecha; old.metodo = metodo; }
+    if (_r.diff !== 0) {
+      if (_r.diff > 0) {
+        DB.caja.egresos = (DB.caja.egresos||0) + _r.diff;
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + _r.diff;
+      } else {
+        DB.caja.egresos = Math.max(0, (DB.caja.egresos||0) + _r.diff);
+        if (metodo === 'Efectivo') DB.caja.egresosEfectivo = Math.max(0, (DB.caja.egresosEfectivo||0) + _r.diff);
+        DB.caja.ingresos = (DB.caja.ingresos||0) + Math.abs(_r.diff);
+        DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + Math.abs(_r.diff);
+      }
+    }
+    if (_r._movData) { if (!DB.movimientos) DB.movimientos = []; DB.movimientos.push(_r._movData); }
+  } else {
+    // Paquete atomico: el gasto, el ajuste de caja y el movimiento viajan juntos — mismo
+    // motivo de siempre, y sin riesgo de concurrencia (documento con ID recien generado).
+    const batch = writeBatchM(dbModular);
+    const _gastoFinal = { id: getId(), tipo, desc, monto, fecha, metodo, sedeId: sede };
+    batch.set(docM(dbModular, 'gastos', String(_gastoFinal.id)), _gastoFinal);
+    const _cajaUpdate = { egresos: incrementM(monto) };
+    if (metodo === 'Efectivo') _cajaUpdate.egresosEfectivo = incrementM(monto);
+    batch.set(docM(dbModular, 'caja', sede), _cajaUpdate, { merge: true });
+    const _movId = getId();
+    const _movData = { id:_movId, tipo:'egreso', desc:`Gasto: ${desc} (${tipo}, ${metodo})`, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
+    batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+    _sincIniciar('gasto_lote', _gastoFinal.id);
     try {
       await batch.commit();
-      _sincTerminar('productos_lote', 'lote_' + i);
+      _sincTerminar('gasto_lote', _gastoFinal.id);
     } catch (e) {
-      _sincError('productos_lote', 'lote_' + i, e, `la actualización de ${trozo.length} producto(s) — se aplicaron ${i} de ${ids.length} antes del error`);
+      _sincError('gasto_lote', _gastoFinal.id, e, 'el gasto — no se aplicó nada');
+      return;
+    }
+
+    DB_EXT.gastos.push(_gastoFinal);
+    DB.caja.egresos = (DB.caja.egresos||0) + monto;
+    if (metodo === 'Efectivo') DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+    if (!DB.movimientos) DB.movimientos = [];
+    DB.movimientos.push(_movData);
+  }
+
+  fbGuardar();
+  cerrarModal('modal-gasto');
+  renderGastos();
+  try { renderCaja(); } catch(e){}
+  try { renderDashboard(); } catch(e){}
+  try { generarReporte(); } catch(e){}
+}
+
+async function eliminarGasto(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar gastos. Puedes crear y editar, pero no borrar lo ya registrado.'); return; }
+  const gastoLocal = DB_EXT.gastos.find(x => x.id === id);
+  if (!confirm('¿Eliminar este gasto? Se devolverá el monto al efectivo disponible como corrección.')) return;
+
+  if (gastoLocal && gastoLocal.monto > 0) {
+    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+    await ensureCajaAbierta(); // antes de la transaccion — ver nota en ensureCajaAbierta()
+    const sede = sedeAdminEfectiva();
+
+    // CRITICO: runTransaction — lee el gasto real del servidor antes de borrarlo, para
+    // devolver a caja el monto correcto aunque el gasto haya sido editado justo antes sin
+    // reflejarse todavia en memoria local.
+    const gastoRef = docM(dbModular, 'gastos', String(id));
+    let _r;
+    try {
+      _r = await runTransactionM(dbModular, async (tx) => {
+        const snap = await tx.get(gastoRef); // lectura garantizada real del servidor
+        if (!snap.exists()) throw new Error('Este gasto ya no existe — puede que ya se haya eliminado.'); // en modular, exists es un METODO
+        const gastoServidor = snap.data();
+
+        tx.delete(gastoRef);
+        tx.set(docM(dbModular, 'caja', sede), {
+          ingresos: incrementM(gastoServidor.monto),
+          ingresosEfectivo: incrementM(gastoServidor.monto)
+        }, { merge: true });
+        const _movId = getId();
+        const _movData = { id:_movId, tipo:'ingreso', desc:`Corrección por eliminación de gasto: ${gastoServidor.desc} (${gastoServidor.tipo})`, monto: gastoServidor.monto, hora: nowTime(), fecha: today(), usuario: currentUser, sedeId: sede };
+        tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+
+        return { montoDevuelto: gastoServidor.monto, _movData };
+      });
+    } catch (e) {
+      alert('⚠️ No se pudo eliminar el gasto: ' + (e.message || 'intenta de nuevo') + '\n\nNo se aplicó nada.');
+      return;
+    }
+
+    DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
+    DB.caja.ingresos = (DB.caja.ingresos||0) + _r.montoDevuelto;
+    DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r.montoDevuelto;
+
+    if (!DB.movimientos) DB.movimientos = [];
+    DB.movimientos.push(_r._movData);
+    fbGuardar();
+  } else {
+    DB_EXT.gastos = DB_EXT.gastos.filter(x => x.id !== id);
+    if (dbModular) deleteDocM(docM(dbModular, 'gastos', String(id))).catch(e => console.warn('No se pudo borrar gastos/'+id, e)); // [SDK modular]
+  }
+  renderGastos();
+  try { renderCaja(); } catch(e){}
+  try { renderDashboard(); } catch(e){}
+  try { generarReporte(); } catch(e){}
+}
+function abrirModalGastoRec() {
+  ['gr-desc','gr-monto'].forEach(id => document.getElementById(id).value = '');
+  abrirModal('modal-gasto-rec');
+}
+
+function guardarGastoRec() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar gastos recurrentes.'); return; }
+  const desc  = document.getElementById('gr-desc').value.trim();
+  const monto = parseFloat(document.getElementById('gr-monto').value) || 0;
+  if (!desc || monto <= 0) { alert('Completa los campos'); return; }
+  DB_EXT.gastosRec.push({ id: getId(), desc, tipo: document.getElementById('gr-tipo').value, monto });
+  fbGuardarExt('gastosRec');
+  cerrarModal('modal-gasto-rec');
+  renderGastos();
+}
+
+function elimGastoRec(id) {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar gastos recurrentes.'); return; }
+  if (!confirm('¿Eliminar este gasto recurrente?')) return;
+  DB_EXT.gastosRec = DB_EXT.gastosRec.filter(g => g.id !== id);
+  fbGuardarExt('gastosRec');
+  renderGastos();
+}
+// ===================== CAPITAL =====================
+function renderCapital() {
+  document.getElementById('cap-inp-total').value   = DB_EXT.capital.total;
+  document.getElementById('cap-inp-prestamo').value = DB_EXT.capital.prestamo || 0;
+  document.getElementById('cap-inp-cuota').value   = DB_EXT.capital.cuota;
+  document.getElementById('cap-inp-meta').value    = DB_EXT.capital.meta;
+  updateCapStats();
+}
+
+// ── Trae ventas del rango una sola vez (Cobrado, caja real) — usado por Capital y Cierre de mes ──
+async function _cargarCobradoRango(desde, hasta) {
+  const lista = await _fetchVentasRango(desde, hasta);
+  return lista.filter(v => (v.origen==='pos'&&v.estado==='completado')||(v.origen==='online'&&v.estado==='completado')||(v.origen==='pago_fiado'&&v.estado==='completado'));
+}
+// Costo de una venta cobrada: si tiene items, directo; si es pago de fiado (sin items), busca el fiado
+// original en DB.fiados y prorratea el costo según cuánto se cobró de esta vez — mismo criterio que ya usa Dashboard.
+function _costoDeVenta(v) {
+  if (v.items && v.items.length) {
+    return v.items.reduce((s,i) => { const p = DB.productos.find(x=>x.id===i.prodId); return s + (p?p.costo*i.cant:0); }, 0);
+  }
+  if (v.origen === 'pago_fiado') {
+    // Costo real guardado al momento del pago — si no existe (pago anterior a este arreglo), se aproxima por proporción.
+    if (v.costoAsociado != null) return v.costoAsociado;
+    const fiado = (v.fiadoId ? DB.fiados.find(f => f.id === v.fiadoId) : null) || DB.fiados.find(f => f.clienteId === v.clienteId && f.total > 0);
+    if (!fiado || !fiado.total) return 0;
+    const prop = Math.min(1, v.total / fiado.total);
+    return (fiado.items||[]).reduce((s,i) => s + ((i.costoUnitario||0) * i.cant * prop), 0);
+  }
+  return 0;
+}
+
+async function updateCapStats() {
+  const prestamo      = DB_EXT.capital.prestamo     || 0;
+  const prestamoPagado= DB_EXT.capital.prestamoPagado|| 0;
+  const prestamoPend  = Math.max(0, prestamo - prestamoPagado);
+  const capitalReal   = DB_EXT.capital.total - prestamoPend + DB_EXT.capital.recuperado;
+  const pct = prestamo > 0 ? Math.min(100, prestamoPagado / prestamo * 100) : 0;
+
+  // Stat cards
+  document.getElementById('cap-total').textContent = sol(DB_EXT.capital.total);
+  const recupEl = document.getElementById('cap-recup');
+  recupEl.textContent   = sol(DB_EXT.capital.recuperado);
+  recupEl.style.color   = DB_EXT.capital.recuperado < 0 ? 'var(--danger)' : '';
+  document.getElementById('cap-pend').textContent  = prestamo > 0 ? sol(prestamoPend) : '—';
+  document.getElementById('cap-real').textContent  = sol(capitalReal);
+
+  // Barra préstamo
+  document.getElementById('cap-prog').style.width = pct + '%';
+  document.getElementById('cap-pct').textContent  = prestamo > 0 ? pct.toFixed(1) + '% pagado' : '—';
+  document.getElementById('cap-meta-lbl').textContent = prestamo > 0
+    ? `Pagado: ${sol(prestamoPagado)} / ${sol(prestamo)}`
+    : 'Préstamo: S/ 0.00';
+
+  // Panel rentabilidad — mes y año, una sola consulta (el año contiene al mes)
+  const mes = getMesActual();
+  const anio = today().substring(0,4);
+  let cobradoAnio;
+  try {
+    cobradoAnio = await _cargarCobradoRango(anio + '-01-01', today());
+  } catch (e) {
+    console.warn('updateCapStats: error consultando ventas/{id}', e);
+    document.getElementById('rent-real-detalle').innerHTML = '<div style="padding:1rem;text-align:center;color:var(--danger)">⚠️ Error cargando rentabilidad. Intenta de nuevo.</div>';
+    return;
+  }
+  const cobradoMes = cobradoAnio.filter(v => v.fecha && v.fecha.startsWith(mes));
+
+  const ventasMes = cobradoMes.reduce((s,v) => s+v.total, 0);
+  const costoMes  = cobradoMes.reduce((s,v) => s+_costoDeVenta(v), 0);
+  const gastosMes  = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(mes)).reduce((s,g) => s+g.monto, 0);
+  const gastosRec  = DB_EXT.gastosRec.reduce((s,g) => s+g.monto, 0);
+  const sueldosMes = Object.values(DB_EXT.sueldos).reduce((s,v) => s+v, 0);
+  const mermasMes  = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(mes))
+    .reduce((s,m) => s + costoMerma(m), 0);
+  const totalGastos = gastosMes + gastosRec + sueldosMes;
+  const ganBruta    = ventasMes - costoMes;
+  const rentReal    = ganBruta - totalGastos - mermasMes - DB_EXT.capital.cuota;
+  const deficit     = rentReal - DB_EXT.capital.meta;
+  const reinvertir  = Math.max(0, DB_EXT.capital.total * 0.1);
+
+  const ventasAnio = cobradoAnio.reduce((s,v) => s+v.total, 0);
+  const costoAnio  = cobradoAnio.reduce((s,v) => s+_costoDeVenta(v), 0);
+  const gastosAnio = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(anio)).reduce((s,g) => s+g.monto, 0);
+  const mermasAnio = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(anio))
+    .reduce((s,m) => s + costoMerma(m), 0);
+  const rentAnio = (ventasAnio - costoAnio) - gastosAnio - mermasAnio;
+
+  document.getElementById('rent-real-detalle').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:.5rem;font-size:.85rem">
+      <div style="font-size:.78rem;font-weight:700;color:var(--gray-500);margin-bottom:.2rem">📅 Mes actual (${mes})</div>
+      <div class="flex-between"><span>Ventas:</span><span style="color:var(--accent);font-weight:700">${sol(ventasMes)}</span></div>
+      <div class="flex-between"><span>Costo productos:</span><span style="color:var(--danger)">-${sol(costoMes)}</span></div>
+      <div class="flex-between"><span>Gastos operativos:</span><span style="color:var(--danger)">-${sol(totalGastos)}</span></div>
+      <div class="flex-between"><span>Mermas:</span><span style="color:var(--danger)">-${sol(mermasMes)}</span></div>
+      <div class="flex-between"><span>Cuota préstamo ref.:</span><span style="color:var(--danger)">-${sol(DB_EXT.capital.cuota)}</span></div>
+      <div style="border-top:2px solid var(--gray-200);padding-top:.5rem" class="flex-between">
+        <strong>Rentabilidad real:</strong>
+        <strong style="color:${rentReal>=0?'var(--accent)':'var(--danger)'}">${sol(rentReal)}</strong>
+      </div>
+      <div class="flex-between">
+        <span>vs. meta (${sol(DB_EXT.capital.meta)}):</span>
+        <span style="color:${deficit>=0?'var(--accent)':'var(--danger)'};font-weight:700">
+          ${deficit>=0?'✅ +'+sol(deficit):'❌ '+sol(deficit)}
+        </span>
+      </div>
+      <div style="border-top:2px solid var(--gray-200);padding-top:.5rem;margin-top:.25rem">
+        <div style="font-size:.78rem;font-weight:700;color:var(--gray-500);margin-bottom:.3rem">📊 Acumulado ${anio}</div>
+        <div class="flex-between"><span>Ventas año:</span><span style="color:var(--accent);font-weight:700">${sol(ventasAnio)}</span></div>
+        <div class="flex-between"><span>Ganancia neta año:</span><span style="color:${rentAnio>=0?'var(--accent)':'var(--danger)'};font-weight:700">${sol(rentAnio)}</span></div>
+      </div>
+      <div style="background:var(--info-light);border-radius:8px;padding:.65rem;margin-top:.4rem">
+        <div style="font-size:.78rem;font-weight:700;color:var(--info);margin-bottom:.3rem">💡 Sugerencia de reinversión</div>
+        <div style="font-size:.78rem;color:var(--gray-700)">
+          Reinvertir aprox. ${sol(reinvertir)} (10% del capital) priorizando:
+          ${DB.productos.filter(p=>stockEnSede(p)<=p.stockMin).slice(0,3).map(p=>p.nombre).join(', ') || 'productos con stock bajo'}
+        </div>
+      </div>
+    </div>`;
+
+  // Historial con tipos coloreados — ordenado por fecha para calcular el acumulado en vivo
+  // (ya no se guarda un "acum" congelado por registro, se calcula siempre desde la fuente real).
+  const tipoConfig = {
+    aporte:        { icon:'💰', color:'var(--info)' },
+    ganancia:      { icon:'📈', color:'var(--accent)' },
+    pago_prestamo: { icon:'🏦', color:'var(--danger)' }
+  };
+  const _histOrdenado = [...DB.capitalMovimientos].sort((a,b) => (a.fecha||'').localeCompare(b.fecha||'') || a.id - b.id);
+  let _acumRunning = 0;
+  const _histConAcum = _histOrdenado.map(h => {
+    const montoConSigno = h.tipo === 'pago_prestamo' ? -h.monto : h.monto;
+    _acumRunning += montoConSigno;
+    return { ...h, montoConSigno, acum: _acumRunning };
+  });
+  document.getElementById('cap-hist-tbody').innerHTML = [..._histConAcum].reverse().map(h => {
+    const tc = tipoConfig[h.tipo] || { icon:'💰', color:'var(--gray-600)' };
+    return `<tr>
+      <td>${formatDate(h.fecha)}</td>
+      <td><span style="color:${tc.color};font-weight:600">${tc.icon} ${h.tipo==='aporte'?'Aporte':h.tipo==='ganancia'?'Ganancia':h.tipo==='pago_prestamo'?'Pago préstamo':'Aporte'}</span></td>
+      <td>${h.desc}</td>
+      <td style="color:${h.montoConSigno>=0?'var(--accent)':'var(--danger)'};font-weight:700">${h.montoConSigno>=0?'+':''}${sol(h.montoConSigno)}</td>
+      <td>${sol(h.acum)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin historial</td></tr>';
+}
+
+async function guardarCapital() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede modificar el capital.'); return; }
+  const totalInicial = parseFloat(document.getElementById('cap-inp-total').value) || 0;
+  DB_EXT.capital.prestamo= parseFloat(document.getElementById('cap-inp-prestamo').value) || 0;
+  DB_EXT.capital.cuota   = parseFloat(document.getElementById('cap-inp-cuota').value)   || 0;
+  DB_EXT.capital.meta    = parseFloat(document.getElementById('cap-inp-meta').value)    || 0;
+
+  // Capital total ya NO es un campo que se pueda "reescribir" — se calcula solo desde los
+  // aportes reales registrados (ver DB_EXT.capital.total, un getter en core.js). Este campo
+  // del formulario solo sirve para registrar el aporte inicial, y solo si todavia no hay
+  // ningun movimiento — despues de eso, se usa "+ Agregar capital" para sumar mas.
+  if (!DB.capitalMovimientos.length && totalInicial > 0) {
+    if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+    const _movId = getId();
+    const _data = { id: _movId, tipo: 'aporte', fecha: today(), desc: 'Capital inicial', monto: totalInicial, usuario: currentUser, sedeId: sedeAdminEfectiva() };
+    _sincIniciar('capital_inicial', _movId);
+    try {
+      await setDocM(docM(dbModular, 'capital_movimientos', String(_movId)), _data);
+      _sincTerminar('capital_inicial', _movId);
+      DB.capitalMovimientos.push(_data);
+    } catch (e) {
+      _sincError('capital_inicial', _movId, e, 'el capital inicial — no se aplicó nada');
       return;
     }
   }
+  fbGuardarExt('capital');
+  updateCapStats();
+  alert('✅ Configuración guardada');
 }
-// Listener de la coleccion nueva — mismo criterio ya usado para stock/ventas/clientes/etc,
-// fusion incremental via docChanges() en vez de reemplazar el array entero. Convive en
-// paralelo al listener viejo de db_productos mientras dura la migracion (ver mas abajo,
-// fbEscuchar() sigue escuchando db_productos.categorias/config, ya no productos).
-let _fbProductosColUnsub = null;
-function fbEscucharProductosColeccion() {
-  if (!dbModular) return;
-  if (_fbProductosColUnsub) { _fbProductosColUnsub(); _fbProductosColUnsub = null; }
-  _fbProductosColUnsub = onSnapshotM(collectionM(dbModular, 'productos'), snapshot => {
-    let huboCambioReal = false;
-    snapshot.docChanges().forEach(change => {
-      if (change.doc.metadata.hasPendingWrites) return;
-      const idx = DB.productos.findIndex(p => String(p.id) === change.doc.id);
-      // CRITICO: un snapshot que viene de la cache local del dispositivo (no del servidor)
-      // puede estar desactualizado. Si el producto ya existe en memoria (ya lo trajo la
-      // reconciliacion de login, que lee directo del servidor via getDocs, no cache), un
-      // cambio de cache se ignora — evita pisar datos reales con una version vieja cacheada.
-      // Solo se aplica cache si el producto es nuevo para nosotros (algo es mejor que nada).
-      if (snapshot.metadata.fromCache && idx !== -1) return;
-      const data = change.doc.data();
-      if (change.type === 'removed') {
-        if (idx !== -1) { DB.productos.splice(idx, 1); huboCambioReal = true; }
-      } else { // 'added' o 'modified' — data ya trae el stock unificado directo del
-        // documento real, no hace falta preservar nada de la copia local vieja.
-        if (idx !== -1) { DB.productos[idx] = data; } else { DB.productos.push(data); }
-        huboCambioReal = true;
-      }
-    });
-    if (!huboCambioReal) return;
-    try { renderDashboard(); } catch(e){}
-    try { updateAlertCount(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try {
-      if (pageId === 'pos')        { renderPos(); if (typeof mobFilterPos === 'function') mobFilterPos(); else if (typeof renderMobPos === 'function') renderMobPos(); }
-      if (pageId === 'inventario') { filterInventario(); }
-      if (pageId === 'categorias') { renderCategorias(); }
-    } catch(e){}
-    // Tienda publica no usa el sistema de "page.active" (tiene su propio home/catalogo/
-    // detalle via _tndVista) — sin esto, un visitante nunca veia productos/stock cambiar en
-    // vivo, necesitaba salir por completo de la app y volver a entrar para verlo actualizado.
-    try {
-      if (typeof _tndVista !== 'undefined') {
-        if (_tndVista === 'home') { if (typeof _tndRenderHome === 'function') _tndRenderHome(); }
-        else if (typeof tndFiltrar === 'function') tndFiltrar();
-      }
-    } catch(e){}
-  }, err => { console.warn('Firestore listener error (productos):', err.code); });
+
+function abrirAddCapital() {
+  document.getElementById('ac-monto').value = '';
+  document.getElementById('ac-desc').value  = '';
+  abrirModal('modal-add-capital');
 }
- 
-function fbGuardarProductos() {
-  if (!dbModular) return; // [SDK modular]
-  if (!authModular || !authModular.currentUser) return;
-  _fbLastWriteProdTs = Date.now();
-  clearTimeout(_fbSaveTimerProd);
- _fbSaveTimerProd = setTimeout(function _tryGuardarProd() {
-    if (_fbWritingProd) { _fbSaveTimerProd = setTimeout(_tryGuardarProd, 500); return; }
-    _fbEscribiendo = true;
-    _fbWritingProd = true;
-    // CRITICO: usuariosStaff SI tiene que estar acá, con email incluido — el propio proceso
-    // de login lo necesita ANTES de autenticar (el selector de usuario se llena desde acá, y
-    // doLogin() usa el email para el signInWithEmailAndPassword real). Una ronda anterior lo
-    // sacó pensando que era un dato sensible innecesario en un documento público, sin darse
-    // cuenta de que el login entero depende de que esté ahí — eso dejó el selector vacío y el
-    // login roto por completo. El email de un cajero, solo, no es una credencial (todavía
-    // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
-    // exposición que cualquier login por correo público en cualquier sistema.
-    const _configPublico = {
-  nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
-  whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
-  requiereVerificacionSMS: DB.config?.requiereVerificacionSMS,
-  pasarelaPago: DB.config?.pasarelaPago,
-  usuariosStaff: DB.config?.usuariosStaff || [],
-  // CRITICO: faltaban acá — sin esto, cada fbGuardarProductos() (que corre en cualquier
-  // edición de producto/categoría, no solo al guardar Configuración) borraba en silencio
-  // estos campos del documento remoto, aunque siguieran viéndose bien en memoria local del
-  // admin. Un visitante nuevo, leyendo el documento remoto fresco, nunca los recibía.
- eslogan: DB.config?.eslogan, bannerVisible: DB.config?.bannerVisible,
-  banners: DB.config?.banners || [], serviciosBannerUrl: DB.config?.serviciosBannerUrl,
-  serviciosBanners: DB.config?.serviciosBanners || [],
-  tiendasTexto: DB.config?.tiendasTexto, tiendasExternas: DB.config?.tiendasExternas || [],
-  serviciosWa: DB.config?.serviciosWa || [],
-  // CRITICO: faltaba este campo — tienda publica lee su configuracion especificamente de
-  // este documento (aleze/db_productos), nunca de aleze/db. Sin deliveryMinimo aca, el valor
-  // configurado en Configuracion nunca llegaba a tienda publica, sin importar que boton se
-  // tocara para guardar — siempre caia al fallback de 20 en tienda-publica.js.
-  deliveryMinimo: DB.config?.deliveryMinimo
-};
-    // FASE 4/4 migracion de productos: 'productos' ya NO se escribe aca — cada producto vive
-    // en su propia coleccion (ver fbGuardarProducto/fbGuardarProductosLote mas arriba), la
-    // misma razon por la que ventas/clientes/fiados/stock ya no viven en un documento unico.
-    // setDocM (sin merge) limpia el campo 'productos' viejo del documento apenas esto corra
-    // una vez, sin necesitar un script de limpieza aparte.
-    const payload = {
-      categorias: JSON.parse(JSON.stringify(DB.categorias)),
-      config:     JSON.parse(JSON.stringify(_configPublico))
-    };
-    _sincIniciar('db_productos', 'db_productos');
-    setDocM(docM(dbModular, 'aleze', 'db_productos'), payload) // [SDK modular]
-      .then(() => {
-        _fbProdCacheTs = Date.now(); // actualizar timestamp caché
-        _fbWritingProd = false;
-        setTimeout(() => { _fbEscribiendo = false; }, 300);
-        _sincTerminar('db_productos', 'db_productos');
-      })
-      .catch(e => { _fbWritingProd = false; _fbEscribiendo = false; _sincError('db_productos', 'db_productos', e, 'el catálogo de productos y el stock'); });
-  }, 1200);
-}
- 
- 
-// ── Escuchar cambios de OTROS dispositivos ──
-// doc 'db' → operaciones  |  doc 'db_productos' → catálogo
-let _fbProdCacheTs = 0; // timestamp última carga de db_productos
-function fbEscuchar() {
-  if (!dbModular) return;
-  // CRITICO: el listener de aleze/db se eliminó por completo — desde que fbGuardar() ya no
-  // escribe nada ahí (todo migrado a sus propias colecciones/documentos), nada en operación
-  // normal vuelve a tocar ese documento, así que este listener nunca se disparaba de verdad.
-  // El listener de db_productos (catálogo) sigue siendo necesario y activo, abajo.
- 
-  // Listener db_productos (categorías/config — solo si otro dispositivo admin cambia algo.
-  // CRITICO FASE 4/4 migracion de productos: productos ya NO se lee de aca — este documento
-  // guarda una copia vieja congelada de antes de la migracion (fbGuardarProductos() ya no la
-  // actualiza), sobrescribir DB.productos con eso borraria cualquier cambio real hecho
-  // despues via la coleccion propia. Ver fbEscucharProductosColeccion() mas abajo, que es la
-  // que ahora mantiene DB.productos al dia en tiempo real.)
-  onSnapshotM(docM(dbModular, 'aleze', 'db_productos'), snapshot => { // [SDK modular]
-    if (_fbEscribiendo) return;
-    if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
-    if (Date.now() - _fbLastWriteProdTs < 2000) return;
-    if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
-    const data = snapshot.data();
-    if (!data) return;
-    if (data.categorias) DB.categorias = data.categorias;
-    if (data.config)     DB.config     = { ...DB.config, ...data.config };
-    _fbProdCacheTs = Date.now();
-    try { renderDashboard(); } catch(e){}
-    try { updateAlertCount(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try {
-      if (pageId === 'categorias') { renderCategorias(); }
-    } catch(e){}
-  }, err => { console.warn('Firestore db_productos listener error:', err.code); });
- 
-  // Migra el historial viejo de capital (antes vivia como capital.hist dentro de db_ext) a
-  // su propia colección real, una entrada por documento. ID determinístico (no getId()) a
-  // propósito: si 2 dispositivos ven el mismo db_ext viejo y migran "al mismo tiempo", generan
-  // el mismo ID para la misma entrada — la segunda escritura sobrescribe la primera con el
-  // mismo valor, en vez de crear un duplicado. Nunca se pierde ni se repite una entrada.
-  function _migrarCapitalHistSiHaceFalta(histViejo) {
-    if (!dbModular) return;
-    const batch = writeBatchM(dbModular);
-    const nuevos = [];
-    histViejo.forEach((h, idx) => {
-      const idDeterministico = 'migrado_' + idx + '_' + (h.fecha||'').replace(/\D/g,'');
-      const data = { id: idDeterministico, tipo: h.tipo, fecha: h.fecha, desc: h.desc, monto: Math.abs(h.monto||0), usuario: 'Migración automática', sedeId: 'principal' };
-      batch.set(docM(dbModular, 'capital_movimientos', idDeterministico), data);
-      nuevos.push(data);
-    });
-    batch.commit()
-      .then(() => { nuevos.forEach(n => { if (!DB.capitalMovimientos.find(m=>m.id===n.id)) DB.capitalMovimientos.push(n); }); try { renderCapital(); } catch(e){} })
-      .catch(e => console.warn('No se pudo migrar el historial viejo de capital', e));
+
+async function confirmarAddCapital() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede agregar capital.'); return; }
+  const monto = parseFloat(document.getElementById('ac-monto').value) || 0;
+  const desc  = document.getElementById('ac-desc').value || 'Capital adicional';
+  if (monto <= 0) { alert('Monto inválido'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
+  const sede = sedeAdminEfectiva();
+  // Capital ahora tiene su propia colección real (capital_movimientos) — el aporte viaja
+  // dentro del mismo lote atómico que ya empaquetaba caja + movimiento, nunca depende de
+  // db_ext para persistirse.
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede), {
+    ingresos: incrementM(monto),
+    ingresosEfectivo: incrementM(monto)
+  }, { merge: true });
+  const _movId = getId();
+  const _movData = { id:_movId, tipo:'ingreso', desc:'Aporte de capital: '+desc, monto, hora:nowTime(), fecha:today(), usuario:currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+  const _capMovId = getId();
+  const _capMovData = { id:_capMovId, tipo:'aporte', fecha: today(), desc, monto, usuario: currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'capital_movimientos', String(_capMovId)), _capMovData);
+
+  _sincIniciar('add_capital_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('add_capital_lote', _movId);
+  } catch (e) {
+    _sincError('add_capital_lote', _movId, e, 'el aporte de capital — no se aplicó nada');
+    return;
   }
- 
-  // Listener para DB_EXT (sueldos, capital, config extendida)
-  onSnapshotM(docM(dbModular, 'aleze', 'db_ext'), snapshot => { // [SDK modular]
-    if (_fbEscribiendo) return;
-    if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
-    if (Date.now() - _fbLastWriteTs < 2000) return;
-    if (!snapshot.exists()) return; // en modular, exists es un METODO, no una propiedad
-    const ext = snapshot.data();
-    if (!ext) return;
-    // 'gastos' se excluye a propósito — tiene su propio listener dedicado sobre su colección
-    // real (fbEscucharGastos), que fusiona cambios en vez de reemplazar todo el documento. Si
-    // este listener también lo tocara, un reemplazo completo de db_ext entre 2 dispositivos
-    // podría pisar un gasto recién creado en el otro, incluso con el listener dedicado activo.
-    // 'capital' TAMBIÉN se excluye del reemplazo — total/recuperado/prestamoPagado ahora son
-    // getters calculados desde DB.capitalMovimientos (ver core.js), no valores planos.
-    // Reemplazar el objeto entero borraría esos getters. Solo se fusionan los 3 campos de
-    // configuración reales (prestamo/cuota/meta), que sí siguen viviendo acá.
-    Object.keys(ext).forEach(k => {
-      if (k === 'gastos') return;
-      if (k === 'capital') {
-        if (ext.capital) ['prestamo','cuota','meta'].forEach(campo => {
-          if (ext.capital[campo] != null) DB_EXT.capital[campo] = ext.capital[campo];
-        });
-        return;
-      }
-      if (k in DB_EXT) DB_EXT[k] = ext[k];
-    });
-    // Migración defensiva, una sola vez: si el documento viejo todavía trae un historial de
-    // capital (capital.hist, de antes de esta separación) y la colección nueva sigue vacía,
-    // se migra automático — sin esto, el historial completo de aportes/pagos/ganancias
-    // quedaría invisible para siempre, aunque el numero seguia estando ahi.
-    if (ext.capital && Array.isArray(ext.capital.hist) && ext.capital.hist.length && !DB.capitalMovimientos.length) {
-      _migrarCapitalHistSiHaceFalta(ext.capital.hist);
-    }
-    try { renderDashboard(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try {
-      if (pageId === 'gastos')        { renderGastos(); }
-      if (pageId === 'capital')       { renderCapital(); }
-      if (pageId === 'frecuentes')    { renderFrecuentes(); }
-      if (pageId === 'configuracion') { renderConfiguracion(); }
-      if (pageId === 'reportes')      { generarReporte(); }
-    } catch(e){}
-  }, err => { console.warn('Firestore db_ext listener error:', err.code); });
-}
- 
-// ── Listener dedicado a la colección caja — única fuente de verdad para DB._cajas ──────────
-// Escucha las 2 sedes a la vez. Cualquier cambio en cualquier dispositivo (o el propio,
-// una vez confirmado por el servidor) se refleja acá, en tiempo real, en cualquier otro
-// dispositivo con la app abierta — sin necesitar recargar ni navegar. Reemplaza por completo
-// la dependencia que antes existía en el documento combinado aleze/db.
-function fbEscucharCaja() {
-  if (!dbModular) return; // [SDK modular]
-  if (_fbCajaUnsub) { _fbCajaUnsub(); _fbCajaUnsub = null; }
-  _fbCajaUnsub = onSnapshotM(collectionM(dbModular, 'caja'), snapshot => {
-    let huboCambioReal = false;
-    snapshot.forEach(doc => {
-      // Ignorar el eco optimista local (todavía no confirmado por el servidor) — esperar
-      // la confirmación real evita parpadeos y evita reaccionar dos veces al mismo cambio.
-      if (doc.metadata.hasPendingWrites) return;
-      DB._cajas[doc.id] = doc.data();
-      huboCambioReal = true;
-    });
-    if (!huboCambioReal) return;
-    try { renderDashboard(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    if (pageId === 'caja') { try { renderCaja(); } catch(e){} }
-  }, err => { console.warn('Firestore listener error (caja):', err.code); });
-}
- 
-// ── Helper generico: aplica los cambios de un snapshot (docChanges) sobre un array local en
-// memoria, SIN reemplazarlo entero — solo agrega/actualiza/quita lo que realmente cambio. Esto
-// es CRITICO para listeners filtrados (hoy, pendientes, mes actual): el array local tiene datos
-// FUERA del alcance del filtro (ventas de ayer, fiados ya pagados, mermas del mes pasado) que
-// vinieron de la reconciliacion de login — un reemplazo completo del array los borraria de
-// memoria por error, aunque sigan existiendo en Firestore.
-function _aplicarCambiosSnapshot(snapshot, arr, idKey = 'id') {
-  let huboCambio = false;
-  snapshot.docChanges().forEach(change => {
-    if (change.doc.metadata.hasPendingWrites) return; // eco optimista local — esperar confirmacion real del servidor
-    const data = change.doc.data();
-    const idx = arr.findIndex(x => String(x[idKey]) === change.doc.id);
-    if (change.type === 'removed') {
-      // El documento dejo de cumplir el filtro (ej. un fiado que se pago, saliendo de
-      // "pendiente") — no significa que se borro de Firestore, solo que ya no aplica acá.
-      if (idx !== -1) { arr.splice(idx, 1); huboCambio = true; }
-    } else { // 'added' o 'modified'
-      if (idx !== -1) { arr[idx] = data; } else { arr.push(data); }
-      huboCambio = true;
-    }
-  });
-  return huboCambio;
-}
- 
-// ── Ventas y movimientos de HOY. Se acotan a hoy a proposito: es lo que
-// resuelve "verlo mientras pasa" sin pagar por escuchar años de historial que ya nadie
-// necesita ver en vivo — el historial viejo lo sigue trayendo la reconciliacion de login.
-function fbEscucharVentasHoy() {
-  if (!dbModular) return;
-  if (_fbVentasHoyUnsub) { _fbVentasHoyUnsub(); _fbVentasHoyUnsub = null; }
-  const sede = sedeAdminEfectiva();
-  if (!DB.historialVentas) DB.historialVentas = [];
-  _fbVentasHoyUnsub = onSnapshotM(
-    queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '==', today()), whereM('sedeId', '==', sede)),
-    snapshot => {
-      if (!_aplicarCambiosSnapshot(snapshot, DB.historialVentas)) return;
-      try { renderDashboard(); } catch(e){}
-      const activePage = document.querySelector('.page.active');
-      const pageId = activePage ? activePage.id.replace('page-','') : '';
-      try {
-        if (pageId === 'historial-ventas') renderHistorialVentas();
-        if (pageId === 'caja') renderCaja();
-      } catch(e){}
-    }, err => { console.warn('Firestore listener error (ventas hoy):', err.code); });
-}
- 
-function fbEscucharMovimientosHoy() {
-  if (!dbModular) return;
-  if (_fbMovimientosHoyUnsub) { _fbMovimientosHoyUnsub(); _fbMovimientosHoyUnsub = null; }
-  const sede = sedeAdminEfectiva();
-  if (!DB.movimientos) DB.movimientos = [];
-  _fbMovimientosHoyUnsub = onSnapshotM(
-    queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '==', today()), whereM('sedeId', '==', sede)),
-    snapshot => {
-      if (!_aplicarCambiosSnapshot(snapshot, DB.movimientos)) return;
-      const activePage = document.querySelector('.page.active');
-      const pageId = activePage ? activePage.id.replace('page-','') : '';
-      try { if (pageId === 'caja') renderCaja(); } catch(e){}
-    }, err => { console.warn('Firestore listener error (movimientos hoy):', err.code); });
-}
- 
-// ── Fiados pendientes de la sede activa — filtrado por estado, no por fecha (un fiado puede
-// llevar meses sin pagarse y sigue siendo relevante verlo). Cuando un fiado se paga y deja de
-// cumplir "pendiente", el propio listener lo saca de la vista en todos los dispositivos, en
-// vivo, cerrando el riesgo real de doble cobro entre 2 personas que no se ven entre sedes.
-function fbEscucharFiadosPendientes() {
-  if (!dbModular) return;
-  if (_fbFiadosPendUnsub) { _fbFiadosPendUnsub(); _fbFiadosPendUnsub = null; }
-  const sede = sedeAdminEfectiva();
-  if (!DB.fiados) DB.fiados = [];
-  _fbFiadosPendUnsub = onSnapshotM(
-    queryM(collectionM(dbModular, 'fiados'), whereM('estado', '==', 'pendiente'), whereM('sedeId', '==', sede)),
-    snapshot => {
-      if (!_aplicarCambiosSnapshot(snapshot, DB.fiados)) return;
-      // CRITICO: causa real de la perdida de sincronizacion del dashboard reportada y
-      // confirmada por el usuario (con evidencia de consola + comparacion visual entre 2
-      // sesiones abiertas). Los datos siempre llegaban bien a DB.fiados — el problema era que
-      // este listener nunca volvia a dibujar el dashboard, a diferencia de fbEscucharVentasHoy
-      // (que si lo hace siempre). Por eso "Ventas Hoy" se actualizaba solo y "Deuda en fiados"
-      // se quedaba vieja hasta navegar a otra pantalla y volver — no era un problema de datos,
-      // era que nada disparaba el repintado mientras se estaba mirando el dashboard.
-      try { renderDashboard(); } catch(e){}
-      const activePage = document.querySelector('.page.active');
-      const pageId = activePage ? activePage.id.replace('page-','') : '';
-      try { if (pageId === 'fiados') renderFiados(); } catch(e){}
-    }, err => { console.warn('Firestore listener error (fiados pendientes):', err.code); });
-}
- 
-// ── Recordatorios: sin filtro — modulo de proposito general (envases, herramientas, o
-// cualquier otra cosa pendiente con un cliente), se necesita ver tanto pendientes como ya
-// devueltos para el historial completo. Sin filtro de sede, mismo criterio que clientes.
-function fbEscucharRecordatorios() {
-  if (!dbModular) return;
-  if (_fbRecordatoriosUnsub) { _fbRecordatoriosUnsub(); _fbRecordatoriosUnsub = null; }
-  if (!DB.recordatorios) DB.recordatorios = [];
-  _fbRecordatoriosUnsub = onSnapshotM(
-    collectionM(dbModular, 'recordatorios'),
-    snapshot => {
-      if (!_aplicarCambiosSnapshot(snapshot, DB.recordatorios)) return;
-      const activePage = document.querySelector('.page.active');
-      const pageId = activePage ? activePage.id.replace('page-','') : '';
-      try { if (pageId === 'recordatorios') renderRecordatorios(); } catch(e){}
-    }, err => { console.warn('Firestore listener error (recordatorios):', err.code); });
-}
- 
-// ── Clientes: sin filtro — compartidos entre sedes a proposito (puntos/compras/total son del
-// negocio completo). Resuelve el riesgo real de que 2 cajeros, en sedes distintas o la misma,
-// creen el mismo cliente sin saberlo.
-function fbEscucharClientes() {
-  if (!dbModular) return;
-  if (_fbClientesUnsub) { _fbClientesUnsub(); _fbClientesUnsub = null; }
-  if (!DB.clientes) DB.clientes = [];
-  _fbClientesUnsub = onSnapshotM(collectionM(dbModular, 'clientes'), snapshot => {
-    let huboCambio = false;
-    snapshot.docChanges().forEach(change => {
-      if (change.doc.metadata.hasPendingWrites) return;
-      const data = change.doc.data();
-      const idx = DB.clientes.findIndex(x => String(x.id) === change.doc.id);
-      if (change.type === 'removed') {
-        if (idx !== -1) { DB.clientes.splice(idx, 1); huboCambio = true; }
-      } else if (idx !== -1) {
-        // Actualizar en el lugar, preservando el Proxy ya envuelto — reemplazar el objeto
-        // entero perderia el wrapper y dejaria de sincronizar ediciones futuras desde acá.
-        // _clienteProxySkipSync evita que Object.assign, al escribir sobre el Proxy, dispare
-        // una escritura de vuelta a Firestore — este cambio YA vino de Firestore, reenviarlo
-        // seria una escritura redundante (y, peor, competiria con el propio origen del cambio).
-        _clienteProxySkipSync = true;
-        try { Object.assign(DB.clientes[idx], data); }
-        finally { _clienteProxySkipSync = false; }
-        huboCambio = true;
-      } else {
-        _migrarDeudaClienteSiHaceFalta(data);
-        DB.clientes.push(_envolverCliente(data));
-        huboCambio = true;
-      }
-    });
-    if (!huboCambio) return;
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try {
-      if (pageId === 'clientes') renderClientes();
-      if (pageId === 'pos')      updatePosClientes();
-    } catch(e){}
-  }, err => { console.warn('Firestore listener error (clientes):', err.code); });
-}
- 
-// ── Promociones: sin filtro — pocas activas a la vez, y ya se habia pedido explicitamente
-// que la sincronizacion de productos y promociones fuera inmediata.
-function fbEscucharPromociones() {
-  if (!dbModular) return;
-  if (_fbPromocionesUnsub) { _fbPromocionesUnsub(); _fbPromocionesUnsub = null; }
-  if (!DB.promociones) DB.promociones = [];
-  _fbPromocionesUnsub = onSnapshotM(collectionM(dbModular, 'promociones'), snapshot => {
-    if (!_aplicarCambiosSnapshot(snapshot, DB.promociones)) return;
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try { if (pageId === 'promociones') renderPromociones(); } catch(e){}
-  }, err => { console.warn('Firestore listener error (promociones):', err.code); });
-}
- 
-// ── Mermas del MES ACTUAL — no depende de sede (mermas se ven en conjunto), filtrado por mes
-// calendario porque un mes ya cerrado ya se cuadro, no hace falta seguir pagando por verlo en
-// vivo. La reconciliacion de login sigue trayendo TODAS, sin limite — este listener es solo
-// para lo que todavia esta "abierto" del mes en curso.
-function fbEscucharMermasMes() {
-  if (!dbModular) return;
-  if (_fbMermasMesUnsub) { _fbMermasMesUnsub(); _fbMermasMesUnsub = null; }
-  if (!DB.mermas) DB.mermas = [];
-  const _inicioMes = today().slice(0, 7) + '-01'; // YYYY-MM-01
-  _fbMermasMesUnsub = onSnapshotM(
-    queryM(collectionM(dbModular, 'mermas'), whereM('fecha', '>=', _inicioMes)),
-    snapshot => {
-      if (!_aplicarCambiosSnapshot(snapshot, DB.mermas)) return;
-      try { renderDashboard(); } catch(e){}
-      const activePage = document.querySelector('.page.active');
-      const pageId = activePage ? activePage.id.replace('page-','') : '';
-      try { if (pageId === 'mermas') renderMermas(); } catch(e){}
-    }, err => { console.warn('Firestore listener error (mermas mes):', err.code); });
-}
- 
-// ── Canjes: sin filtro — cierra el riesgo real de doble canje del mismo premio por 2
-// dispositivos que no se veian entre si, mismo motivo que fiados pendientes.
-function fbEscucharCanjes() {
-  if (!dbModular) return;
-  if (_fbCanjesUnsub) { _fbCanjesUnsub(); _fbCanjesUnsub = null; }
-  if (!DB.canjes) DB.canjes = [];
-  _fbCanjesUnsub = onSnapshotM(collectionM(dbModular, 'canjes'), snapshot => {
-    if (!_aplicarCambiosSnapshot(snapshot, DB.canjes)) return;
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try { if (pageId === 'frecuentes') renderFrecuentes(); } catch(e){}
-  }, err => { console.warn('Firestore listener error (canjes):', err.code); });
-}
- 
-// ── Gastos: colección propia dedicada (gastos/{id}), sin filtro — bajo volumen, mismo
-// criterio que clientes/promociones/mermas. CRITICO: antes, la única vía de sincronización de
-// gastos era el documento compartido db_ext (ver listener de db_ext más abajo, que YA NO
-// toca 'gastos' a propósito) — un reemplazo completo de ese documento entre 2 dispositivos
-// podía pisar un gasto recién creado en el otro. Cada gasto individual ya vivía seguro en su
-// propia colección desde antes — solo faltaba que algo lo escuchara en vivo desde ahí.
-function fbEscucharGastos() {
-  if (!dbModular) return;
-  if (_fbGastosUnsub) { _fbGastosUnsub(); _fbGastosUnsub = null; }
-  if (!DB_EXT.gastos) DB_EXT.gastos = [];
-  _fbGastosUnsub = onSnapshotM(collectionM(dbModular, 'gastos'), snapshot => {
-    if (!_aplicarCambiosSnapshot(snapshot, DB_EXT.gastos)) return;
-    try { renderDashboard(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try {
-      if (pageId === 'gastos') renderGastos();
-      if (pageId === 'capital') renderCapital();
-      if (pageId === 'reportes') generarReporte();
-    } catch(e){}
-  }, err => { console.warn('Firestore listener error (gastos):', err.code); });
-}
- 
-// ── Capital: colección propia dedicada (capital_movimientos/{id}), sin filtro — bajo
-// volumen (aportes/pagos de préstamo/cierres de mes no son frecuentes). CRITICO: antes, la
-// única vía era el documento compartido db_ext, sin ninguna colección propia de respaldo —
-// a diferencia de gastos, un reemplazo completo de db_ext podía perder un aporte de capital
-// para siempre, sin forma de recuperarlo. Ahora cada movimiento vive seguro, atómico, en su
-// propio documento.
-function fbEscucharCapitalMovimientos() {
-  if (!dbModular) return;
-  if (_fbCapitalUnsub) { _fbCapitalUnsub(); _fbCapitalUnsub = null; }
-  if (!DB.capitalMovimientos) DB.capitalMovimientos = [];
-  _fbCapitalUnsub = onSnapshotM(collectionM(dbModular, 'capital_movimientos'), snapshot => {
-    if (!_aplicarCambiosSnapshot(snapshot, DB.capitalMovimientos)) return;
-    try { renderDashboard(); } catch(e){}
-    const activePage = document.querySelector('.page.active');
-    const pageId = activePage ? activePage.id.replace('page-','') : '';
-    try { if (pageId === 'capital') renderCapital(); } catch(e){}
-  }, err => { console.warn('Firestore listener error (capital_movimientos):', err.code); });
-}
- 
-// ── Arranca los 10 listeners operativos de una — se llama una vez en el login (PASO 6, junto
-// a los que ya existian) y de vuelta cada vez que el admin cambia de sede activa (los 3 que
-// dependen de sede se reconectan solos, los otros 7 no necesitan tocarse de nuevo).
-// CRITICO: los 10 listeners de acá arrancaban todos de golpe, en el mismo instante — un
-// patron conocido que dispara BloomFilterError en cascada en el SDK de Firestore (el cache
-// local offline necesita re-sincronizar con el servidor, y con muchos listeners abriendose a
-// la vez, varios lo disparan al mismo tiempo). Coincide con la demora real reportada (varios
-// segundos, peor en redes moviles). Escalonarlos con un pequeño delay entre cada uno le da
-// respiro al motor de sincronizacion — no elimina el problema de raiz (es un comportamiento
-// del SDK, no algo que se controle desde acá), pero reduce cuantos listeners lo disparan
-// exactamente al mismo tiempo.
-function _iniciarListenersOperativos() {
-  fbEscucharClientes();
-  setTimeout(() => { fbEscucharVentasHoy(); fbEscucharMovimientosHoy(); fbEscucharProductosColeccion(); }, 120);
-  setTimeout(() => { fbEscucharFiadosPendientes(); fbEscucharPromociones(); }, 240);
-  setTimeout(() => { fbEscucharMermasMes(); fbEscucharCanjes(); fbEscucharRecordatorios(); }, 360);
-  setTimeout(() => { fbEscucharGastos(); fbEscucharCapitalMovimientos(); }, 480);
-}
- 
-// ── Patch DB: interceptar asignaciones de array para auto-guardar ──
-// Solo las colecciones que el usuario modifica activamente
-// Columnas que van al doc 'db' (operaciones)
-// caja NO va aquí — tiene su propio getter/setter por sede, definido junto a la declaración de DB.
-// CRITICO: ventas/clientes/fiados/mermas/movimientos/promociones YA NO necesitan este
-// interceptor — tienen su propia coleccion con escritura explicita en cada funcion, no
-// dependen de que una reasignacion de array dispare fbGuardar() por su cuenta. Solo queda
-// proveedores, todavia sin migrar. inventariosMensuales era un campo muerto (la data real
-// siempre vivio en DB_EXT.inventariosMensuales, con su propio documento) — eliminado.
-const _fbPatchColsOp   = ['proveedores'];
-// Columnas que van al doc 'db_productos' (catálogo)
-const _fbPatchColsProd = ['productos','categorias'];
- 
-function fbPatchDB() {
-  // Ensure new fields exist for users upgrading from older versions
-  if (!DB.config) DB.config = {};
-  if (DB.config.montoAperturaAuto === undefined) DB.config.montoAperturaAuto = 0;
-  // Migración/respaldo: de FIREBASE_USERS (fijo en código) a DB.config.usuariosStaff (editable
-  // desde Configuración) — se dispara tambien si el array llega vacio desde el servidor por
-  // cualquier motivo, no solo la primera vez, asi el login nunca queda sin nadie para elegir.
-  if (!DB.config.usuariosStaff || DB.config.usuariosStaff.length === 0) {
-    const _rolesLegado = { 'Aleze': 'admin', 'Aleze I': 'cajero', 'Aleze II': 'cajero' };
-    DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
-      nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: 'principal'
-    }));
-  } else {
-    // CRITICO: migracion real de los NOMBRES YA GUARDADOS en Firestore — el respaldo de arriba
-    // (FIREBASE_USERS) ya tiene los nombres enmascarados nuevos, pero eso NO cambia lo que ya
-    // esta persistido en la coleccion real. Si el dato real trae el nombre viejo (email
-    // conocido, nombre distinto al esperado), se corrige acá Y se guarda de vuelta — sin esto,
-    // cada vez que la lectura real tenia exito (a diferencia de cuando fallaba y caia al
-    // respaldo) el selector mostraba el nombre real viejo en vez del enmascarado, exactamente
-    // la inconsistencia reportada.
-    const _nombreNuevoPorEmail = {};
-    Object.keys(FIREBASE_USERS).forEach(nombreNuevo => { _nombreNuevoPorEmail[FIREBASE_USERS[nombreNuevo]] = nombreNuevo; });
-    let _huboMigracion = false;
-    DB.config.usuariosStaff.forEach(u => {
-      const nombreNuevo = _nombreNuevoPorEmail[u.email];
-      if (nombreNuevo && u.nombre !== nombreNuevo) {
-        u.nombre = nombreNuevo;
-        _huboMigracion = true;
-      }
-    });
-    // Elimina activamente cualquier registro de "Aleze III"/Betty que ya estuviera guardado en
-    // Firestore desde antes — el negocio pasa a operar con una sola sede, esa cuenta no existe
-    // más. Sin esto, ya no se vuelve a crear, pero la que ya estaba guardada seguiria ahi.
-    const _cantAntesLimpieza = DB.config.usuariosStaff.length;
-    DB.config.usuariosStaff = DB.config.usuariosStaff.filter(u => u.nombre !== 'Aleze III' && u.email !== 'sccp.jlezama@gmail.com');
-    if (DB.config.usuariosStaff.length !== _cantAntesLimpieza) _huboMigracion = true;
-    if (_huboMigracion) {
-      console.warn('[Migración] usuariosStaff actualizado (nombres/eliminación de sede 2) — guardando de vuelta.');
-      try { fbGuardarConfig(); } catch(e) {}
-      try { fbGuardarProductos(); } catch(e) {}
-    }
-  }
-  // CRITICO: causa raiz real del "saldo heredado S/0.00" persistente incluso con lectura
-  // garantizada por transaccion — esta linea, sin proteccion, escribia directo al servidor
-  // (via el Proxy) si algun documento de caja de pruebas anteriores no tenia el campo fecha,
-  // pisando la fecha real con un string vacio ANTES de que cualquier otra logica corriera.
-  if (DB.caja.fecha === undefined || DB.caja.fecha === null) DB.caja.fecha = '';
+
+  DB.capitalMovimientos.push(_capMovData);
+  DB.caja.ingresos = (DB.caja.ingresos||0) + monto;
+  DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + monto;
   
-  if (!DB.historialVentas) DB.historialVentas = [];
-  // Migrate DB.ventas into historialVentas if historialVentas is empty but ventas has data
-  if (DB.historialVentas.length === 0 && DB.ventas && DB.ventas.length > 0) {
-    DB.historialVentas = DB.ventas.map(v => ({
-      ...v,
-      origen: v.origen || 'pos',
-      estado: v.estado || 'completado',
-      estadoStock: 'descontado'
-    }));
-  }
-  _fbPatchColsOp.forEach(col => {
-    let _val = DB[col];
-    Object.defineProperty(DB, col, {
-      get() { return _val; },
-      set(v)  {
-        _val = v;
-        // Nunca guardar arrays vacíos — protege contra sobreescritura accidental
-        if (Array.isArray(v) && v.length === 0) return;
-        // CAUSA REAL del badge trabado: fbGuardar() poda historialVentas/movimientos
-        // reasignándolos (DB.historialVentas = DB.historialVentas.filter(...)) — .filter()
-        // siempre crea un array nuevo, así que esa reasignación disparaba este mismo set()
-        // de nuevo, que volvía a llamar fbGuardar(), que volvía a podar, sin parar nunca.
-        // Si ya hay un guardado en curso, no hace falta encadenar otro — el que está
-        // corriendo ya va a incluir este cambio.
-        if (_fbEscribiendo) return;
-        fbGuardar();
-      },
-      configurable: true
-    });
-  });
-  _fbPatchColsProd.forEach(col => {
-    let _val = DB[col];
-    Object.defineProperty(DB, col, {
-      get() { return _val; },
-      set(v)  {
-        _val = v;
-        if (Array.isArray(v) && v.length === 0) return;
-        // Misma protección preventiva que en _fbPatchColsOp — si fbGuardarProductos() alguna
-        // vez reasigna productos/categorias (poda, etc.), esto evita el mismo ciclo infinito.
-        if (_fbEscribiendo) return;
-        fbGuardarProductos();
-      },
-      configurable: true
-    });
-  });
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
+  cerrarModal('modal-add-capital');
+  renderCapital();
+  try { renderCaja(); } catch(e){}
+  try { renderDashboard(); } catch(e){}
 }
- 
-function aplicarNombreNegocio() {
-  const nombre = (DB.config && DB.config.nombre) || 'Tienda Aleze';
-  document.title = nombre;
-  const el1 = document.getElementById('brand-nombre-1'); if (el1) el1.textContent = nombre;
-  const el2 = document.getElementById('brand-nombre-2'); if (el2) el2.textContent = nombre;
-  const el3 = document.getElementById('header-nombre');  if (el3) el3.textContent = nombre;
+
+async function abrirCerrarMes() {
+  const mes = getMesActual();
+  document.getElementById('cm-mes').value = mes;
+  document.getElementById('cm-monto').value = '';
+  document.getElementById('cm-detalle').textContent = '⏳ Calculando...';
+  abrirModal('modal-cerrar-mes');
+
+  let cobradoMes;
+  try {
+    cobradoMes = await _cargarCobradoRango(mes + '-01', today());
+  } catch (e) {
+    document.getElementById('cm-detalle').textContent = '⚠️ Error cargando datos. Cierra y vuelve a intentar.';
+    return;
+  }
+  const ventasMes = cobradoMes.reduce((s,v) => s+v.total, 0);
+  const costoMes  = cobradoMes.reduce((s,v) => s+_costoDeVenta(v), 0);
+  const gastosMes  = DB_EXT.gastos.filter(g => g.fecha && g.fecha.startsWith(mes)).reduce((s,g) => s+g.monto, 0);
+  const gastosRec  = DB_EXT.gastosRec.reduce((s,g) => s+g.monto, 0);
+  const sueldosMes = Object.values(DB_EXT.sueldos).reduce((s,v) => s+v, 0);
+  const mermasMes  = DB.mermas.filter(m => m.fecha && m.fecha.startsWith(mes))
+    .reduce((s,m) => s + costoMerma(m), 0);
+  const ganancia = (ventasMes - costoMes) - gastosMes - gastosRec - sueldosMes - mermasMes;
+  document.getElementById('cm-monto').value = ganancia.toFixed(2);
+  document.getElementById('cm-detalle').textContent =
+    `Ventas ${sol(ventasMes)} − Costos ${sol(costoMes)} − Gastos ${sol(gastosMes+gastosRec+sueldosMes)} − Mermas ${sol(mermasMes)}`;
+}
+
+async function confirmarCerrarMes() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede cerrar el mes.'); return; }
+  const mes   = document.getElementById('cm-mes').value;
+  const monto = parseFloat(document.getElementById('cm-monto').value) || 0;
+  if (!mes) { alert('Selecciona el mes'); return; }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+
+  // CRITICO: ID deterministico (no getId()) en vez de solo chequear duplicado por memoria
+  // local — si 2 cierres casi simultaneos del mismo mes ocurren, ambos apuntan al MISMO
+  // documento en vez de crear 2 registros distintos. Mismo patron ya probado en
+  // _migrarCapitalHistSiHaceFalta() (firebase-sync.js) para el mismo tipo de problema.
+  const _capMovId = 'ganancia_' + mes;
+  const _capMovRef = docM(dbModular, 'capital_movimientos', _capMovId);
+  try {
+    const snap = await getDocM(_capMovRef);
+    if (snap.exists()) { alert('⚠️ Este mes ya fue cerrado. Revisa el historial.'); return; } // en modular, exists es un METODO
+  } catch (e) {
+    console.warn('confirmarCerrarMes: no se pudo verificar si el mes ya está cerrado, continuando con el chequeo local', e);
+  }
+
+  const _capMovData = { id:_capMovId, tipo:'ganancia', fecha: mes+'-01', desc: 'Ganancia mensual — '+mes, monto, usuario: currentUser, sedeId: sedeAdminEfectiva() };
+  _sincIniciar('cerrar_mes', _capMovId);
+  try {
+    await setDocM(_capMovRef, _capMovData);
+    _sincTerminar('cerrar_mes', _capMovId);
+  } catch (e) {
+    _sincError('cerrar_mes', _capMovId, e, 'el cierre del mes — no se aplicó nada');
+    return;
+  }
+  DB.capitalMovimientos.push(_capMovData);
+  cerrarModal('modal-cerrar-mes');
+  renderCapital();
+  try { renderDashboard(); } catch(e){}
+  alert('✅ Ganancia del mes registrada: '+sol(monto));
+}
+
+function abrirPagoCuota() {
+  document.getElementById('pc-fecha').value = today();
+  document.getElementById('pc-monto').value = DB_EXT.capital.cuota || '';
+  document.getElementById('pc-desc').value  = '';
+  const ref = document.getElementById('pc-ref');
+  if (ref && DB_EXT.capital.cuota > 0) ref.textContent = '(cuota ref: '+sol(DB_EXT.capital.cuota)+')';
+  abrirModal('modal-pago-cuota');
+}
+
+async function confirmarPagoCuota() {
+  if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede registrar pagos de cuota.'); return; }
+  const monto = parseFloat(document.getElementById('pc-monto').value) || 0;
+  const fecha = document.getElementById('pc-fecha').value || today();
+  const desc  = document.getElementById('pc-desc').value.trim() || 'Pago préstamo '+fecha.substring(0,7);
+  if (monto <= 0) { alert('Ingresa un monto válido'); return; }
+  const prestamoPend = Math.max(0, (DB_EXT.capital.prestamo||0) - (DB_EXT.capital.prestamoPagado||0));
+  if (DB_EXT.capital.prestamo > 0 && monto > prestamoPend) {
+    alert('El monto supera el préstamo pendiente de '+sol(prestamoPend)); return;
+  }
+  if (!dbModular) { alert('⚠️ Sin conexión con el sistema en este momento. Espera unos segundos e intenta de nuevo.'); return; } // [SDK modular]
+  await ensureCajaAbierta(); // antes de armar el lote — ver nota en ensureCajaAbierta()
+  const sede = sedeAdminEfectiva();
+  const batch = writeBatchM(dbModular);
+  batch.set(docM(dbModular, 'caja', sede), {
+    egresos: incrementM(monto),
+    egresosEfectivo: incrementM(monto)
+  }, { merge: true });
+  const _movId = getId();
+  const _movData = { id:_movId, tipo:'egreso', desc:'Pago préstamo: '+desc, monto, hora:nowTime(), fecha, usuario:currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
+  // Capital ahora tiene su propia colección real (capital_movimientos) — el pago viaja dentro
+  // del mismo lote atómico que ya empaquetaba caja + movimiento.
+  const _capMovId = getId();
+  const _capMovData = { id:_capMovId, tipo:'pago_prestamo', fecha, desc, monto, usuario: currentUser, sedeId: sede };
+  batch.set(docM(dbModular, 'capital_movimientos', String(_capMovId)), _capMovData);
+
+  _sincIniciar('pago_cuota_lote', _movId);
+  try {
+    await batch.commit();
+    _sincTerminar('pago_cuota_lote', _movId);
+  } catch (e) {
+    _sincError('pago_cuota_lote', _movId, e, 'el pago de la cuota — no se aplicó nada');
+    return;
+  }
+
+  DB.capitalMovimientos.push(_capMovData);
+  DB.caja.egresos = (DB.caja.egresos||0) + monto;
+  DB.caja.egresosEfectivo = (DB.caja.egresosEfectivo||0) + monto;
+  
+  if (!DB.movimientos) DB.movimientos = [];
+  DB.movimientos.push(_movData);
+  cerrarModal('modal-pago-cuota');
+  renderCapital();
+  try { renderCaja(); } catch(e){}
+  try { renderDashboard(); } catch(e){}
+  alert('✅ Pago registrado: '+sol(monto)+'. Préstamo pendiente: '+sol(Math.max(0,(DB_EXT.capital.prestamo||0)-(DB_EXT.capital.prestamoPagado||0))));
 }
