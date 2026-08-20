@@ -277,7 +277,7 @@ async function _completarSesion(name, role) {
       // permission-denied un instante, las otras 13 igual se aplican, mismo comportamiento de
       // resiliencia que los try/catch separados de antes, ahora en un solo viaje de red. Los
       // resultados se APLICAN despues en el mismo orden logico de siempre (config -> caja ->
-      // productos -> stock -> reconciliacion -> ext -> gastos) — aplicar en memoria no tiene
+      // productos -> reconciliacion -> ext -> gastos) — aplicar en memoria no tiene
       // costo de red, solo el PEDIDO lo tenia.
       const _limiteReconcilia = new Date(Date.now() - 40*24*60*60*1000).toISOString().slice(0,10);
       _tlogC('arrancando Promise.allSettled de 15 lecturas');
@@ -286,25 +286,24 @@ async function _completarSesion(name, role) {
         getDocM(docM(dbModular, 'aleze', 'db_ext')),                                                 // 1
         getDocM(docM(dbModular, 'aleze', 'config')),                                                 // 2
         getDocsM(collectionM(dbModular, 'caja')),                                                    // 3
-        getDocsM(collectionM(dbModular, 'stock')),                                                   // 4
-        getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', _limiteReconcilia))),// 5
-        getDocsM(collectionM(dbModular, 'fiados')),        // fiados: todos, nunca deberia faltar    // 6
-        getDocsM(collectionM(dbModular, 'clientes')),      // clientes: todos, nunca deberia faltar  // 7
+        getDocsM(queryM(collectionM(dbModular, 'ventas'), whereM('fecha', '>=', _limiteReconcilia))),// 4
+        getDocsM(collectionM(dbModular, 'fiados')),        // fiados: todos, nunca deberia faltar    // 5
+        getDocsM(collectionM(dbModular, 'clientes')),      // clientes: todos, nunca deberia faltar  // 6
         getDocsM(collectionM(dbModular, 'mermas')),        // mermas: todas, nunca deberia faltar — bajo volumen (pocas por mes), igual criterio que fiados/clientes. Antes tenia limite de 40 dias, lo que dejaba mermas viejas PERDIDAS PARA SIEMPRE si alguna vez faltaron localmente — ningun relogin las recuperaba, la propia consulta las excluia de raiz.
-        getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', _limiteReconcilia))), // 9
-        getDocsM(collectionM(dbModular, 'promociones')),                                             // 10
-        getDocsM(collectionM(dbModular, 'proveedores')),                                             // 11
-        getDocsM(collectionM(dbModular, 'boletas')),                                                 // 12
-        getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia))),  // 13
-        getDocsM(collectionM(dbModular, 'capital_movimientos')), // capital: todo, nunca deberia faltar — bajo volumen (aportes/pagos no son frecuentes), mismo criterio que fiados/clientes/mermas — 14
-        getDocsM(collectionM(dbModular, 'productos')) // FASE 4/4 migracion de productos: coleccion propia, un documento por producto — 15
+        getDocsM(queryM(collectionM(dbModular, 'movimientos'), whereM('fecha', '>=', _limiteReconcilia))), // 7
+        getDocsM(collectionM(dbModular, 'promociones')),                                             // 8
+        getDocsM(collectionM(dbModular, 'proveedores')),                                             // 9
+        getDocsM(collectionM(dbModular, 'boletas')),                                                 // 10
+        getDocsM(queryM(collectionM(dbModular, 'gastos'), whereM('fecha', '>=', _limiteReconcilia))),  // 11
+        getDocsM(collectionM(dbModular, 'capital_movimientos')), // capital: todo, nunca deberia faltar — bajo volumen (aportes/pagos no son frecuentes), mismo criterio que fiados/clientes/mermas — 12
+        getDocsM(collectionM(dbModular, 'productos')) // FASE 4/4 migracion de productos: coleccion propia, un documento por producto — 13
       ]);
       _tlogC('Promise.allSettled de 15 lecturas TERMINO');
       // CRITICO: antes, si una de estas 15 lecturas fallaba, solo se veia un aviso generico
       // ("no se pudo reconciliar X") sin la razon real del error (permission-denied? red
       // caida? App Check bloqueado?) — imposible diagnosticar con certeza cuando pasaba. Ahora
       // se registra el codigo y mensaje real de CADA fallo, identificado por nombre.
-      const _nombresLectura = ['db_productos','db_ext','config','caja','stock','ventas','fiados',
+      const _nombresLectura = ['db_productos','db_ext','config','caja','ventas','fiados',
         'clientes','mermas','movimientos','promociones','proveedores','boletas','gastos','capital_movimientos','productos'];
       const _ok = i => {
         if (_resultados[i].status === 'fulfilled') return _resultados[i].value;
@@ -312,10 +311,10 @@ async function _completarSesion(name, role) {
         console.warn(`[Offline] Fallo la lectura de '${_nombresLectura[i]}' — código: ${_razon?.code || 'desconocido'}, mensaje: ${_razon?.message || _razon}`);
         return null;
       };
-      const snapProd = _ok(0), snapExt = _ok(1), snapConfig = _ok(2), cajaSnap = _ok(3), stockSnap = _ok(4),
-            ventasSnap = _ok(5), fiadosSnap = _ok(6), clientesSnap = _ok(7), mermasSnap = _ok(8),
-            movimientosSnap = _ok(9), promocionesSnap = _ok(10), proveedoresSnap = _ok(11),
-            boletasSnap = _ok(12), gastosSnap = _ok(13), capitalMovSnap = _ok(14), productosColSnap = _ok(15);
+      const snapProd = _ok(0), snapExt = _ok(1), snapConfig = _ok(2), cajaSnap = _ok(3),
+            ventasSnap = _ok(4), fiadosSnap = _ok(5), clientesSnap = _ok(6), mermasSnap = _ok(7),
+            movimientosSnap = _ok(8), promocionesSnap = _ok(9), proveedoresSnap = _ok(10),
+            boletasSnap = _ok(11), gastosSnap = _ok(12), capitalMovSnap = _ok(13), productosColSnap = _ok(14);
 
       // config: documento propio, ya no es parte de aleze/db (mismo criterio que caja).
       if (snapConfig && snapConfig.exists()) { // en modular, exists es un METODO, no una propiedad
@@ -343,9 +342,9 @@ async function _completarSesion(name, role) {
       // desde productosColSnap de arriba, un solo documento, un solo paso. Esto
       // era justo la ventana donde un login en paralelo con otra carga podia pisar el trabajo
       // del otro, dejando el catalogo entero sin stock — confirmado con evidencia real en
-      // produccion. NOTA: stockSnap (indice 4, arriba) ya no se usa para nada — se deja sin
-      // tocar por ahora para no arriesgar renumerar los 15 indices en el mismo cambio,
-      // pendiente de limpiar en una ronda posterior mas tranquila.
+      // produccion. La lectura de la coleccion 'stock' (indice 4 del array de arriba) se
+      // eliminó por completo — nada la usaba desde esta misma migracion, confirmado por grep
+      // en todo el repo (ni un solo write a esa coleccion en ningun archivo).
 
       // CRITICO — corrige la causa raiz de perdida real de datos: TODO lo que camposOp carga
       // desde el documento combinado (ventas, clientes, fiados, mermas, movimientos) puede
@@ -610,4 +609,3 @@ function doLogout() {
   const bloqueoTs = parseInt(localStorage.getItem('aleze_bloqueo') || '0');
   if (bloqueoTs > Date.now()) _mostrarBloqueo(bloqueoTs);
 }
-
