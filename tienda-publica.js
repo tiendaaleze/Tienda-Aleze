@@ -44,8 +44,14 @@ async function tndResolverCliente(nombre, tel) {
   }
   if (cli) {
     if (nombre && nombre.trim() && cli.nombre !== nombre.trim()) {
-      cli.nombre = nombre.trim();
-      if (!cli.alias) cli.alias = nombre.trim();
+      // CRITICO: asignar cli.nombre/cli.alias directo dispara el Proxy (1-2 escrituras) ademas
+      // de la escritura explicita combinada de tndSincronizarClientePublico de abajo — hasta 3
+      // escrituras por una sola identificacion de cliente en la tienda publica.
+      _clienteProxySkipSync = true;
+      try {
+        cli.nombre = nombre.trim();
+        if (!cli.alias) cli.alias = nombre.trim();
+      } finally { _clienteProxySkipSync = false; }
       tndSincronizarClientePublico(cli, false);
     }
   } else {
@@ -1988,4 +1994,3 @@ async function tndEnviarPedido() {
     </div>`;
   document.getElementById('tnd-panel-footer').innerHTML = `<button class="tnd-btn tnd-btn-outline" onclick="tndCerrarPanel()">Seguir comprando</button>`;
 }
-
