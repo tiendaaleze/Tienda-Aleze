@@ -520,7 +520,7 @@ currentRole = role;
   fbEscucharCaja();
   _iniciarListenersOperativos();
   _programarChequeoMedianoche();
-  if (currentRole === 'admin') { iniciarBackupAutomatico(); limpiarAlertasIgnoradasSiCorresponde(); }
+ if (currentRole === 'admin') { limpiarAlertasIgnoradasSiCorresponde(); }
   _registrarNotificacionesPush();
   _tlogC('_completarSesion() TERMINA (todos los listeners ya arrancaron)');
 }
