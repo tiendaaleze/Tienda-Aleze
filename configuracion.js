@@ -129,7 +129,7 @@ function eliminarBanner(i) {
   if (currentRole !== 'admin') return;
   guardarConfigTienda(true);
   DB.config.banners.splice(i, 1);
-  fbGuardar(); fbGuardarProductos('config');
+  fbGuardar(); fbGuardarProductos('config'); fbGuardarConfig('banners');
   renderConfiguracion();
 }
 // Mismo patrón que agregarBanner/eliminarBanner, para el carrusel de servicios rápidos.
@@ -144,7 +144,7 @@ function eliminarServicioBanner(i) {
   if (currentRole !== 'admin') return;
   guardarConfigTienda(true);
   DB.config.serviciosBanners.splice(i, 1);
-  fbGuardar(); fbGuardarProductos('config');
+  fbGuardar(); fbGuardarProductos('config'); fbGuardarConfig('serviciosBanners');
   renderConfiguracion();
 }
 
@@ -173,6 +173,7 @@ cfg.tiendasTexto = document.getElementById('cfg-tiendas-texto')?.value.trim() ||
     s.visible = document.getElementById(`cfg-sw-vis-${i}`)?.checked !== false;
   });
   fbGuardar(); fbGuardarProductos('config');
+  fbGuardarConfig(['eslogan','deliveryMinimo','bannerVisible','banners','tiendasTexto','serviciosBanners','tiendasExternas','serviciosWa']);
   if (!_silencioso) alert('✅ Configuración de tienda guardada');
 }
 function renderConfiguracion() {
@@ -212,6 +213,12 @@ function guardarConfigPasarela() {
     llavePublica: document.getElementById('cfg-pasarela-llave').value.trim()
   };
   fbGuardarProductos('config');
+  // CRITICO: antes esta funcion NUNCA llamaba a fbGuardar()/fbGuardarConfig() — pasarelaPago
+  // solo llegaba a aleze/config "de rebote", cuando cualquier OTRA accion sin relacion (una
+  // venta, un pago de fiado) disparaba su propio fbGuardar()-a-ciegas que reescribia el
+  // documento entero, arrastrando el pasarelaPago actual de paso. Con fbGuardarConfig(campo)
+  // exigiendo el campo, ese rebote ya no existe — se vuelve explicito.
+  fbGuardarConfig('pasarelaPago');
   alert('✅ Configuración guardada.' + (DB.config.pasarelaPago.activa ? '\n\nRecuerda: esto solo funciona si ya desplegaste las Cloud Functions del repositorio — activar el interruptor no las despliega solas.' : ''));
 }
 
@@ -228,6 +235,7 @@ function guardarConfigComprobante() {
     serieFactura: document.getElementById('cfg-serie-factura').value.trim().toUpperCase() || null
   };
   fbGuardar();
+  fbGuardarConfig(['regimenTributario','comprobanteElectronico']);
   alert('✅ Configuración guardada.' + (DB.config.comprobanteElectronico.activa ? '\n\nRecuerda: esto solo funciona si ya desplegaste las Cloud Functions del repositorio y configuraste el Token del proveedor como Secret — activar el interruptor no hace eso solo.' : ''));
 }
 
@@ -296,6 +304,7 @@ function guardarConfig() {
   DB.config.ruc = document.getElementById('cfg-ruc').value.trim();
   fbGuardarProductos('config');// config también va en db_productos para que la tienda lo lea
   fbGuardar();
+  fbGuardarConfig(['nombre','direccion','telefono','whatsappTienda','ticketMsg','diasVenc','montoAperturaAuto','ruc']);
   try { renderDashboard(); } catch(e){}
   alert('✅ Configuración guardada');
 }
@@ -345,16 +354,17 @@ function agregarUsuarioStaff() {
   const nombre = document.getElementById('nuevo-usr-nombre').value.trim();
   const email  = document.getElementById('nuevo-usr-email').value.trim();
   const rol    = document.getElementById('nuevo-usr-rol').value || 'cajero';
-  const sedeId = document.getElementById('nuevo-usr-sede').value.trim() || 'principal';
+  const sedeId = document.getElementById('nuevo-usr-sede')?.value.trim() || 'principal';
   if (!nombre || !email) { alert('Nombre y correo son obligatorios'); return; }
   if (!DB.config.usuariosStaff) DB.config.usuariosStaff = [];
   if (DB.config.usuariosStaff.some(u => u.nombre === nombre)) { alert('Ya existe un usuario con ese nombre'); return; }
   DB.config.usuariosStaff = [...DB.config.usuariosStaff, { nombre, email, rol, sedeId }];
   document.getElementById('nuevo-usr-nombre').value = '';
   document.getElementById('nuevo-usr-email').value = '';
-  document.getElementById('nuevo-usr-sede').value = '';
+  const _elUsrSede = document.getElementById('nuevo-usr-sede');
+  if (_elUsrSede) _elUsrSede.value = '';
   renderUsuariosStaff(); renderLoginDropdown(); renderCfgUserSelect();
-  fbGuardarProductos('config'); fbGuardar();
+  fbGuardarProductos('config'); fbGuardar(); fbGuardarConfig('usuariosStaff');
   alert('✅ Usuario agregado. Recuerda crear su cuenta (correo + contraseña) directamente en Firebase Authentication — el sistema no la crea automáticamente.');
 }
 
@@ -367,7 +377,7 @@ function cambiarRolUsuarioStaff(i, nuevoRol) {
   DB.config.usuariosStaff[i].rol = nuevoRol;
   DB.config.usuariosStaff = [...DB.config.usuariosStaff];
   renderLoginDropdown();
-  fbGuardarProductos('config'); fbGuardar();
+  fbGuardarProductos('config'); fbGuardar(); fbGuardarConfig('usuariosStaff');
 }
 
 function eliminarUsuarioStaff(i) {
@@ -376,7 +386,7 @@ function eliminarUsuarioStaff(i) {
   if (!confirm(`¿Quitar a ${u.nombre} del sistema? Esto no borra su cuenta de Firebase, solo su acceso desde aquí.`)) return;
   DB.config.usuariosStaff = DB.config.usuariosStaff.filter((_, idx) => idx !== i);
   renderUsuariosStaff(); renderLoginDropdown(); renderCfgUserSelect();
-  fbGuardarProductos('config'); fbGuardar();
+  fbGuardarProductos('config'); fbGuardar(); fbGuardarConfig('usuariosStaff');
 }
 
 function guardarSueldos() {
