@@ -849,12 +849,6 @@ window.addEventListener('error', function(e) {
       <div id="page-configuracion" class="page">
         <div class="page-title">Configuración</div>
         <div class="card" style="margin-bottom:1rem">
-          <div class="card-title">💾 Respaldo de datos</div>
-          <div style="font-size:.85rem;color:var(--gray-500);margin-bottom:.75rem">El sistema guarda un respaldo automático cada 30 minutos. Puedes restaurar manualmente si algo sale mal.</div>
-          <div id="backup-lista" style="margin-bottom:.75rem;font-size:.82rem"></div>
-         <button type="button" class="btn btn-outline btn-sm" onclick="verBackups()">🔍 Ver respaldos disponibles</button>
-        </div>
-        <div class="card" style="margin-bottom:1rem">
           <div class="card-title">💳 Pasarela de pago (Izipay)</div>
           <div style="font-size:.82rem;color:var(--gray-500);margin-bottom:.75rem">
             Construida y lista, pero <strong>apagada a propósito</strong>. Activarla de verdad requiere desplegar las Cloud Functions del repositorio (carpeta <code>functions/</code>) — eso no ocurre solo, alguien tiene que hacerlo manualmente con las credenciales del proyecto. Mientras esté apagada, la tienda sigue funcionando exactamente igual que hoy.
@@ -2188,8 +2182,6 @@ window.addEventListener('error', function(e) {
 <script src="configuracion.js"></script>
 <script src="pedidos-online.js"></script>
 <script src="tienda-publica.js"></script>
-
-<script src="backup.js"></script>
 <!-- ── PWA: Registro del Service Worker ── -->
 <script src="sw-register.js"></script>
 
