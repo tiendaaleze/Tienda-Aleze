@@ -113,13 +113,20 @@ function renderPedidosOnline() {
   });
 
   listEl.innerHTML = gruposArr.map(g => {
-    const totalGrupo = g.pedidos.reduce((s,p) => s+(p.total||0), 0);
+    // Una vez entregado, el monto que cuenta es el REAL recalculado al confirmar (totalReal) —
+    // no el que declaró el cliente al hacer el pedido (total), que puede haber sido manipulado
+    // o simplemente haber quedado desactualizado. Ver _recalcularTotalRealPedido() /
+    // confirmarEntregaPedido(). "total" original se conserva sin tocar como evidencia.
+    const _totalReal = p => (p.estado === 'entregado' && p.totalReal != null) ? p.totalReal : (p.total||0);
+    const _descReal   = p => (p.estado === 'entregado' && p.descuentoReal != null) ? p.descuentoReal : (p.descuento||0);
+    const totalGrupo = g.pedidos.reduce((s,p) => s+_totalReal(p), 0);
     const pendGrupo  = g.pedidos.filter(p => p.estado === 'pendiente').length;
 
     const pedidosHTML = g.pedidos.map(p => {
       const entregado = p.estado === 'entregado';
       const cancelado = p.estado === 'cancelado';
       const bloqueado = entregado || cancelado;
+      const _diffFraude = entregado && p.totalReal != null && (p.totalReal - (p.total||0)) > 0.05;
       return `
       <div style="border:1px solid var(--gray-200);border-radius:8px;padding:.75rem;margin-bottom:.5rem;border-left:3px solid var(--${borderColor[p.estado]||'gray-300'})">
         <div class="flex-between" style="margin-bottom:.35rem;flex-wrap:wrap;gap:.35rem">
@@ -130,7 +137,10 @@ function renderPedidosOnline() {
             ${p.totalSospechoso ? `<span class="badge badge-red" title="El total enviado está muy por debajo del precio de catálogo (referencia: ${sol(p.totalCatalogoReferencia||0)}). Revisa los items antes de confirmar.">⚠️ Total a revisar</span>` : ''}
             ${p.pedidosRecientesSospechoso ? `<span class="badge badge-red" title="${p.pedidosRecientesCantidad||0} pedidos de este mismo teléfono llegaron en pocos minutos — poco común en un cliente real. Revisa antes de confirmar.">⚠️ Varios pedidos seguidos</span>` : ''}
           </div>
-          <strong style="color:var(--primary)">${sol(p.total)}</strong>
+          <span>
+            <strong style="color:var(--primary)">${sol(_totalReal(p))}</strong>
+            ${_diffFraude ? `<span style="font-size:.72rem;color:var(--danger);text-decoration:line-through;margin-left:.3rem" title="Total declarado originalmente por el cliente al hacer el pedido">${sol(p.total)}</span>` : ''}
+          </span>
         </div>
         <div style="font-size:.8rem;color:var(--gray-700);margin-bottom:.4rem;line-height:1.5">
           ${(p.items||[]).filter(i=>i.cant>0&&!i.eliminado).map(i=>`${escapeHtml(i.nombre)} x${i.cant} — ${sol(subtotalItemCarrito(i))}`).join(' &nbsp;·&nbsp; ')}
@@ -138,7 +148,7 @@ function renderPedidosOnline() {
         <div class="flex-between" style="flex-wrap:wrap;gap:.4rem">
           <span style="font-size:.78rem;color:var(--gray-500)">
             ${p.entrega==='delivery'?'🚚 Delivery':'🏪 Recojo'} &nbsp;·&nbsp; 💳 ${p.metodo||'-'}
-            ${p.descuento>0?`&nbsp;·&nbsp;<span style="color:var(--accent)">-${sol(p.descuento)} desc.</span>`:''}
+            ${_descReal(p)>0?`&nbsp;·&nbsp;<span style="color:var(--accent)">-${sol(_descReal(p))} desc.</span>`:''}
           </span>
           <div style="display:flex;gap:.35rem;align-items:center">
             ${!bloqueado ? `<button class="btn btn-outline btn-xs" style="color:var(--primary);border-color:var(--primary)" onclick="editarPedidoOnline('${p.id}')">✏️ Editar</button>` : ''}
@@ -466,6 +476,44 @@ function _dialogoPagoOnline(nombre, callback) {
   };
 }
 
+// ── Recalculo del total REAL de un pedido — nunca confía en items[].precio ni
+// items[].subtotalFinal del pedido público (bloque 7.6 / hallazgo 3 de la auditoría,
+// 20/08/2026). pedidos_online permite create público sin login, validado solo por
+// pedidoValido() en las reglas de Firestore — que NO valida precios ni el contenido de
+// items[], solo su forma. Cualquiera hablando directo con el SDK desde la consola del
+// navegador (sin necesitar conocimiento técnico avanzado) podría fabricar esos campos a mano.
+// Esta función reconstruye el total real a partir de: (1) el precio de catálogo real de cada
+// producto, vía "buscarProducto" (que el caller decide de dónde lee — ver los 2 usos abajo,
+// uno de prechequeo con DB.productos, otro autoritativo con datos recién leídos en la
+// transacción), y (2) las promociones vigentes (DB.promociones, sincronizadas en vivo en la
+// sesión del staff — nunca controladas por el cliente público). Reusa calcComboDescuento(),
+// calcDescuentoCantidad() y calcRecargoPorLimitePromo() TAL CUAL (misma lógica ya usada y
+// probada en POS y en la tienda pública, exactamente la misma fórmula de
+// _tndCalcularTotal()/procesarVenta()) — nunca se reimplementa esa matemática a mano, para no
+// arriesgar una divergencia sutil entre esta función y el resto del sistema. Lo único que se
+// hace antes de llamarlas es reemplazar item.precio por el precio real y anular
+// item.subtotalFinal — así, aunque calcRecargoPorLimitePromo() internamente lea item.precio
+// para un caso puntual, nunca opera sobre un valor que vino del cliente.
+function _recalcularTotalRealPedido(items, buscarProducto) {
+  const promoActivas = (DB.promociones || []).filter(pr => pr.activa && pr.hasta >= today() && _promoAplicaSede(pr, 'principal'));
+  const itemsPrecioReal = (items || []).map(item => {
+    const prodReal = buscarProducto(item.prodId);
+    let precioReal = prodReal ? (prodReal.precio || 0) : (item.precio || 0); // producto ya no existe: caso ya manejado aparte (confirmarEntregaPedido lanza error antes de llegar acá), valor de respaldo inofensivo
+    if (prodReal && !prodReal.esCombo) {
+      const promoDelProducto = promoActivas.find(pr => !pr.packProdId && pr.prod1 == item.prodId && !pr.prod2);
+      const esPromoCantidad = promoDelProducto && (promoDelProducto.tipo === '2x1' || promoDelProducto.tipo === '3x2');
+      if (promoDelProducto && !esPromoCantidad && promoDelProducto.precioPromo != null) precioReal = promoDelProducto.precioPromo;
+    }
+    return { ...item, precio: precioReal, subtotalFinal: null };
+  });
+  const subtotal = itemsPrecioReal.reduce((s, i) => s + subtotalItemCarrito(i), 0);
+  const combo = calcComboDescuento(itemsPrecioReal, 'principal');
+  const cantidad = calcDescuentoCantidad(itemsPrecioReal, 'principal');
+  const recargo = calcRecargoPorLimitePromo(itemsPrecioReal, 'principal');
+  const total = Math.max(0, Math.round((subtotal - combo.total - cantidad.total + recargo.total) * 100) / 100);
+  return { total, subtotal, comboDesc: combo.total, cantidadDesc: cantidad.total, recargoDesc: recargo.total, itemsPrecioReal };
+}
+
 // ── Confirmar entrega con validación de stock ─────────────────────────────────
 // Reimprimir/reenviar el ticket de un pedido ya entregado — el cliente puede pedirlo de
 // nuevo dias despues. Busca la venta real ya guardada (confirmarEntregaPedido() la crea con
@@ -510,6 +558,19 @@ function confirmarEntregaPedido(id) {
       confirmMsg += '\n¿Continuar de todas formas?';
     }
 if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
+
+    // ── Prechequeo de fraude (informativo, con cache local del staff) ─────────
+    // Ver _recalcularTotalRealPedido() arriba para el detalle completo. Esto es SOLO una
+    // pre-alerta usando DB.productos/DB.promociones (el cache local del staff, sincronizado en
+    // vivo, nunca controlado por el cliente publico) — la fuente de verdad real es el
+    // recalculo AUTORITATIVO dentro de la transaccion mas abajo, con datos recien leidos del
+    // servidor. Este prechequeo nunca bloquea: solo avisa ANTES de abrir la transaccion:
+    // el monto que finalmente se guarda es SIEMPRE el real, decida lo que decida el staff aca.
+    const _preCheck = _recalcularTotalRealPedido((p.items||[]).filter(i=>i.cant>0&&!i.eliminado), (prodId) => DB.productos.find(x => x.id === prodId));
+    if (_preCheck.total - (p.total||0) > 0.05) {
+      const _msgFraude = `⚠️ POSIBLE PEDIDO FRAUDULENTO ⚠️\n\nEl total declarado por el cliente (${sol(p.total)}) no coincide con el total real según catálogo y promociones vigentes (${sol(_preCheck.total)}).\n\nEsto puede pasar porque el cliente manipuló el pedido (por ejemplo desde la consola del navegador), o porque los precios/promociones cambiaron desde que se hizo el pedido.\n\nDe cualquier forma, el sistema va a registrar y cobrar SIEMPRE el monto REAL (${sol(_preCheck.total)}), sin importar qué elijas aquí.\n\n¿Revisaste el pedido y quieres continuar de todas formas?`;
+      if (!confirm(_msgFraude)) { _fbEscribiendo = false; return; }
+    }
 
     // ── Dialog async: cobrado o fiado ────────────────────────────────────────
     _dialogoPagoOnline(p.clienteNombre, async function(tipoPago) {
@@ -556,6 +617,20 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
             if (!prodSnap.exists()) throw new Error('"' + (item.nombre||item.prodId) + '" ya no existe en el catálogo. No se aplicó nada.');
             _prodSnaps.push({ item, ref: prodRef, data: prodSnap.data() });
           }
+          // Recalculo AUTORITATIVO del total real — usa _prodSnaps recien leidos del servidor
+          // DENTRO de esta misma transaccion (nunca datos que vinieron del cliente publico).
+          // Ver _recalcularTotalRealPedido() arriba. De aca en adelante, todo lo que se guarda
+          // (venta/fiado, cliente, caja, movimientos, puntos) usa estos valores — nunca
+          // pServidor.total ni pServidor.descuento, que son datos declarados por el cliente.
+          const _real = _recalcularTotalRealPedido(itemsFinales, (prodId) => {
+            const pd = _prodSnaps.find(x => x.item.prodId === prodId);
+            return pd ? pd.data : null;
+          });
+          const _totalRealFinal = _real.total;
+          const _subtotalReal = _real.subtotal;
+          const _descuentoReal = (_real.comboDesc||0) + (_real.cantidadDesc||0);
+          const _itemsPrecioReal = _real.itemsPrecioReal; // mismo orden/longitud que itemsFinales, precio saneado, subtotalFinal anulado
+
           const _compSnaps = new Map(); // prodId componente -> {ref, data}
           for (const { data: prodData } of _prodSnaps) {
             if (prodData.esCombo && prodData.componentes) {
@@ -601,20 +676,21 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
 
           let _ventaOnline = null, _fiadoOnline = null, _puntosGanadosPedido = 0;
           if (_esPagado) {
-            const _itemsConCosto = itemsFinales.map(i => {
+            const _itemsConCosto = _itemsPrecioReal.map(i => {
               const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
               // CRITICO: nombre reemplazado por el real del catalogo, nunca el que el cliente
               // envio — la regla de Firestore no valida items[].nombre por contenido, asi que
               // sin esto cualquiera hablando directo con Firestore podria inyectar HTML/JS que
-              // se ejecutaria en el navegador del staff al ver esta venta despues.
+              // se ejecutaria en el navegador del staff al ver esta venta despues. precio ya
+              // saneado (_itemsPrecioReal), subtotalFinal ya anulado — ver _recalcularTotalRealPedido().
               return { ...i, nombre: pd ? pd.data.nombre : i.nombre, costoUnitario: pd ? pd.data.costo : 0 };
             });
             _ventaOnline = {
               id: pServidor.id, fecha: pServidor.fecha, hora: pServidor.hora,
               cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
               clienteNombre: pServidor.clienteNombre, items: _itemsConCosto,
-              subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
-              descuento: pServidor.descuento || 0, total: pServidor.total, metodo: pServidor.metodo,
+              subtotal: _subtotalReal,
+              descuento: _descuentoReal, total: _totalRealFinal, metodo: pServidor.metodo,
               origen: 'online', estado: 'completado',
               estadoStock: 'descontado', notaAdmin: pServidor.notaAdmin || '',
               sedeId: _sedeDespacho,
@@ -625,32 +701,33 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
               _puntosGanadosPedido = calcularPuntosGanados(_itemsConCosto);
               tx.set(docM(dbModular, 'clientes', String(cli.id)),
                 _esClienteNuevo
-                  ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: pServidor.total, deuda: 0, puntos: _puntosGanadosPedido }
-                  : { compras: incrementM(1), total: incrementM(pServidor.total), puntos: incrementM(_puntosGanadosPedido) },
+                  ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: _totalRealFinal, deuda: 0, puntos: _puntosGanadosPedido }
+                  : { compras: incrementM(1), total: incrementM(_totalRealFinal), puntos: incrementM(_puntosGanadosPedido) },
                 { merge: true });
             }
           } else {
             if (cli) {
               _fiadoOnline = {
                 id: pServidor.id, clienteId: cli.id,
-                items: itemsFinales.map(i => {
+                items: _itemsPrecioReal.map(i => {
                   const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
-                  // Mismo motivo que _itemsConCosto arriba — nombre real del catalogo, nunca lo que envio el cliente.
+                  // Mismo motivo que _itemsConCosto arriba — nombre real del catalogo, nunca lo
+                  // que envio el cliente; precio ya saneado (_itemsPrecioReal).
                   return { ...i, nombre: pd ? pd.data.nombre : i.nombre, costoUnitario: pd ? pd.data.costo : 0 };
                 }),
-                total: pServidor.total, pagado: 0, fecha: pServidor.fecha,
-                descuentoCombo: pServidor.descuento || 0, descuentoManual: 0,
+                total: _totalRealFinal, pagado: 0, fecha: pServidor.fecha,
+                descuentoCombo: _descuentoReal, descuentoManual: 0,
                 origenOnline: true, sedeId: _sedeDespacho, estado: 'pendiente'
               };
               tx.set(docM(dbModular, 'fiados', String(_fiadoOnline.id)), _fiadoOnline);
-              _puntosGanadosPedido = calcularPuntosGanados(itemsFinales);
+              _puntosGanadosPedido = calcularPuntosGanados(_itemsPrecioReal);
               tx.set(docM(dbModular, 'clientes', String(cli.id)),
                 _esClienteNuevo
-                  ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: pServidor.total, deuda: pServidor.total, puntos: _puntosGanadosPedido }
-                  : { compras: incrementM(1), total: incrementM(pServidor.total), deuda: incrementM(pServidor.total), puntos: incrementM(_puntosGanadosPedido) },
+                  ? { id: cli.id, nombre: cli.nombre, alias: cli.alias, tel: cli.tel, dir: cli.dir||'', cumple: '', compras: 1, total: _totalRealFinal, deuda: _totalRealFinal, puntos: _puntosGanadosPedido }
+                  : { compras: incrementM(1), total: incrementM(_totalRealFinal), deuda: incrementM(_totalRealFinal), puntos: incrementM(_puntosGanadosPedido) },
                 { merge: true });
             }
-            const _itemsFiadoConNombreReal = itemsFinales.map(i => {
+            const _itemsFiadoConNombreReal = _itemsPrecioReal.map(i => {
               const pd = _prodSnaps.find(x => x.item.prodId === i.prodId);
               return { ...i, nombre: pd ? pd.data.nombre : i.nombre };
             });
@@ -658,8 +735,8 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
               id: pServidor.id, fecha: pServidor.fecha, hora: pServidor.hora,
               cajero: currentUser||'Online', clienteId: cli ? cli.id : null,
               clienteNombre: pServidor.clienteNombre, items: _itemsFiadoConNombreReal,
-              subtotal: itemsFinales.reduce((s,i)=>s+subtotalItemCarrito(i),0),
-              descuento: pServidor.descuento || 0, total: pServidor.total, metodo: pServidor.metodo,
+              subtotal: _subtotalReal,
+              descuento: _descuentoReal, total: _totalRealFinal, metodo: pServidor.metodo,
               origen: 'online', estado: 'fiado',
               estadoStock: 'descontado', notaAdmin: pServidor.notaAdmin || '',
               sedeId: _sedeDespacho,
@@ -673,22 +750,29 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
           let _movData;
           if (_esPagado) {
             tx.set(docM(dbModular, 'caja', _sedeDespacho), {
-              ingresos: incrementM(pServidor.total),
-              ...(pServidor.metodo === 'Efectivo' ? { ingresosEfectivo: incrementM(pServidor.total) } : {})
+              ingresos: incrementM(_totalRealFinal),
+              ...(pServidor.metodo === 'Efectivo' ? { ingresosEfectivo: incrementM(_totalRealFinal) } : {})
             }, { merge: true });
-            _movData = { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${pServidor.clienteNombre||'cliente'}`, monto: pServidor.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
+            _movData = { id:_movId, tipo:'ingreso', desc:`Pedido online cobrado — ${pServidor.clienteNombre||'cliente'}`, monto: _totalRealFinal, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
             tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
           } else {
-            _movData = { id:_movId, tipo:'fiado', desc:`Fiado online — ${pServidor.clienteNombre||'cliente'}`, monto: pServidor.total, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
+            _movData = { id:_movId, tipo:'fiado', desc:`Fiado online — ${pServidor.clienteNombre||'cliente'}`, monto: _totalRealFinal, hora: nowTime(), fecha: today(), sedeId: _sedeDespacho };
             tx.set(docM(dbModular, 'movimientos', String(_movId)), _movData);
           }
 
+          // totalReal/descuentoReal quedan en el propio pedido_online como registro — el campo
+          // "total" original (lo que declaró el cliente) se conserva tal cual, sin tocar, como
+          // evidencia de lo que efectivamente se envió (útil si hay que revisar un intento de
+          // fraude despues). renderPedidosOnline() prioriza totalReal para mostrar en el
+          // historial una vez entregado, para no dejar en pantalla un monto que ya no es el que
+          // se cobró/registró de verdad.
           tx.set(pedidoRef, {
             estado: 'entregado', cajero: currentUser || 'admin',
-            fechaEntrega: today(), horaEntrega: nowTime()
+            fechaEntrega: today(), horaEntrega: nowTime(),
+            totalReal: _totalRealFinal, descuentoReal: _descuentoReal
           }, { merge: true });
 
-          return { pServidor, itemsFinales, _deltasStock, _ventaOnline, _fiadoOnline, _puntosGanadosPedido, _movData, cli, _esClienteNuevo };
+          return { pServidor, itemsFinales, _deltasStock, _ventaOnline, _fiadoOnline, _puntosGanadosPedido, _movData, cli, _esClienteNuevo, _totalRealFinal, _descuentoReal };
         });
       } catch (e) {
         _fbEscribiendo = false;
@@ -710,26 +794,28 @@ if (!confirm(confirmMsg)) { _fbEscribiendo = false; return; }
       _clienteProxySkipSync = true;
       try {
         if (_esPagado) {
-          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+_r.pServidor.total; cli.puntos = (cli.puntos||0) + _r._puntosGanadosPedido; }
+          if (cli) { cli.compras = (cli.compras||0)+1; cli.total = (cli.total||0)+_r._totalRealFinal; cli.puntos = (cli.puntos||0) + _r._puntosGanadosPedido; }
         } else {
           if (_r._fiadoOnline) {
             if (!DB.fiados) DB.fiados = [];
             DB.fiados.push(_r._fiadoOnline);
           }
           if (cli) {
-            _aplicarDeudaLocal(cli, _r.pServidor.total);
+            _aplicarDeudaLocal(cli, _r._totalRealFinal);
             cli.compras = (cli.compras||0) + 1;
-            cli.total   = (cli.total||0)   + _r.pServidor.total;
+            cli.total   = (cli.total||0)   + _r._totalRealFinal;
             cli.puntos  = (cli.puntos||0)  + _r._puntosGanadosPedido;
           }
         }
       } finally { _clienteProxySkipSync = false; }
       p.estado = 'entregado';
+      p.totalReal = _r._totalRealFinal;
+      p.descuentoReal = _r._descuentoReal;
       if (_esPagado) {
         // Caja es un objeto plano — esta asignacion solo actualiza la copia local.
-        DB.caja.ingresos += _r.pServidor.total;
-        if (_r.pServidor.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r.pServidor.total;
-      
+        DB.caja.ingresos += _r._totalRealFinal;
+        if (_r.pServidor.metodo === 'Efectivo') DB.caja.ingresosEfectivo = (DB.caja.ingresosEfectivo||0) + _r._totalRealFinal;
+
       }
       if (!DB.movimientos) DB.movimientos = [];
       DB.movimientos.push(_r._movData);
