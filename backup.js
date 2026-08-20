@@ -129,6 +129,7 @@ async function _ejecutarBackup() {
     console.log('[Backup] Guardado completo:', key);
     DB.config._ultimoBackupFecha = today();
     fbGuardar();
+    fbGuardarConfig('_ultimoBackupFecha');
     _limpiarBackupsViejos();
   } else {
     console.warn('[Backup] Fallos detallados:', _fallos);
