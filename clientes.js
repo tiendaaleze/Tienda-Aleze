@@ -81,7 +81,13 @@ function guardarCliente() {
   const data = { nombre, alias: document.getElementById('cli-alias').value.trim(), tel, dir: document.getElementById('cli-dir').value, cumple: document.getElementById('cli-cumple').value };
   if (editingCliId) {
     const c = DB.clientes.find(x => x.id === editingCliId);
-    Object.assign(c, data);
+    // CRITICO: Object.assign asigna campo por campo, y cada asignacion sobre el Proxy disparaba
+    // su propia escritura a Firestore (5 escrituras, una por campo) ADEMAS de la escritura
+    // combinada explicita de _guardarClienteDirecto de abajo — 6 escrituras reales por cada
+    // edicion de cliente. Mismo guard que ya usa el listener onSnapshot de clientes en
+    // firebase-sync.js para este mismo caso (Object.assign sobre el Proxy).
+    _clienteProxySkipSync = true;
+    try { Object.assign(c, data); } finally { _clienteProxySkipSync = false; }
     _guardarClienteDirecto(c.id, data, false);
   } else {
     // Buscar por telefono ANTES de crear — evita duplicar el mismo cliente por error.
@@ -343,8 +349,13 @@ function agregarNotaFiado() {
   const montoRaw = prompt('Monto de referencia (S/) — opcional, solo para recordar cuánto cobrar, no se suma a nada:');
   const monto = parseFloat(montoRaw);
  
-  if (!cli.notasFiado) cli.notasFiado = [];
-  cli.notasFiado.push({ id: getId(), desc: desc.trim(), monto: (!isNaN(monto) && monto > 0) ? Math.round(monto*100)/100 : null, fecha: today() });
+  // CRITICO: "cli.notasFiado = []" (si no existia) dispara el Proxy con un array vacio, una
+  // escritura de mas antes de la real (con la nota ya adentro) que sigue en la linea de abajo.
+  _clienteProxySkipSync = true;
+  try {
+    if (!cli.notasFiado) cli.notasFiado = [];
+    cli.notasFiado.push({ id: getId(), desc: desc.trim(), monto: (!isNaN(monto) && monto > 0) ? Math.round(monto*100)/100 : null, fecha: today() });
+  } finally { _clienteProxySkipSync = false; }
   fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
   alert(`✅ Nota guardada para ${cli.alias||cli.nombre}. No afecta su deuda ni su caja — es solo para recordarlo.`);
@@ -368,7 +379,10 @@ function eliminarNotaFiado(clienteId, notaId) {
   const cli = DB.clientes.find(c => c.id === clienteId);
   if (!cli || !cli.notasFiado) return;
   if (!confirm('¿Eliminar esta nota?')) return;
-  cli.notasFiado = cli.notasFiado.filter(n => n.id !== notaId);
+  // CRITICO: reasignar cli.notasFiado dispara el Proxy con el mismo valor que la linea de abajo
+  // ya envia explicito — escritura duplicada e identica a Firestore.
+  _clienteProxySkipSync = true;
+  try { cli.notasFiado = cli.notasFiado.filter(n => n.id !== notaId); } finally { _clienteProxySkipSync = false; }
   fbSincronizarClienteCampo(cli.id, 'notasFiado', cli.notasFiado);
   renderFiados();
 }
