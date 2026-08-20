@@ -72,6 +72,7 @@ function guardarMontoAperturaDefault() {
   const m = parseFloat(document.getElementById('caja-monto-inicial').value) || 0;
   DB.config.montoAperturaAuto = m;
   fbGuardar();
+  fbGuardarConfig('montoAperturaAuto'); // mismo campo que guardarConfig() en configuracion.js — misma clave
   const hint = document.getElementById('caja-auto-hint');
   if (hint) { hint.textContent = `✅ Monto default guardado: S/ ${m.toFixed(2)}`; hint.style.color='var(--accent)'; }
   setTimeout(() => { try { renderConfiguracion(); } catch(e){} }, 300);
