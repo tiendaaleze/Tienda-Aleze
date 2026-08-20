@@ -874,6 +874,7 @@ function ignorarAlerta(key) {
   if (!DB.config.alertasIgnoradas) DB.config.alertasIgnoradas = {};
   DB.config.alertasIgnoradas[key] = Date.now();
   fbGuardar();
+  fbGuardarConfig('alertasIgnoradas');
   // Sin fbGuardarProductos() acá a propósito: 'alertasIgnoradas' es dato interno de staff,
   // nunca formó parte del subconjunto público que ese documento manda a la tienda — la llamada
   // de antes solo reescribía categorias+config completos sin necesidad real, en cada alerta
@@ -898,13 +899,14 @@ function limpiarAlertasIgnoradasSiCorresponde() {
   DB.config._ultimaLimpiezaAlertas = hoy;
   const ignoradas = DB.config.alertasIgnoradas || {};
   const keysIgnoradas = Object.keys(ignoradas);
-  if (keysIgnoradas.length === 0) { fbGuardar(); return; }
+  if (keysIgnoradas.length === 0) { fbGuardar(); fbGuardarConfig('_ultimaLimpiezaAlertas'); return; }
   const keysVigentes = new Set(getAlertas(true).map(a => a.key));
   let huboLimpieza = false;
   keysIgnoradas.forEach(key => {
     if (!keysVigentes.has(key)) { delete ignoradas[key]; huboLimpieza = true; }
   });
   fbGuardar();
+  fbGuardarConfig(huboLimpieza ? ['_ultimaLimpiezaAlertas', 'alertasIgnoradas'] : '_ultimaLimpiezaAlertas');
   if (huboLimpieza) updateAlertCount();
 }
 
