@@ -360,6 +360,13 @@ function _extBuildPayload() {
 }
 function fbGuardarExt(campo) {
   if (!dbModular) return; // [SDK modular]
+  // Mismo guard que fbGuardarProductos()/fbGuardarConfig() — hoy ningun caller de esta funcion
+  // corre sin sesion de staff (todos estan en caja.js/clientes.js/configuracion.js, detras de
+  // login), asi que esto no corrige ningun bug activo. Se agrega igual como blindaje
+  // preventivo, para que quede protegida ante cualquier caller nuevo que en el futuro la
+  // llame desde un contexto sin autenticar — exactamente el error que se acaba de corregir en
+  // fbGuardarConfig().
+  if (!authModular || !authModular.currentUser) return;
   if (campo) _extDirty.add(campo);
   clearTimeout(window._fbExtTimer);
   window._fbExtTimer = setTimeout(() => {
@@ -391,26 +398,65 @@ function fbGuardarExt(campo) {
 // ventas/clientes/etc — misma duplicidad que ya se corrigió para esos 6 campos. config es un
 // objeto único (no una lista de registros), así que le alcanza con su propio documento, no
 // necesita una colección con un documento por registro como ventas o clientes.
-// CRITICO: sin esto, fbGuardarConfig() escribia el documento COMPLETO (sin merge) cada vez
-// que se llamaba fbGuardar() desde CUALQUIER funcion — incluidas confirmarPagoFiado() y
-// ejecutarPagoGlobal(), que nunca tocan config para nada. Confirmado con evidencia real de
-// consola: un pago de fiado disparaba una escritura de "config/config" innecesaria, justo
-// en el momento en que se reporto perdida de sincronizacion entre sesiones abiertas — 2
-// sesiones escribiendo el mismo documento compartido sin necesidad real, compitiendo entre
-// si por la ultima escritura, es exactamente el tipo de condicion de carrera que puede dejar
-// una sesion con datos viejos. Ahora se compara contra el ultimo estado ya guardado antes de
-// escribir — si config no cambio de verdad, no se dispara ninguna escritura.
-let _ultimoConfigGuardadoJSON = null;
-function fbGuardarConfig() {
+// CRITICO: antes escribia el documento COMPLETO (sin merge) cada vez que se llamaba
+// fbGuardar() desde CUALQUIER funcion — incluidas confirmarPagoFiado() y ejecutarPagoGlobal(),
+// que nunca tocan config para nada. Confirmado con evidencia real de consola: un pago de fiado
+// disparaba una escritura de "config/config" innecesaria, justo en el momento en que se
+// reporto perdida de sincronizacion entre sesiones abiertas — 2 sesiones escribiendo el mismo
+// documento compartido sin necesidad real, compitiendo entre si por la ultima escritura. Una
+// ronda anterior mitigo esto comparando contra el ultimo JSON guardado (evitaba la escritura
+// INNECESARIA), pero no evitaba que una escritura SI necesaria (ej. guardar el nombre de la
+// tienda) pisara por completo campos que otra sesion hubiera cambiado mientras tanto (ej. otro
+// admin agregando un usuario de staff) — aleze/config, a diferencia de db_productos, ni
+// siquiera tiene listener en tiempo real (solo se lee 1 vez al hacer login), asi que la
+// ventana de "copia vieja en memoria" puede durar toda una sesion, no solo el debounce.
+// Ahora fbGuardarConfig(campo) — campo puede ser un string o un arreglo de strings — solo
+// escribe el/los campo(s) que realmente cambiaron, via updateDocM (actualizacion parcial real
+// de Firestore). El resto del documento, sin importar que tan vieja este la copia en memoria
+// de esta sesion, nunca se toca.
+let _cfgDirty = new Set();
+function _cfgBuildPayload() {
+  const payload = {};
+  _cfgDirty.forEach(campo => {
+    payload[campo] = (DB.config && DB.config[campo] !== undefined) ? JSON.parse(JSON.stringify(DB.config[campo])) : null;
+  });
+  return payload;
+}
+function fbGuardarConfig(campo) {
   if (!dbModular) return; // [SDK modular]
+  // CRITICO: fbPatchDB() (que llama a esta funcion con 'usuariosStaff' o 'montoAperturaAuto'
+  // en sus ramas de default/respaldo) corre en 2 contextos SIN sesion de staff autenticada:
+  // la tienda publica (visitante anonimo, core.js) y la pantalla de login misma, antes de
+  // pulsar "Ingresar" (para poblar el selector de usuario). Sin este guard — el mismo que ya
+  // tiene fbGuardarProductos() — cualquiera de los 2 dispara un intento de escritura real a
+  // aleze/config sin usuario logueado, que Firestore rechaza (correctamente) con
+  // permission-denied, mostrando una alerta de error tanto a un cliente navegando la tienda
+  // como a un cajero que todavia ni empezo a loguearse. Confirmado con evidencia real de
+  // consola en Shop Aleze.
+  if (!authModular || !authModular.currentUser) return;
+  if (campo) { (Array.isArray(campo) ? campo : [campo]).forEach(c => _cfgDirty.add(c)); }
   clearTimeout(window._fbConfigTimer);
   window._fbConfigTimer = setTimeout(() => {
-    const _configActualJSON = JSON.stringify(DB.config || {});
-    if (_configActualJSON === _ultimoConfigGuardadoJSON) return; // sin cambios reales, no escribir nada
+    if (_cfgDirty.size === 0) return;
+    const payload = _cfgBuildPayload();
+    _cfgDirty.clear();
+    if (Object.keys(payload).length === 0) return;
     _sincIniciar('config', 'config');
-    setDocM(docM(dbModular, 'aleze', 'config'), JSON.parse(_configActualJSON))
-      .then(() => { _ultimoConfigGuardadoJSON = _configActualJSON; _sincTerminar('config', 'config'); })
-      .catch(e => _sincError('config', 'config', e, 'la configuración del negocio'));
+    const _onOk = () => _sincTerminar('config', 'config');
+    const _onFail = (e) => _sincError('config', 'config', e, 'la configuración del negocio');
+    updateDocM(docM(dbModular, 'aleze', 'config'), payload)
+      .then(_onOk)
+      .catch(e => {
+        // Mismo respaldo ya usado en fbGuardarProductos()/fbGuardarExt(): updateDoc exige que
+        // el documento ya exista — si por algun motivo no existe todavia, setDoc con merge:true
+        // lo crea sin arriesgar pisar campos que otra sesion haya guardado justo en el instante
+        // entre el error y este reintento.
+        if (e.code === 'not-found') {
+          setDocM(docM(dbModular, 'aleze', 'config'), payload, { merge: true }).then(_onOk).catch(_onFail);
+          return;
+        }
+        _onFail(e);
+      });
   }, 1200);
 }
  
@@ -425,9 +471,17 @@ let _fbWritingProd = false; // Previene escrituras paralelas a aleze/db_producto
 // (payload.cajas) era un espejo que nadie leia desde que caja tiene su propio listener
 // dedicado. Ya no hay ninguna razon para seguir escribiendo este documento — se elimina la
 // escritura por completo. Esta funcion sigue existiendo (la llaman decenas de funciones en
-// todo el archivo) para no tener que tocar cada una de ellas — ahora solo hace la poda de
-// memoria local (que sigue siendo util, independiente de si se persiste o no) y dispara el
-// guardado de configuración, que sí sigue siendo necesario.
+// todo el archivo, la gran mayoria sin ninguna relacion con config — ventas, movimientos de
+// caja, proveedores) para no tener que tocar cada una de ellas — ahora solo hace la poda de
+// memoria local, que sigue siendo util independiente de si se persiste o no.
+// CRITICO: antes terminaba con un fbGuardarConfig() a ciegas, sin decir que campo cambio —
+// funcionaba porque esa version comparaba el documento entero contra el ultimo guardado. Con
+// fbGuardarConfig(campo) exigiendo el campo que realmente cambio, ese llamado a ciegas ya no
+// tiene sentido (llamarlo sin campo solo reiniciaria el debounce sin marcar nada nuevo,
+// lo cual con dueños tan frecuentes de fbGuardar() como una venta podia retrasar indefinidamente
+// un guardado de config real que si estuviera pendiente). Cada funcion que de verdad cambia un
+// campo de DB.config ahora llama fbGuardarConfig('elCampo') de forma explicita, en el mismo
+// lugar donde lo cambia — mismo patron ya usado en fbGuardarProductos(campo).
 function fbGuardar() {
   // Poda de memoria local — el historial completo de cada uno ya vive en su propia colección
   // (ventas/{id}, movimientos/{id}, fiados/{id}); esto solo evita que los arrays en memoria
@@ -447,7 +501,6 @@ function fbGuardar() {
     const _limitePodaFiadosStr = _limitePodaFiados.toISOString().split('T')[0];
     DB.fiados = DB.fiados.filter(f => fiadoPendiente(f) || f.fecha >= _limitePodaFiadosStr);
   }
-  fbGuardarConfig();
 }
  
 // ── Guardar solo productos y categorias en documento separado ──
@@ -1060,7 +1113,11 @@ const _fbPatchColsProd = ['productos','categorias'];
 function fbPatchDB() {
   // Ensure new fields exist for users upgrading from older versions
   if (!DB.config) DB.config = {};
-  if (DB.config.montoAperturaAuto === undefined) DB.config.montoAperturaAuto = 0;
+  // CRITICO: antes este default silencioso solo vivia en memoria hasta que ALGUNA otra accion
+  // disparara un fbGuardar()-a-ciegas que reescribiera el documento completo — con
+  // fbGuardarConfig() exigiendo el campo, sin este llamado explicito el 0 de arranque se
+  // quedaria solo en memoria y nunca llegaria a Firestore.
+  if (DB.config.montoAperturaAuto === undefined) { DB.config.montoAperturaAuto = 0; fbGuardarConfig('montoAperturaAuto'); }
   // Migración/respaldo: de FIREBASE_USERS (fijo en código) a DB.config.usuariosStaff (editable
   // desde Configuración) — se dispara tambien si el array llega vacio desde el servidor por
   // cualquier motivo, no solo la primera vez, asi el login nunca queda sin nadie para elegir.
@@ -1069,6 +1126,9 @@ function fbPatchDB() {
     DB.config.usuariosStaff = Object.keys(FIREBASE_USERS).map(nombre => ({
       nombre, email: FIREBASE_USERS[nombre], rol: _rolesLegado[nombre] || 'cajero', sedeId: 'principal'
     }));
+    // Mismo motivo que el default de montoAperturaAuto de arriba — sin esto, este respaldo de
+    // emergencia se queda solo en memoria de esta sesion y nunca llega a Firestore.
+    try { fbGuardarConfig('usuariosStaff'); } catch(e) {}
   } else {
     // CRITICO: migracion real de los NOMBRES YA GUARDADOS en Firestore — el respaldo de arriba
     // (FIREBASE_USERS) ya tiene los nombres enmascarados nuevos, pero eso NO cambia lo que ya
@@ -1087,15 +1147,9 @@ function fbPatchDB() {
         _huboMigracion = true;
       }
     });
-    // Elimina activamente cualquier registro de "Aleze III"/Betty que ya estuviera guardado en
-    // Firestore desde antes — el negocio pasa a operar con una sola sede, esa cuenta no existe
-    // más. Sin esto, ya no se vuelve a crear, pero la que ya estaba guardada seguiria ahi.
-    const _cantAntesLimpieza = DB.config.usuariosStaff.length;
-    DB.config.usuariosStaff = DB.config.usuariosStaff.filter(u => u.nombre !== 'Aleze III' && u.email !== 'sccp.jlezama@gmail.com');
-    if (DB.config.usuariosStaff.length !== _cantAntesLimpieza) _huboMigracion = true;
     if (_huboMigracion) {
-      console.warn('[Migración] usuariosStaff actualizado (nombres/eliminación de sede 2) — guardando de vuelta.');
-      try { fbGuardarConfig(); } catch(e) {}
+      console.warn('[Migración] usuariosStaff actualizado (nombres) — guardando de vuelta.');
+      try { fbGuardarConfig('usuariosStaff'); } catch(e) {}
       try { fbGuardarProductos('config'); } catch(e) {}
     }
   }
