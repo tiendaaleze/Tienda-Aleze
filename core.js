@@ -59,7 +59,13 @@ function fbAjustarCliente(id, campo, delta) {
 // Actualiza la memoria local Y dispara la escritura atómica a Firestore.
 function ajustarDeudaCliente(cli, delta) {
   if (!cli || !delta) return;
-  cli.deuda = Math.max(0, Math.round(((cli.deuda||0) + delta) * 100) / 100);
+  // CRITICO: sin este guard, "cli.deuda = X" dispara el Proxy (que ya calcula el mismo delta y
+  // llama a fbAjustarCliente por su cuenta) Y la linea de abajo lo llama de nuevo — el delta se
+  // aplicaba 2 veces en Firestore via increment(), aunque localmente solo se viera 1 vez. Mismo
+  // patron de bug ya corregido en caja.
+  _clienteProxySkipSync = true;
+  try { cli.deuda = Math.max(0, Math.round(((cli.deuda||0) + delta) * 100) / 100); }
+  finally { _clienteProxySkipSync = false; }
   fbAjustarCliente(cli.id, 'deuda', delta);
 }
 // Version "solo memoria" de ajustarDeudaCliente — para cuando un LOTE atomico ya escribio el
