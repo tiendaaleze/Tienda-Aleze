@@ -3,6 +3,7 @@ function renderInventario() {
   try { initExcelPanel(); } catch(e) {}
   updateInvCatFilter();
   updateInvProvFilter();
+  updateInvMarcaFilter();
   renderInvTable();
 }
 
@@ -27,6 +28,21 @@ function updateInvProvFilter() {
   if (!sel) return;
   sel.innerHTML = '<option value="">Todos los proveedores</option>';
   (DB.proveedores || []).forEach(p => sel.innerHTML += `<option value="${p.id}">${p.nombre}</option>`);
+}
+
+// ── Filtro de marca en Inventario (pedido explícito del usuario) ──────────────────────────
+// No existe una colección/catálogo separado de marcas — `p.marca` es un string libre guardado
+// directo en cada producto (mismo campo que ya usa el filtro de marca de la tienda pública en
+// tienda-publica.js). Mismo patrón visual que updateInvCatFilter()/updateInvProvFilter():
+// reconstruye el <select> completo en cada render, a partir de las marcas realmente presentes
+// en el catálogo (no una lista fija) — así nunca queda una marca vieja sin productos, ni falta
+// una nueva recién agregada.
+function updateInvMarcaFilter() {
+  const sel = document.getElementById('inv-marca');
+  if (!sel) return;
+  const marcas = [...new Set(DB.productos.map(p => p.marca).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Todas las marcas</option>' +
+    marcas.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
 }
 
 // ── Proveedor(es) de un producto — un producto puede conseguirse de varios proveedores
@@ -108,10 +124,12 @@ function filterInventario() {
   const cat = document.getElementById('inv-cat').value;
   const estado = document.getElementById('inv-estado').value;
   const prov = document.getElementById('inv-prov')?.value || '';
+  const marca = document.getElementById('inv-marca')?.value || '';
   let prods = DB.productos;
 if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)));
   if (cat) prods = prods.filter(p => p.cat == cat);
   if (prov) prods = prods.filter(p => _provsDeProducto(p).some(id => id == prov));
+  if (marca) prods = prods.filter(p => p.marca === marca);
   if (estado === 'bajo') prods = prods.filter(p => stockEnSede(p) <= p.stockMin);
   if (estado === 'vence') prods = prods.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0);
   if (estado === 'ok') prods = prods.filter(p => stockEnSede(p) > p.stockMin && (!p.venc || diasHasta(p.venc) > 7));
