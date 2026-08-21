@@ -737,15 +737,13 @@ function _renderTienda() {
     <div id="tnd-cats-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
     <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-cats-riel',1)" aria-label="Categorías siguientes">›</button>
   </div>
-  <div class="tnd-cats" id="tnd-marcas" style="display:none;position:relative;margin-top:.4rem">
-    <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-marcas-riel',-1)" aria-label="Marcas anteriores">‹</button>
-    <div id="tnd-marcas-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
-    <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-marcas-riel',1)" aria-label="Marcas siguientes">›</button>
-  </div>
-  <div class="tnd-cats" id="tnd-precios" style="display:none;position:relative;margin-top:.4rem">
-    <button type="button" class="tnd-arrow tnd-arrow-left" onclick="_scrollRielCats('tnd-precios-riel',-1)" aria-label="Rangos anteriores">‹</button>
-    <div id="tnd-precios-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
-    <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-precios-riel',1)" aria-label="Rangos siguientes">›</button>
+  <div id="tnd-filtros-fila" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.4rem;margin-bottom:1.25rem">
+    <div id="tnd-marcas" style="display:none">
+      <select id="tnd-marca-select" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndSetMarca(this.value)"></select>
+    </div>
+    <div id="tnd-precios" style="display:none">
+      <select id="tnd-precio-select" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="_tndOnChangePrecioSelect(this.value)"></select>
+    </div>
   </div>
   <div id="tnd-orden-wrap" style="display:none;margin-bottom:.75rem">
     <select id="tnd-orden" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndFiltrar()">
@@ -1104,14 +1102,15 @@ function _tndRedondearPrecioBonito(n) {
 // en el contexto actual. Con menos de 2 marcas distintas no aporta nada elegir, se oculta.
 function _tndRenderRielMarcas(prodsBase) {
   const wrap = document.getElementById('tnd-marcas');
-  const riel = document.getElementById('tnd-marcas-riel');
-  if (!wrap || !riel) return;
+  const sel = document.getElementById('tnd-marca-select');
+  if (!wrap || !sel) return;
   const marcas = [...new Set(prodsBase.map(p => p.marca).filter(Boolean))].sort();
   if (_tndMarcaActiva && !marcas.includes(_tndMarcaActiva)) _tndMarcaActiva = ''; // ya no aplica a este contexto
   if (marcas.length < 2) { wrap.style.display = 'none'; return; }
-  wrap.style.display = 'flex';
-  riel.innerHTML = `<span class="tnd-cat-tag ${!_tndMarcaActiva?'active':''}" onclick="tndSetMarca('')">Todas las marcas</span>` +
-    marcas.map(m => `<span class="tnd-cat-tag ${_tndMarcaActiva===m?'active':''}" onclick="tndSetMarca('${m.replace(/'/g,"\\'")}')">${m}</span>`).join('');
+  wrap.style.display = 'block';
+  sel.innerHTML = `<option value="">Todas las marcas</option>` +
+    marcas.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  sel.value = _tndMarcaActiva || '';
 }
 function tndSetMarca(marca) {
   _tndMarcaActiva = marca;
@@ -1124,8 +1123,8 @@ function tndSetMarca(marca) {
 // insignificante (todo cuesta casi lo mismo), se oculta — no aporta nada filtrar ahi.
 function _tndRenderRielPrecios(prodsBase) {
   const wrap = document.getElementById('tnd-precios');
-  const riel = document.getElementById('tnd-precios-riel');
-  if (!wrap || !riel) return;
+  const sel = document.getElementById('tnd-precio-select');
+  if (!wrap || !sel) return;
   const precios = prodsBase.map(p => p.precio).filter(v => typeof v === 'number' && !isNaN(v));
   if (!precios.length) { wrap.style.display = 'none'; _tndRangoPrecioActivo = null; return; }
   const min = Math.min(...precios), max = Math.max(...precios);
@@ -1144,13 +1143,22 @@ function _tndRenderRielPrecios(prodsBase) {
   if (_tndRangoPrecioActivo && !rangos.some(r => r.min === _tndRangoPrecioActivo.min && r.max === _tndRangoPrecioActivo.max)) {
     _tndRangoPrecioActivo = null; // ya no aplica a este contexto
   }
-  wrap.style.display = 'flex';
-  riel.innerHTML = `<span class="tnd-cat-tag ${!_tndRangoPrecioActivo?'active':''}" onclick="tndSetRangoPrecio(null,null)">Todos los precios</span>` +
-    rangos.map(r => `<span class="tnd-cat-tag ${_tndRangoPrecioActivo && _tndRangoPrecioActivo.min===r.min && _tndRangoPrecioActivo.max===r.max?'active':''}" onclick="tndSetRangoPrecio(${r.min},${r.max===Infinity?'null':r.max})">${r.etiqueta}</span>`).join('');
+  wrap.style.display = 'block';
+  sel.innerHTML = `<option value="">Todos los precios</option>` +
+    rangos.map(r => `<option value="${r.min}|${r.max===Infinity?'inf':r.max}">${escapeHtml(r.etiqueta)}</option>`).join('');
+  sel.value = _tndRangoPrecioActivo ? `${_tndRangoPrecioActivo.min}|${_tndRangoPrecioActivo.max===Infinity?'inf':_tndRangoPrecioActivo.max}` : '';
 }
 function tndSetRangoPrecio(min, max) {
   _tndRangoPrecioActivo = (min === null && max === null) ? null : { min: min || 0, max: max === null ? Infinity : max };
   tndFiltrar();
+}
+// El <select> de precio codifica el rango en el value como "min|max" (max="inf" para el
+// tramo final sin techo) porque un <option value> solo puede llevar un string — a diferencia
+// de los onclick de antes, que pasaban los numeros directo como argumentos de función.
+function _tndOnChangePrecioSelect(v) {
+  if (!v) { tndSetRangoPrecio(null, null); return; }
+  const [minStr, maxStr] = v.split('|');
+  tndSetRangoPrecio(parseFloat(minStr), maxStr === 'inf' ? null : parseFloat(maxStr));
 }
 
 function tndFiltrar() {
