@@ -328,8 +328,27 @@ function _boletaAgregarProd(id) {
   _boletaRenderLista();
 }
 
-function _boletaQuitarProd(id) {
-  _boletaProductos = _boletaProductos.filter(x => x.prodId !== id);
+// Agrega una fila NUEVA e independiente para un producto que ya está en la lista — a
+// diferencia de _boletaAgregarProd() (que suma cantidad a la fila existente), esto permite
+// que el MISMO producto tenga 2 filas con costo distinto en la misma boleta: ej. 3 unidades
+// pagadas a S/2.99 + 1 unidad de bonificación del proveedor (gratis). guardarBoleta() ya está
+// preparado para 2+ filas del mismo prodId (agrupa por producto, suma cantidades y recalcula
+// el costo promedio ponderado de forma secuencial — ver comentario "por si el mismo producto
+// aparece dos veces en la boleta" más abajo), así que no hace falta tocar esa función: el
+// costo promedio queda diluido SOLO por la cantidad realmente marcada como bonif, no por el
+// total combinado. Cantidad por defecto 1 — editable igual que cualquier fila (una
+// bonificación puede ser de más de 1 unidad).
+function _boletaAgregarBonif(id) {
+  const prod = DB.productos.find(p => p.id === id);
+  if (!prod) return;
+  _boletaProductos.push({ prodId: id, nombre: prod.nombre, cantidad: 1, costo: prod.costo, esBonif: true });
+  _boletaRenderLista();
+}
+
+// Recibe la POSICIÓN en el arreglo, no el prodId — desde que un producto puede tener 2 filas
+// (ver _boletaAgregarBonif() arriba), filtrar por prodId borraría AMBAS filas de un tirón.
+function _boletaQuitarProd(idx) {
+  _boletaProductos.splice(idx, 1);
   _boletaRenderLista();
 }
 
@@ -370,7 +389,7 @@ el.innerHTML = _boletaProductos.map((p, i) => {
     <div style="background:var(--gray-50);border-radius:6px;padding:.5rem .6rem;margin-bottom:.4rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
         <span style="font-size:.82rem;font-weight:600">${p.nombre}</span>
-        <button onclick="_boletaQuitarProd(${p.prodId})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:0 2px">✕ quitar</button>
+        <button onclick="_boletaQuitarProd(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:0 2px">✕ quitar</button>
       </div>
       <div style="display:flex;align-items:flex-end;gap:.6rem;flex-wrap:wrap">
         <div>
@@ -398,6 +417,9 @@ el.innerHTML = _boletaProductos.map((p, i) => {
         <input type="date" value="${p.venc||''}" style="font-size:.75rem;padding:2px 4px;border:1px solid var(--gray-200);border-radius:4px"
           onchange="_boletaProductos[${i}].venc=this.value" title="Fecha de vencimiento (opcional)" />
         <span style="font-size:.72rem;color:var(--gray-500)">Margen: <b style="color:${margenColor}">${margenNuevo}%</b> <span style="color:var(--gray-400)">(antes ${margenActual}%)</span></span>
+      </div>
+      <div style="text-align:right;margin-top:.3rem">
+        <button type="button" onclick="_boletaAgregarBonif(${p.prodId})" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:.7rem;padding:0" title="Agrega una fila NUEVA de este mismo producto, marcada como bonificación — no toca esta fila">🎁 Agregar bonificación de este producto</button>
       </div>
     </div>`;
   }).join('');
