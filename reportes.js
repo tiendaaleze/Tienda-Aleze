@@ -556,8 +556,13 @@ async function exportReporte() {
     porMetodo[m].tx++; porMetodo[m].tot += v.total||0;
   });
   const porPArr = Object.values(porP).map(d=>({...d, gan: d.ing-d.cos}));
-  const top5Ganancia = [...porPArr].sort((a,b)=>b.gan-a.gan).slice(0,5);
-  const top5Unidades = [...porPArr].sort((a,b)=>b.cant-a.cant).slice(0,5);
+  const top20Ganancia = [...porPArr].sort((a,b)=>b.gan-a.gan).slice(0,20);
+  // "Top unidades" excluye productos de menudeo (golosinas, cigarros sueltos, etc.) que se
+  // venden de a varias unidades por muy poco cada una — sin este filtro dominan el ranking sin
+  // ser realmente relevantes para decidir qué reponer. Se usa el precio promedio REAL del
+  // período (ingresos/unidades del propio producto, no el precio de catálogo) para no depender
+  // de que el precio unitario esté siempre actualizado.
+  const top20Unidades = porPArr.filter(d=>d.cant>0 && (d.ing/d.cant)>=1).sort((a,b)=>b.cant-a.cant).slice(0,20);
   const ticketProm = vf.length ? vTot/vf.length : 0;
   const margenIngresos = vTot>0 ? (gB/vTot*100) : 0;
   const rentReal = gB-gOp-gRec-sue-mer;
@@ -589,11 +594,11 @@ async function exportReporte() {
     r0.push(xr(cs('(No disponible — define un rango de fechas para ver la comparación)')));
   }
   r0.push(xr(cs('')));
-  r0.push(xr(ch('Top 5 productos por ganancia'),ch('Ganancia S/'),ch('Margen %')));
-  top5Ganancia.forEach(d=>r0.push(xr(cs(d.nom),cn(d.gan),cs(d.cos>0?(d.gan/d.cos*100).toFixed(1)+'%':'-'))));
+  r0.push(xr(ch('Top 20 productos por ganancia'),ch('Ganancia S/'),ch('Margen %')));
+  top20Ganancia.forEach(d=>r0.push(xr(cs(d.nom),cn(d.gan),cs(d.cos>0?(d.gan/d.cos*100).toFixed(1)+'%':'-'))));
   r0.push(xr(cs('')));
-  r0.push(xr(ch('Top 5 productos por unidades vendidas'),ch('Unidades')));
-  top5Unidades.forEach(d=>r0.push(xr(cs(d.nom),cn(d.cant))));
+  r0.push(xr(ch('Top 20 productos por unidades vendidas'),ch('Unidades'),ch('(excluye ítems de menudeo con precio prom. < S/1)')));
+  top20Unidades.forEach(d=>r0.push(xr(cs(d.nom),cn(d.cant),cs(''))));
   r0.push(xr(cs('')));
   r0.push(xr(ch('Desglose por método de pago'),ch('Transacciones'),ch('Monto S/'),ch('% del total')));
   Object.entries(porMetodo).sort((a,b)=>b[1].tot-a[1].tot).forEach(([m,d])=>{
