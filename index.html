@@ -1244,7 +1244,7 @@ window.addEventListener('error', function(e) {
         <div style="flex:1;min-width:180px">
           <input type="file" id="prod-img-file" accept="image/*" style="display:none" onchange="onProdImgSelect(event)" />
           <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('prod-img-file').click()" style="margin-bottom:.4rem;width:100%">📁 Seleccionar imagen</button>
-          <div style="font-size:.71rem;color:var(--gray-400);line-height:1.4">JPG, PNG, WEBP. Se guarda localmente en el dispositivo.</div>
+          <div style="font-size:.71rem;color:var(--gray-400);line-height:1.4">JPG, PNG, WEBP. Se sube a la nube — visible desde cualquier dispositivo.</div>
           <button type="button" class="btn btn-xs" onclick="limpiarImgProd()" style="margin-top:.3rem;background:var(--danger-light);color:var(--danger)">✕ Quitar imagen</button>
         </div>
       </div>
@@ -1881,20 +1881,6 @@ window.addEventListener('error', function(e) {
   </div>
 </div>
 
-<!-- Modal Boleta Adicional Proveedor -->
-<div class="modal-overlay" id="modal-boleta">
-  <div class="modal"><div class="modal-header"><h3>📄 Agregar boleta/factura</h3><button type="button" class="modal-close" onclick="cerrarModal('modal-boleta')">✕</button></div>
-    <div class="form-group"><label>N° Boleta / Factura *</label><input type="text" class="form-control" id="b2-num" /></div>
-    <div class="form-group"><label>Fecha *</label><input type="date" class="form-control" id="b2-fecha" /></div>
-    <div class="form-group"><label>Monto (S/)</label><input type="number" class="form-control" id="b2-monto" step="0.01" /></div>
-    <div class="form-group"><label>Descripción</label><input type="text" class="form-control" id="b2-desc" /></div>
-    <div class="form-group"><label>Adjuntar imagen/PDF</label><input type="file" class="form-control" id="b2-file" accept="image/*,application/pdf" /></div>
-    <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem">
-      <button type="button" class="btn btn-outline" onclick="cerrarModal('modal-boleta')">Cancelar</button>
-      <button type="button" class="btn btn-primary" onclick="guardarBoleta()">Guardar boleta</button>
-    </div>
-  </div>
-</div>
 <div class="modal-overlay" id="modal-ticket">
   <div class="modal">
     <div class="modal-header">
