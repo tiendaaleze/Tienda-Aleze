@@ -78,9 +78,10 @@ function guardarProveedor() {
 
 function eliminarProveedor(id) {
   if (currentRole !== 'admin') { alert('⛔ Solo el administrador puede eliminar proveedores.'); return; }
-  const prodsAsociados = DB.productos.filter(p => p.prov == id);
+  // Un producto puede tener varios proveedores — ver _provsDeProducto() en inventario.js.
+  const prodsAsociados = DB.productos.filter(p => _provsDeProducto(p).some(pid => pid == id));
   if (prodsAsociados.length > 0) {
-    if (!confirm(`Este proveedor tiene ${prodsAsociados.length} producto(s) asociado(s).\n¿Deseas eliminarlo de todas formas? Los productos quedarán sin proveedor asignado.`)) return;
+    if (!confirm(`Este proveedor tiene ${prodsAsociados.length} producto(s) asociado(s).\n¿Deseas eliminarlo de todas formas? Este proveedor dejará de aparecer en la lista de esos productos (si tenían otros proveedores además de este, esos se conservan).`)) return;
   } else {
     if (!confirm('¿Eliminar proveedor?')) return;
   }
@@ -656,4 +657,3 @@ async function abrirPagoBoleta(provId, idx) {
   try { renderCaja(); } catch(e){}
   alert(`✅ Pago registrado: ${sol(monto)}. Pendiente restante: ${sol(Math.max(0,_r.pendienteReal-monto))}`);
 }
-
