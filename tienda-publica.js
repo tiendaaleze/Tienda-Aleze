@@ -691,6 +691,7 @@ function _renderTienda() {
 }
 #tnd-filtros-backdrop { display:none; }
 .tnd-filtros-sheet-header { display:none; }
+.tnd-filtros-sheet-footer { display:none; }
 @media (min-width:900px) {
   .tnd-filtros-btn-mobile { display:none; } /* en PC no hace falta el botón, los selects ya están visibles */
 }
@@ -714,6 +715,28 @@ function _renderTienda() {
   #tnd-filtros-backdrop.abierto {
     display:block; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1000;
   }
+  /* Botones de acción de la hoja — referencia visual pedida por el usuario (botón sólido
+     "Aplicar filtros" + texto "Limpiar"). Como marca/precio/orden ya filtran al instante al
+     cambiar (sin esperar un botón), "Aplicar filtros" solo cierra la hoja para ver el resultado;
+     "Limpiar" resetea los 3 selects y vuelve a filtrar, sin cerrar, por si se sigue ajustando. */
+  #tnd-filtros-controles.abierto .tnd-filtros-sheet-footer {
+    display:flex; align-items:center; gap:.75rem; margin-top:.5rem;
+  }
+  .tnd-filtros-limpiar {
+    background:none; border:none; color:#EF4444; font-size:.85rem; font-weight:600;
+    cursor:pointer; padding:.6rem .25rem;
+  }
+  .tnd-filtros-aplicar {
+    flex:1; background:#7C3AED; color:#fff; border:none; border-radius:8px;
+    font-size:.9rem; font-weight:700; padding:.75rem 1rem; cursor:pointer;
+  }
+  /* Con la hoja abierta se oculta la barra inferior — evita que quede detrás de la hoja
+     (ambas son position:fixed, pero la barra vive dentro de .tnd-main, que ya tiene su propio
+     z-index:1 para la capa de fondo; al ser un stacking context aparte, ningún z-index de la
+     hoja logra ganarle "desde adentro" — ver auditoría). Ocultarla mientras la hoja está abierta
+     resuelve el corte visual sin tocar el z-index de .tnd-main, que otras partes ya dependen de
+     que se mantenga bajo (para no taparlo con el panel del carrito, por ejemplo). */
+  #tienda-publica.tnd-filtros-sheet-abierta #tnd-bottombar { display:none; }
 }
 </style>
 
@@ -805,6 +828,10 @@ function _renderTienda() {
         <option value="precio-desc">Precio: mayor a menor</option>
         <option value="recientes">Más recientes</option>
       </select>
+    </div>
+    <div class="tnd-filtros-sheet-footer">
+      <button type="button" class="tnd-filtros-limpiar" onclick="_tndLimpiarFiltrosMovil()">Limpiar</button>
+      <button type="button" class="tnd-filtros-aplicar" onclick="_tndCerrarFiltrosMovil()">Aplicar filtros</button>
     </div>
   </div>
   <div class="tnd-grid" id="tnd-grid"></div>
@@ -1152,10 +1179,24 @@ function _tndIrHome() {
 function _tndAbrirFiltrosMovil() {
   document.getElementById('tnd-filtros-controles')?.classList.add('abierto');
   document.getElementById('tnd-filtros-backdrop')?.classList.add('abierto');
+  document.getElementById('tienda-publica')?.classList.add('tnd-filtros-sheet-abierta');
 }
 function _tndCerrarFiltrosMovil() {
   document.getElementById('tnd-filtros-controles')?.classList.remove('abierto');
   document.getElementById('tnd-filtros-backdrop')?.classList.remove('abierto');
+  document.getElementById('tienda-publica')?.classList.remove('tnd-filtros-sheet-abierta');
+}
+// Botón "Limpiar" de la hoja de filtros móvil: resetea marca/precio/orden y vuelve a filtrar,
+// sin cerrar la hoja (a diferencia de "Aplicar filtros"), por si el usuario sigue ajustando.
+function _tndLimpiarFiltrosMovil() {
+  const marcaSel = document.getElementById('tnd-marca-select');
+  const precioSel = document.getElementById('tnd-precio-select');
+  const ordenSel = document.getElementById('tnd-orden');
+  if (marcaSel) marcaSel.value = '';
+  if (precioSel) precioSel.value = '';
+  if (ordenSel) ordenSel.value = '';
+  tndSetMarca('');
+  tndSetRangoPrecio(null, null);
 }
 // Punto (rojo) sobre el botón "Filtros y orden" cuando hay algún filtro/orden activo — para que
 // en móvil, con los selects colapsados dentro de la hoja, no sea invisible que hay un filtro
