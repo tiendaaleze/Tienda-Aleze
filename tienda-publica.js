@@ -673,6 +673,48 @@ function _renderTienda() {
 @media (min-width:900px) {
   #tnd-wa-fab { display:flex; } /* en desktop no hay bottom bar, vuelve a flotar */
 }
+/* ── Filtros y orden (marca/precio/orden) — colapsados en botón + hoja SOLO en móvil ──
+   Pedido explícito del usuario: en PC estos 3 selects caben cómodos y quedan visibles siempre,
+   sin ningún cambio acá. En móvil, el font-size:16px que los navegadores fuerzan en <select>
+   (evita el zoom automático de iOS) los hace demasiado anchos para convivir en una fila —
+   terminaban en 3 filas casi completas, ocupando ~30% de la pantalla antes de ver un solo
+   producto. Mismo breakpoint de 900px ya usado en todo este archivo para distinguir desktop de
+   mobile (ver #tnd-bottombar arriba). */
+.tnd-filtros-btn-mobile {
+  display:flex; align-items:center; gap:.4rem;
+  background:#fff; border:1.5px solid #e5e7eb; border-radius:8px;
+  padding:.55rem .8rem; font-size:.82rem; font-weight:600; color:#374151;
+  margin-bottom:.75rem; cursor:pointer;
+}
+.tnd-filtros-badge {
+  display:inline-block; width:7px; height:7px; border-radius:50%; background:#EF4444;
+}
+#tnd-filtros-backdrop { display:none; }
+.tnd-filtros-sheet-header { display:none; }
+@media (min-width:900px) {
+  .tnd-filtros-btn-mobile { display:none; } /* en PC no hace falta el botón, los selects ya están visibles */
+}
+@media (max-width:899px) {
+  #tnd-filtros-controles { display:none; }
+  #tnd-filtros-controles.abierto {
+    display:block; position:fixed; left:0; right:0; bottom:0;
+    background:#fff; border-radius:16px 16px 0 0;
+    padding:1.25rem 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    max-height:80dvh; overflow-y:auto; z-index:1001;
+    box-shadow:0 -4px 24px rgba(0,0,0,.15);
+  }
+  #tnd-filtros-controles.abierto .tnd-filtros-sheet-header {
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:.5rem; font-size:.95rem;
+  }
+  .tnd-filtros-cerrar {
+    background:#f3f4f6; border:none; border-radius:8px;
+    width:28px; height:28px; font-size:.9rem; cursor:pointer;
+  }
+  #tnd-filtros-backdrop.abierto {
+    display:block; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1000;
+  }
+}
 </style>
 
 <div class="tnd-bg-pattern" aria-hidden="true">
@@ -737,21 +779,33 @@ function _renderTienda() {
     <div id="tnd-cats-riel" style="display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
     <button type="button" class="tnd-arrow tnd-arrow-right" onclick="_scrollRielCats('tnd-cats-riel',1)" aria-label="Categorías siguientes">›</button>
   </div>
-  <div id="tnd-filtros-fila" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.4rem;margin-bottom:1.25rem">
-    <div id="tnd-marcas" style="display:none">
-      <select id="tnd-marca-select" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndSetMarca(this.value)"></select>
-    </div>
-    <div id="tnd-precios" style="display:none">
-      <select id="tnd-precio-select" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="_tndOnChangePrecioSelect(this.value)"></select>
-    </div>
+  <div id="tnd-filtros-btn-wrap" style="display:none">
+    <button type="button" class="tnd-filtros-btn-mobile" onclick="_tndAbrirFiltrosMovil()">
+      ⚙️ Filtros y orden<span id="tnd-filtros-badge" class="tnd-filtros-badge" style="display:none"></span>
+    </button>
   </div>
-  <div id="tnd-orden-wrap" style="display:none;margin-bottom:.75rem">
-    <select id="tnd-orden" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndFiltrar()">
-      <option value="">Ordenar por...</option>
-      <option value="precio-asc">Precio: menor a mayor</option>
-      <option value="precio-desc">Precio: mayor a menor</option>
-      <option value="recientes">Más recientes</option>
-    </select>
+  <div id="tnd-filtros-backdrop" onclick="_tndCerrarFiltrosMovil()"></div>
+  <div id="tnd-filtros-controles">
+    <div class="tnd-filtros-sheet-header">
+      <strong>Filtros y orden</strong>
+      <button type="button" class="tnd-filtros-cerrar" onclick="_tndCerrarFiltrosMovil()" aria-label="Cerrar filtros">✕</button>
+    </div>
+    <div id="tnd-filtros-fila" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.4rem;margin-bottom:1.25rem">
+      <div id="tnd-marcas" style="display:none">
+        <select id="tnd-marca-select" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndSetMarca(this.value)"></select>
+      </div>
+      <div id="tnd-precios" style="display:none">
+        <select id="tnd-precio-select" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="_tndOnChangePrecioSelect(this.value)"></select>
+      </div>
+    </div>
+    <div id="tnd-orden-wrap" style="display:none;margin-bottom:.75rem">
+      <select id="tnd-orden" class="form-control" style="width:auto;font-size:.8rem;padding:.4rem .6rem" onchange="tndFiltrar()">
+        <option value="">Ordenar por...</option>
+        <option value="precio-asc">Precio: menor a mayor</option>
+        <option value="precio-desc">Precio: mayor a menor</option>
+        <option value="recientes">Más recientes</option>
+      </select>
+    </div>
   </div>
   <div class="tnd-grid" id="tnd-grid"></div>
 </div>
@@ -1036,9 +1090,11 @@ function tndBuscarDesdeHome() {
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
     const ordenWrap = document.getElementById('tnd-orden-wrap');
+    const filtrosBtnWrap = document.getElementById('tnd-filtros-btn-wrap');
     if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
     if (ordenWrap) ordenWrap.style.display = 'block';
+    if (filtrosBtnWrap) filtrosBtnWrap.style.display = 'block';
     tndRenderCats();
   }
   tndFiltrar();
@@ -1050,9 +1106,11 @@ function tndSetCat(id) {
     const back = document.getElementById('tnd-back-home');
     const cats = document.getElementById('tnd-cats');
     const ordenWrap = document.getElementById('tnd-orden-wrap');
+    const filtrosBtnWrap = document.getElementById('tnd-filtros-btn-wrap');
     if (back) back.style.display = 'inline-flex';
     if (cats) cats.style.display = 'flex';
     if (ordenWrap) ordenWrap.style.display = 'block';
+    if (filtrosBtnWrap) filtrosBtnWrap.style.display = 'block';
     tndRenderCats();
     tndFiltrar();
   } else {
@@ -1074,14 +1132,39 @@ function _tndIrHome() {
   const cats = document.getElementById('tnd-cats');
   const search = document.getElementById('tnd-search');
   const ordenWrap = document.getElementById('tnd-orden-wrap');
+  const filtrosBtnWrap = document.getElementById('tnd-filtros-btn-wrap');
   if (back) back.style.display = 'none';
   if (cats) cats.style.display = 'none';
   const _marcasHome2 = document.getElementById('tnd-marcas'); if (_marcasHome2) _marcasHome2.style.display = 'none';
   const _preciosHome2 = document.getElementById('tnd-precios'); if (_preciosHome2) _preciosHome2.style.display = 'none';
   if (ordenWrap) ordenWrap.style.display = 'none';
+  if (filtrosBtnWrap) filtrosBtnWrap.style.display = 'none';
+  _tndCerrarFiltrosMovil(); // por si quedó abierta la hoja de filtros del celular al volver a Inicio
   if (search) search.value = '';
   _tndRenderHome();
   _tndActualizarBottomBar();
+}
+
+// ── Hoja de filtros en móvil (marca/precio/orden) — pedido explícito del usuario para reducir
+// el espacio que ocupaban esos 3 selects en pantallas chicas (ver comentario CSS en styles.css,
+// sección "FILTROS DE TIENDA PÚBLICA"). En PC no se usan estas 2 funciones — los selects quedan
+// visibles inline como siempre, el botón que las dispara está oculto fuera de esa media query.
+function _tndAbrirFiltrosMovil() {
+  document.getElementById('tnd-filtros-controles')?.classList.add('abierto');
+  document.getElementById('tnd-filtros-backdrop')?.classList.add('abierto');
+}
+function _tndCerrarFiltrosMovil() {
+  document.getElementById('tnd-filtros-controles')?.classList.remove('abierto');
+  document.getElementById('tnd-filtros-backdrop')?.classList.remove('abierto');
+}
+// Punto (rojo) sobre el botón "Filtros y orden" cuando hay algún filtro/orden activo — para que
+// en móvil, con los selects colapsados dentro de la hoja, no sea invisible que hay un filtro
+// aplicado. Se recalcula cada vez que tndFiltrar() corre (cualquier cambio de marca/precio/orden).
+function _tndActualizarBadgeFiltros() {
+  const badge = document.getElementById('tnd-filtros-badge');
+  if (!badge) return;
+  const ordenSel = document.getElementById('tnd-orden')?.value || '';
+  badge.style.display = (_tndMarcaActiva || _tndRangoPrecioActivo || ordenSel) ? 'inline-block' : 'none';
 }
 function _tndActualizarBottomBar() {
   document.querySelectorAll('.tnd-bb-item').forEach((b,i) => b.classList.toggle('active', i === (_tndVista==='home'?0:1)));
@@ -1282,6 +1365,7 @@ if (!_ordenSel) {
       </div>
     </div>`;
   }).join('') || '<p style="grid-column:1/-1;text-align:center;color:#9ca3af;padding:2rem">Sin productos que coincidan</p>';
+  _tndActualizarBadgeFiltros();
 }
 
 let _tndToastTimer = null;
