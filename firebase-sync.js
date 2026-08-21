@@ -650,6 +650,11 @@ function _prodBuildPayload() {
       // login roto por completo. El email de un cajero, solo, no es una credencial (todavía
       // hace falta la contraseña real, que nunca vive en Firestore) — es el mismo nivel de
       // exposición que cualquier login por correo público en cualquier sistema.
+      // RECORDATORIO: cualquier campo NUEVO de DB.config que deba verse fuera de este mismo
+      // dispositivo (tienda pública, selector de login, otro dispositivo del staff) tiene que
+      // agregarse a mano acá — si no, ese campo se guarda bien en memoria local pero nunca llega
+      // al documento remoto, sin ningún error visible (ya pasó 3 veces: usuariosStaff, banners,
+      // deliveryMinimo — ver los comentarios CRITICO de abajo, uno por incidente real).
       const _configPublico = {
         nombre: DB.config?.nombre, direccion: DB.config?.direccion, ruc: DB.config?.ruc,
         whatsappTienda: DB.config?.whatsappTienda, ticketMsg: DB.config?.ticketMsg,
@@ -1099,14 +1104,15 @@ function _iniciarListenersOperativos() {
  
 // ── Patch DB: interceptar asignaciones de array para auto-guardar ──
 // Solo las colecciones que el usuario modifica activamente
-// Columnas que van al doc 'db' (operaciones)
 // caja NO va aquí — tiene su propio getter/setter por sede, definido junto a la declaración de DB.
-// CRITICO: ventas/clientes/fiados/mermas/movimientos/promociones YA NO necesitan este
-// interceptor — tienen su propia coleccion con escritura explicita en cada funcion, no
-// dependen de que una reasignacion de array dispare fbGuardar() por su cuenta. Solo queda
-// proveedores, todavia sin migrar. inventariosMensuales era un campo muerto (la data real
-// siempre vivio en DB_EXT.inventariosMensuales, con su propio documento) — eliminado.
-const _fbPatchColsOp   = ['proveedores'];
+// CRITICO: ventas/clientes/fiados/mermas/movimientos/promociones/proveedores YA NO necesitan
+// este interceptor — cada una tiene su propia coleccion con escritura explicita en cada
+// funcion (proveedores: setDocM directo en guardarProveedor()/eliminarProveedor()/etc, ver
+// proveedores.js), sin depender de que una reasignacion de array dispare fbGuardar() por su
+// cuenta. El trap que quedaba para 'proveedores' (columna 'db', ya vacía de contenido real —
+// ver comentario junto a fbGuardar()) era vestigial: llamaba a fbGuardar(), que no persiste
+// proveedores hace tiempo — eliminado 21/08. inventariosMensuales era un campo muerto (la data
+// real siempre vivio en DB_EXT.inventariosMensuales, con su propio documento) — eliminado antes.
 // Columnas que van al doc 'db_productos' (catálogo)
 const _fbPatchColsProd = ['productos','categorias'];
  
@@ -1169,26 +1175,6 @@ function fbPatchDB() {
       estadoStock: 'descontado'
     }));
   }
-  _fbPatchColsOp.forEach(col => {
-    let _val = DB[col];
-    Object.defineProperty(DB, col, {
-      get() { return _val; },
-      set(v)  {
-        _val = v;
-        // Nunca guardar arrays vacíos — protege contra sobreescritura accidental
-        if (Array.isArray(v) && v.length === 0) return;
-        // CAUSA REAL del badge trabado: fbGuardar() poda historialVentas/movimientos
-        // reasignándolos (DB.historialVentas = DB.historialVentas.filter(...)) — .filter()
-        // siempre crea un array nuevo, así que esa reasignación disparaba este mismo set()
-        // de nuevo, que volvía a llamar fbGuardar(), que volvía a podar, sin parar nunca.
-        // Si ya hay un guardado en curso, no hace falta encadenar otro — el que está
-        // corriendo ya va a incluir este cambio.
-        if (_fbEscribiendo) return;
-        fbGuardar();
-      },
-      configurable: true
-    });
-  });
   _fbPatchColsProd.forEach(col => {
     let _val = DB[col];
     Object.defineProperty(DB, col, {
@@ -1196,7 +1182,7 @@ function fbPatchDB() {
       set(v)  {
         _val = v;
         if (Array.isArray(v) && v.length === 0) return;
-        // Misma protección preventiva que en _fbPatchColsOp — si fbGuardarProductos() alguna
+        // Protección preventiva: si fbGuardarProductos() alguna
         // vez reasigna productos/categorias (poda, etc.), esto evita el mismo ciclo infinito.
         if (_fbEscribiendo) return;
         fbGuardarProductos(col); // 'col' ya es exactamente 'productos' o 'categorias'
