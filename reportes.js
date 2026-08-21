@@ -368,6 +368,11 @@ async function exportReporte() {
   const cs = v => `<Cell><Data ss:Type="String">${xe(v)}</Data></Cell>`;
   const cn = v => `<Cell><Data ss:Type="Number">${isNaN(parseFloat(v))?0:parseFloat(v).toFixed(2)}</Data></Cell>`;
   const ch = v => `<Cell ss:StyleID="h"><Data ss:Type="String">${xe(v)}</Data></Cell>`;
+  // Celda con hyperlink real (ss:HRef) — usada en la hoja Resumen como "botón" de actualizar:
+  // no existe una forma segura de refrescar datos en vivo dentro de un .xls (eso exigiria VBA,
+  // que puede portar macros/credenciales — descartado por seguridad), asi que en su lugar se
+  // deja un enlace de un clic de vuelta al sistema real para generar un reporte al momento.
+  const cy = (label,url) => `<Cell ss:StyleID="lnk" ss:HRef="${xe(url)}"><Data ss:Type="String">${xe(label)}</Data></Cell>`;
   const xr = (...c) => `<Row>${c.join('')}</Row>`;
   const ws = (name, rows) => `<Worksheet ss:Name="${xe(name)}"><Table>${rows.join('')}</Table></Worksheet>`;
 
@@ -396,24 +401,39 @@ async function exportReporte() {
   const vTot=vf.reduce((s,v)=>s+v.total,0), vCos=Object.values(porDia).reduce((s,d)=>s+d.cos,0);
   r1.push(xr(cs('TOTAL'),cn(vf.length),cn(vTot),cn(vCos),cn(vTot-vCos)));
 
-  // Hoja 2: Productos
+  // Hoja 2: Productos — costo historico del item (mismo criterio que reporteProductos() en
+  // pantalla, mas abajo en este archivo) — solo cae al costo actual del catalogo si la venta
+  // es anterior a que se empezara a guardar costoUnitario por item.
   const prods = {};
   vf.forEach(v=>(v.items||[]).forEach(i=>{
     if(!prods[i.nombre])prods[i.nombre]={cant:0,tot:0,cos:0};
     prods[i.nombre].cant+=i.cant; prods[i.nombre].tot+=subtotalItemCarrito(i);
-    const p=DB.productos.find(x=>x.id===i.prodId); prods[i.nombre].cos+=(p?p.costo:0)*i.cant;
+    if (i.costoUnitario != null) {
+      prods[i.nombre].cos += i.costoUnitario * i.cant;
+    } else {
+      const p=DB.productos.find(x=>x.id===i.prodId); prods[i.nombre].cos+=(p?p.costo:0)*i.cant;
+    }
   }));
   const r2=[xr(ch('Producto'),ch('Cantidad'),ch('Ingresos S/'),ch('Costo S/'),ch('Ganancia S/'))];
   Object.entries(prods).sort((a,b)=>b[1].cant-a[1].cant).forEach(([n,v])=>r2.push(xr(cs(n),cn(v.cant),cn(v.tot),cn(v.cos),cn(v.tot-v.cos))));
   const pTot=Object.values(prods).reduce((s,v)=>s+v.tot,0),pCos=Object.values(prods).reduce((s,v)=>s+v.cos,0);
   r2.push(xr(cs('TOTAL'),cn(Object.values(prods).reduce((s,v)=>s+v.cant,0)),cn(pTot),cn(pCos),cn(pTot-pCos)));
 
-  // Hoja 3: Rentabilidad
+  // Hoja 3: Rentabilidad — se agrupa por el prodId/nombre/costo GUARDADOS en el propio item
+  // (historico), nunca por una relectura del catalogo actual — mismo criterio que
+  // reporteRentabilidad() en pantalla, mas abajo en este archivo. Antes, un producto eliminado
+  // del catalogo hacia desaparecer la venta ENTERA de esta hoja (if(!p) return); ahora
+  // sobrevive igual que en pantalla.
   const porP={};
   vf.forEach(v=>(v.items||[]).forEach(i=>{
-    const p=DB.productos.find(x=>x.id===i.prodId); if(!p) return;
-    if(!porP[p.id])porP[p.id]={nom:p.nombre,cant:0,ing:0,cos:0};
-    porP[p.id].cant+=i.cant; porP[p.id].ing+=subtotalItemCarrito(i); porP[p.id].cos+=p.costo*i.cant;
+    const key=i.prodId;
+    if(!porP[key])porP[key]={nom:i.nombre,cant:0,ing:0,cos:0};
+    porP[key].cant+=i.cant; porP[key].ing+=subtotalItemCarrito(i);
+    if (i.costoUnitario != null) {
+      porP[key].cos += i.costoUnitario * i.cant;
+    } else {
+      const p=DB.productos.find(x=>x.id===i.prodId); porP[key].cos += (p?p.costo:0) * i.cant;
+    }
   }));
   const r3=[xr(ch('Producto'),ch('Cantidad'),ch('Ingresos S/'),ch('Costo S/'),ch('Ganancia S/'),ch('Margen%'))];
   Object.values(porP).sort((a,b)=>(b.ing-b.cos)-(a.ing-a.cos)).forEach(d=>{
@@ -449,8 +469,139 @@ async function exportReporte() {
   gLst.forEach(g=>r6.push(xr(cs(formatDate(g.fecha)),cs(g.tipo),cs(g.desc),cn(g.monto))));
   r6.push(xr(cs('TOTAL'),cs(''),cs(''),cn(gLst.reduce((s,g)=>s+g.monto,0))));
 
+  // Hoja 7: Proveedores — compras del período (por fecha de boleta) + deuda pendiente ACTUAL
+  // (la deuda no está acotada al período: es cuánto se le debe hoy a cada proveedor, útil sin
+  // importar qué rango se haya elegido). Mismos campos que usa abrirPagoBoleta()/proveedores.js.
+  const provRows = DB.proveedores.map(p => {
+    const boletasPeriodo = (p.boletas||[]).filter(b => b.fecha && b.fecha>=desde && b.fecha<=hasta);
+    const comprasPeriodo = boletasPeriodo.reduce((s,b)=>s+(b.monto||0),0);
+    const deudaActual = (p.boletas||[]).reduce((s,b)=>s+Math.max(0,(b.monto||0)-(b.pagado||0)),0);
+    return { nom: p.nombre, comprasPeriodo, nBoletas: boletasPeriodo.length, deudaActual };
+  }).filter(d => d.comprasPeriodo > 0 || d.deudaActual > 0).sort((a,b)=>b.comprasPeriodo-a.comprasPeriodo);
+  const r7=[xr(ch('Proveedor'),ch('Compras del período S/'),ch('N° boletas del período'),ch('Deuda pendiente actual S/'))];
+  provRows.forEach(d=>r7.push(xr(cs(d.nom),cn(d.comprasPeriodo),cn(d.nBoletas),cn(d.deudaActual))));
+  r7.push(xr(cs('TOTAL'),cn(provRows.reduce((s,d)=>s+d.comprasPeriodo,0)),cs(''),cn(provRows.reduce((s,d)=>s+d.deudaActual,0))));
+
+  // Hoja 8: Margen % real por categoría — agregación independiente de porP (Hoja 3), no la
+  // toca. Mismo criterio de costo histórico (costoUnitario del item) que el resto del export.
+  const porCat = {};
+  vf.forEach(v=>(v.items||[]).forEach(i=>{
+    const p = DB.productos.find(x=>x.id===i.prodId);
+    const key = (p && p.cat!=null) ? p.cat : '__sin__';
+    if(!porCat[key]) porCat[key]={cant:0,ing:0,cos:0};
+    porCat[key].cant += i.cant;
+    porCat[key].ing += subtotalItemCarrito(i);
+    porCat[key].cos += (i.costoUnitario!=null ? i.costoUnitario : (p?p.costo:0)) * i.cant;
+  }));
+  const r8=[xr(ch('Categoría'),ch('Cantidad'),ch('Ingresos S/'),ch('Costo S/'),ch('Ganancia S/'),ch('Margen % real'),ch('Margen % objetivo'))];
+  Object.entries(porCat).sort((a,b)=>(b[1].ing-b[1].cos)-(a[1].ing-a[1].cos)).forEach(([catId,d])=>{
+    const c = catId!=='__sin__' ? DB.categorias.find(x=>x.id==catId) : null;
+    const g = d.ing-d.cos, mReal = d.cos>0 ? g/d.cos*100 : 0;
+    r8.push(xr(cs(c?c.nombre:'(Sin categoría / producto eliminado)'),cn(d.cant),cn(d.ing),cn(d.cos),cn(g),cs(mReal.toFixed(1)+'%'),cs(c&&c.margen?c.margen+'%':'-')));
+  });
+
+  // Hoja 9: Top clientes del período — se agrupa por clienteId DENTRO del rango elegido (los
+  // totales/puntos guardados en el propio cliente son acumulados de toda su vida, no sirven
+  // para "este período"), y solo cuenta ventas con cliente identificado (se excluyen anónimas).
+  const porCliente = {};
+  vf.forEach(v=>{
+    if (v.clienteId == null) return;
+    const k = String(v.clienteId);
+    if(!porCliente[k]) porCliente[k] = {id:v.clienteId, compras:0, monto:0};
+    porCliente[k].compras++; porCliente[k].monto += v.total||0;
+  });
+  const r9=[xr(ch('Cliente'),ch('Compras en el período'),ch('Total comprado S/'))];
+  Object.values(porCliente).sort((a,b)=>b.monto-a.monto).slice(0,15).forEach(d=>{
+    r9.push(xr(cs(getClienteNombre(d.id)),cn(d.compras),cn(d.monto)));
+  });
+
+  // Hoja 10: Stock bajo — foto AL MOMENTO de exportar (no se filtra por el rango de fechas,
+  // es estado actual del inventario). Mismo criterio exacto que filterInventario() en
+  // inventario.js (estado==='bajo'): stockEnSede(p) <= p.stockMin — un producto sin stockMin
+  // configurado nunca aparece aquí, igual que en pantalla.
+  const stockBajoLst = DB.productos.filter(p => stockEnSede(p) <= p.stockMin).sort((a,b)=>stockEnSede(a)-stockEnSede(b));
+  const r10=[xr(ch('Producto'),ch('Stock actual'),ch('Stock mínimo'),ch('Categoría'))];
+  stockBajoLst.forEach(p=>{
+    const c = DB.categorias.find(x=>x.id==p.cat);
+    r10.push(xr(cs(p.nombre),cn(stockEnSede(p)),cn(p.stockMin),cs(c?c.nombre:'-')));
+  });
+  if (!stockBajoLst.length) r10.push(xr(cs('Sin productos con stock bajo al momento de exportar'),cs(''),cs(''),cs('')));
+
+  // Hoja 0 (Resumen): KPIs, top productos, método de pago y comparación vs. período anterior.
+  // Todo se arma a partir de datos YA cargados (vf, porP, DB_EXT) — la única lectura EXTRA es
+  // la del período anterior de igual duración, para la comparación; si falla o el rango no es
+  // razonable (vacío, o el usuario dejó el filtro sin definir → 2000-01-01), se omite ese bloque
+  // sin abortar el resto del export.
+  let prevVTot = 0, prevGB = 0, prevDesde = '', prevHasta = '', huboComparacion = false;
+  try {
+    const diasPeriodo = Math.round((new Date(hasta) - new Date(desde)) / 86400000) + 1;
+    if (desde !== '2000-01-01' && hasta !== '2099-12-31' && diasPeriodo > 0 && diasPeriodo <= 366) {
+      const prevHastaD = new Date(desde+'T00:00:00'); prevHastaD.setDate(prevHastaD.getDate()-1);
+      const prevDesdeD = new Date(prevHastaD); prevDesdeD.setDate(prevDesdeD.getDate()-(diasPeriodo-1));
+      prevDesde = prevDesdeD.toISOString().split('T')[0];
+      prevHasta = prevHastaD.toISOString().split('T')[0];
+      const datosPrev = await _cargarVentasReporte(prevDesde, prevHasta, sede);
+      const prevVf = datosPrev.vendido;
+      prevVTot = prevVf.reduce((s,v)=>s+v.total,0);
+      const prevVCos = prevVf.reduce((s,v)=>s+costoVenta(v),0);
+      prevGB = prevVTot - prevVCos;
+      huboComparacion = true;
+    }
+  } catch(e) { console.warn('exportReporte: no se pudo cargar el período anterior para comparación', e); }
+
+  const porMetodo = {};
+  vf.forEach(v=>{
+    const m = v.metodo || '(Sin método)';
+    if(!porMetodo[m]) porMetodo[m]={tx:0,tot:0};
+    porMetodo[m].tx++; porMetodo[m].tot += v.total||0;
+  });
+  const porPArr = Object.values(porP).map(d=>({...d, gan: d.ing-d.cos}));
+  const top5Ganancia = [...porPArr].sort((a,b)=>b.gan-a.gan).slice(0,5);
+  const top5Unidades = [...porPArr].sort((a,b)=>b.cant-a.cant).slice(0,5);
+  const ticketProm = vf.length ? vTot/vf.length : 0;
+  const margenIngresos = vTot>0 ? (gB/vTot*100) : 0;
+  const rentReal = gB-gOp-gRec-sue-mer;
+  const _appUrl = location.origin + location.pathname;
+
+  const r0 = [];
+  r0.push(xr(ch('📊 RESUMEN DEL PERÍODO')));
+  r0.push(xr(cs('Rango'),cs(`${formatDate(desde)} — ${formatDate(hasta)}`)));
+  r0.push(xr(cy('🔄 Abrir el sistema para ver datos en vivo / generar un reporte actualizado', _appUrl)));
+  r0.push(xr(cs('')));
+  r0.push(xr(ch('Indicador'),ch('Valor')));
+  r0.push(xr(cs('Ventas totales'),cn(vTot)));
+  r0.push(xr(cs('Costo de ventas'),cn(vCos)));
+  r0.push(xr(cs('Ganancia bruta'),cn(gB)));
+  r0.push(xr(cs('Margen sobre ingresos'),cs(margenIngresos.toFixed(1)+'%')));
+  r0.push(xr(cs('Ticket promedio'),cn(ticketProm)));
+  r0.push(xr(cs('N° de ventas'),cn(vf.length)));
+  r0.push(xr(cs('RENTABILIDAD REAL (post gastos y mermas)'),cn(rentReal)));
+  r0.push(xr(cs('')));
+  r0.push(xr(ch('Comparación vs. período anterior de igual duración')));
+  if (huboComparacion) {
+    r0.push(xr(cs('Período anterior'),cs(`${formatDate(prevDesde)} — ${formatDate(prevHasta)}`)));
+    r0.push(xr(ch('Indicador'),ch('Actual'),ch('Anterior'),ch('Variación %')));
+    const varVentas = prevVTot>0 ? ((vTot-prevVTot)/prevVTot*100) : (vTot>0?100:0);
+    const varGanancia = prevGB>0 ? ((gB-prevGB)/prevGB*100) : (gB>0?100:0);
+    r0.push(xr(cs('Ventas'),cn(vTot),cn(prevVTot),cs(varVentas.toFixed(1)+'%')));
+    r0.push(xr(cs('Ganancia bruta'),cn(gB),cn(prevGB),cs(varGanancia.toFixed(1)+'%')));
+  } else {
+    r0.push(xr(cs('(No disponible — define un rango de fechas para ver la comparación)')));
+  }
+  r0.push(xr(cs('')));
+  r0.push(xr(ch('Top 5 productos por ganancia'),ch('Ganancia S/'),ch('Margen %')));
+  top5Ganancia.forEach(d=>r0.push(xr(cs(d.nom),cn(d.gan),cs(d.cos>0?(d.gan/d.cos*100).toFixed(1)+'%':'-'))));
+  r0.push(xr(cs('')));
+  r0.push(xr(ch('Top 5 productos por unidades vendidas'),ch('Unidades')));
+  top5Unidades.forEach(d=>r0.push(xr(cs(d.nom),cn(d.cant))));
+  r0.push(xr(cs('')));
+  r0.push(xr(ch('Desglose por método de pago'),ch('Transacciones'),ch('Monto S/'),ch('% del total')));
+  Object.entries(porMetodo).sort((a,b)=>b[1].tot-a[1].tot).forEach(([m,d])=>{
+    r0.push(xr(cs(m),cn(d.tx),cn(d.tot),cs(vTot>0?(d.tot/vTot*100).toFixed(1)+'%':'-')));
+  });
+
   // Generar Workbook SpreadsheetML
-  const wb = `<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Font ss:Bold="1"/><Interior ss:Color="#EDE9FE" ss:Pattern="Solid"/></Style></Styles>${ws('Ventas',r1)}${ws('Productos',r2)}${ws('Rentabilidad',r3)}${ws('Mermas',r4)}${ws('Fiados',r5)}${ws('Gastos',r6)}</Workbook>`;
+  const wb = `<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Font ss:Bold="1"/><Interior ss:Color="#EDE9FE" ss:Pattern="Solid"/></Style><Style ss:ID="lnk"><Font ss:Color="#2563EB" ss:Underline="Single"/></Style></Styles>${ws('Resumen',r0)}${ws('Ventas',r1)}${ws('Productos',r2)}${ws('Rentabilidad',r3)}${ws('Mermas',r4)}${ws('Fiados',r5)}${ws('Gastos',r6)}${ws('Proveedores',r7)}${ws('Categorías',r8)}${ws('Clientes',r9)}${ws('Stock bajo',r10)}</Workbook>`;
 
   const blob = new Blob([wb], {type:'application/vnd.ms-excel;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
