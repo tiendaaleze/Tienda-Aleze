@@ -531,6 +531,9 @@ window.addEventListener('error', function(e) {
               <option value="vence">Vence pronto</option>
               <option value="ok">OK</option>
             </select>
+              <select class="form-control" id="inv-prov" style="width:180px" onchange="filterInventario()">
+              <option value="">Todos los proveedores</option>
+            </select>
           </div>
         </div>
         <div class="card" style="padding:0">
@@ -1186,7 +1189,12 @@ window.addEventListener('error', function(e) {
             <option value="g">Gramo</option><option value="L">Litro</option><option value="ml">Mililitro</option>
           </select>
         </div>
-        <div class="form-group"><label>Proveedor</label><select class="form-control" id="prod-prov"><option value="">Sin proveedor</option></select></div>
+       <div class="form-group">
+  <label>Proveedor(es)</label>
+  <input type="text" id="prod-prov-buscar" class="form-control" placeholder="🔎 Buscar proveedor..." style="margin-bottom:.35rem" oninput="_prodProvFiltrar()" autocomplete="off" />
+  <div id="prod-prov-lista" style="border:1px solid var(--gray-200);border-radius:6px;max-height:160px;overflow-y:auto;padding:.3rem .6rem"></div>
+  <div style="font-size:.72rem;color:var(--gray-500);margin-top:.3rem">Marca uno o varios (clic, tap, o Tab + espacio) — este producto puede conseguirse por más de un proveedor. Ninguno marcado = sin proveedor asignado.</div>
+</div>
       </div>
       <div>
         <div class="form-group"><label>Precio de costo (S/) *</label><input type="number" class="form-control" id="prod-costo" step="0.01" oninput="calcMargen();actualizarPrecioSugerido()" /></div>
