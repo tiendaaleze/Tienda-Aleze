@@ -1163,7 +1163,10 @@ function exportarExcelInventario() {
   // Construir filas con nombres legibles
   const filas = prods.map(p => {
     const cat = DB.categorias.find(c => c.id == p.cat);
-    const prov = DB.proveedores ? DB.proveedores.find(v => v.id == p.prov) : null;
+    // Un producto puede tener varios proveedores — ver _provsDeProducto() en inventario.js.
+    // Se exportan ambas columnas separadas por coma cuando hay más de uno.
+    const _provsIds = _provsDeProducto(p);
+    const _provsNombres = _provsIds.map(id => (DB.proveedores||[]).find(v => v.id == id)).filter(Boolean).map(v => v.nombre);
     return {
       'ID_SISTEMA':     p.id,
       'Codigo_Barras':  p.codigo || '',
@@ -1179,8 +1182,8 @@ function exportarExcelInventario() {
       'Precio_Costo':   p.costo,
       'Precio_Venta':   p.precio,
       'Vencimiento':    p.venc || '',
-      'ID_Proveedor':   p.prov || '',
-      'Proveedor':      prov ? prov.nombre : ''
+      'ID_Proveedor':   _provsIds.join(','),
+      'Proveedor':      _provsNombres.join(', ')
     };
   });
 
@@ -1206,6 +1209,7 @@ function exportarExcelInventario() {
     ['4. La columna Categoria y Proveedor son solo referencia visual, el sistema usa ID_Categoria e ID_Proveedor'],
     ['5. El formato de Vencimiento debe ser: AAAA-MM-DD (ej: 2026-12-31). Dejar en blanco si no aplica'],
     ['6. Guarde el archivo y vuelvalo a subir en el sistema para actualizar'],
+    ['7. Un producto puede tener mas de un proveedor: en ID_Proveedor separe los ids con coma (ej: 3,7)'],
     [''],
     ['CATEGORIAS DISPONIBLES:'],
     ['ID', 'Nombre']
@@ -1372,7 +1376,6 @@ function procesarArchivoExcel(file) {
           { key: 'precio',   col: 'Precio_Venta',    fmt: v => parseFloat(v) || 0 },
           { key: 'venc',     col: 'Vencimiento',     fmt: v => excelSerialToDate(v) },
           { key: 'cat',      col: 'ID_Categoria',    fmt: v => parseInt(v) || prodExistente.cat },
-          { key: 'prov',     col: 'ID_Proveedor',    fmt: v => parseInt(v) || null },
           { key: 'codigo',   col: 'Codigo_Barras',   fmt: v => parseCodigoBarras(v) },
         ];
 
@@ -1390,6 +1393,14 @@ function procesarArchivoExcel(file) {
           const viejoVal = stockTotal(prodExistente);
           if (nuevoVal !== viejoVal) {
             diffs.push({ campo: 'stock', etiqueta: 'Stock', viejo: viejoVal, nuevo: nuevoVal });
+          }
+        }
+        // ID_Proveedor: un producto puede tener varios (lista separada por coma/punto y coma).
+        if ('ID_Proveedor' in fila) {
+          const nuevoVal = _parseProveedoresExcel(fila['ID_Proveedor']).sort((a,b)=>a-b);
+          const viejoVal = _provsDeProducto(prodExistente).slice().sort((a,b)=>a-b);
+          if (String(nuevoVal) !== String(viejoVal)) {
+            diffs.push({ campo: 'provs', etiqueta: 'ID Proveedor', viejo: viejoVal, nuevo: nuevoVal });
           }
         }
 
@@ -1557,7 +1568,7 @@ function aplicarCambiosExcel() {
         stockMin: parseFloat(f['Stock_Minimo']) || 5,
         venc:     f['Vencimiento'] ? excelSerialToDate(f['Vencimiento'].toString().trim()) : '',
         codigo:   codigoFinal,
-        prov:     parseInt(f['ID_Proveedor']) || null
+        provs:    _parseProveedoresExcel(f['ID_Proveedor'])
       };
       // Auto-calculate price from category margin when price is 0
       if (nuevoProd.precio === 0 && nuevoProd.costo > 0) {
