@@ -2,6 +2,7 @@
 function renderInventario() {
   try { initExcelPanel(); } catch(e) {}
   updateInvCatFilter();
+  updateInvProvFilter();
   renderInvTable();
 }
 
@@ -13,6 +14,38 @@ function updateInvCatFilter() {
     const label = c.emoji ? c.emoji + ' ' + c.nombre : c.nombre;
     sel.innerHTML += `<option value="${c.id}">${label}</option>`;
   });
+}
+
+// ── Filtro de proveedor en Inventario ─────────────────────────────────────
+// Objetivo real (pedido explícito del usuario): con el filtro de "Stock bajo" solo, la lista
+// mezcla productos de TODOS los proveedores — para el caso de uso real (vendedor con el
+// proveedor en llamada, decidiendo qué pedir ahí mismo) hace falta acotar además por
+// proveedor, para ver de un vistazo solo lo que ESE proveedor puede reponer. Mismo patrón que
+// updateInvCatFilter() — reconstruye el <select> desde DB.proveedores en cada render.
+function updateInvProvFilter() {
+  const sel = document.getElementById('inv-prov');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Todos los proveedores</option>';
+  (DB.proveedores || []).forEach(p => sel.innerHTML += `<option value="${p.id}">${p.nombre}</option>`);
+}
+
+// ── Proveedor(es) de un producto — un producto puede conseguirse de varios proveedores
+// distintos (cercanía de reparto, fecha, precio del momento), no solo uno. `provs` es el campo
+// real (arreglo de ids); `prov` (un solo id o null) es el campo viejo de antes de este cambio
+// — se mantiene sin tocar en cualquier producto que ya lo tuviera, nunca se pierde un dato ya
+// guardado. Este helper es la ÚNICA forma correcta de leer los proveedores de un producto en
+// todo el sistema — nunca leer `p.prov`/`p.provs` directo fuera de acá.
+function _provsDeProducto(p) {
+  if (!p) return [];
+  if (Array.isArray(p.provs)) return p.provs;
+  return (p.prov != null && p.prov !== '') ? [p.prov] : [];
+}
+
+// Celda "ID_Proveedor" del Excel de inventario — uno o varios ids separados por coma/punto y
+// coma (ej. "3,7" o "3; 7"). Usado tanto al detectar diferencias como al crear un producto
+// nuevo desde el Excel (ver reportes.js).
+function _parseProveedoresExcel(v) {
+  return String(v||'').split(/[,;]/).map(s => parseInt(s.trim())).filter(n => !isNaN(n));
 }
 
 function renderInvTable(prods) {
@@ -74,9 +107,11 @@ function filterInventario() {
   const s = document.getElementById('inv-search').value.toLowerCase();
   const cat = document.getElementById('inv-cat').value;
   const estado = document.getElementById('inv-estado').value;
+  const prov = document.getElementById('inv-prov')?.value || '';
   let prods = DB.productos;
 if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.codigo||'').includes(_norm(s)));
   if (cat) prods = prods.filter(p => p.cat == cat);
+  if (prov) prods = prods.filter(p => _provsDeProducto(p).some(id => id == prov));
   if (estado === 'bajo') prods = prods.filter(p => stockEnSede(p) <= p.stockMin);
   if (estado === 'vence') prods = prods.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0);
   if (estado === 'ok') prods = prods.filter(p => stockEnSede(p) > p.stockMin && (!p.venc || diasHasta(p.venc) > 7));
@@ -219,7 +254,10 @@ function editarProducto(id) {
   updateModalCats();
   document.getElementById('prod-cat').value = p.cat;
   updateModalProvs();
-  document.getElementById('prod-prov').value = p.prov || '';
+  const _provsSel = _provsDeProducto(p);
+  document.querySelectorAll('#prod-prov-lista input[type="checkbox"]').forEach(chk => {
+    chk.checked = _provsSel.includes(parseInt(chk.value));
+  });
   calcMargen();
   actualizarPrecioSugerido();
   if (p.codigo) {
@@ -423,13 +461,32 @@ function updateModalCats() {
 }
 
 function updateModalProvs() {
-  const sel = document.getElementById('prod-prov');
-  sel.innerHTML = '<option value="">Sin proveedor</option>';
-  DB.proveedores.forEach(p => sel.innerHTML += `<option value="${p.id}">${p.nombre}</option>`);
+  // Checklist con buscador (reemplaza al <select multiple> nativo — con Ctrl/Cmd+clic
+  // funcionaba pero era confuso para un usuario sin ese hábito, y no escalaba a listas
+  // largas de proveedores). Se pinta la lista COMPLETA una sola vez aquí; buscar solo
+  // oculta/muestra filas (_prodProvFiltrar) — nunca se reconstruye el HTML mientras se
+  // busca, así que lo marcado no se pierde al filtrar.
+  const cont = document.getElementById('prod-prov-lista');
+  cont.innerHTML = DB.proveedores.map(p => `
+    <label data-prov-nombre="${_norm(p.nombre)}" style="display:flex;align-items:center;gap:.45rem;padding:.3rem 0;cursor:pointer">
+      <input type="checkbox" value="${p.id}" style="width:auto;margin:0">
+      <span>${escapeHtml(p.nombre)}</span>
+    </label>`).join('') || '<div style="color:var(--gray-400);padding:.3rem 0">No hay proveedores registrados todavía.</div>';
+  const buscar = document.getElementById('prod-prov-buscar');
+  if (buscar) buscar.value = '';
   const sp = document.getElementById('promo-prod1');
   const sp2 = document.getElementById('promo-prod2');
   if (sp) { sp.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre}</option>`).join(''); }
   if (sp2) { sp2.innerHTML = '<option value="">Segundo producto (opcional)</option>' + DB.productos.map(p => `<option value="${p.id}">${p.nombre}</option>`).join(''); }
+}
+
+// Filtra visualmente el checklist de proveedores del modal de producto — no toca los
+// checkboxes marcados, solo oculta/muestra filas (ver comentario en updateModalProvs).
+function _prodProvFiltrar() {
+  const q = _norm((document.getElementById('prod-prov-buscar')?.value || '').trim());
+  document.querySelectorAll('#prod-prov-lista label[data-prov-nombre]').forEach(lbl => {
+    lbl.style.display = (!q || lbl.dataset.provNombre.includes(q)) ? 'flex' : 'none';
+  });
 }
 
 function calcMargen() {
@@ -663,7 +720,10 @@ function guardarProducto() {
     stockMin: parseFloat(document.getElementById('prod-stock-min').value) || 5,
     venc: document.getElementById('prod-venc').value,
     codigo: document.getElementById('prod-codigo').value || '7' + getId().toString().slice(-12),
-    prov: parseInt(document.getElementById('prod-prov').value) || null,
+    // provs: arreglo — un producto puede conseguirse de varios proveedores distintos (cercanía
+    // de reparto, fecha, precio del momento). Reemplaza al viejo campo `prov` (un solo id) ver
+    // _provsDeProducto() más arriba para la compatibilidad con productos ya guardados.
+    provs: Array.from(document.querySelectorAll('#prod-prov-lista input[type="checkbox"]:checked')).map(chk => parseInt(chk.value)).filter(n => !isNaN(n)),
     imagen: document.getElementById('prod-img-data').value || '',
     tieneDetalle
   };
@@ -1627,4 +1687,3 @@ function aplicarTodosPrecios() {
   renderInvTable();
   alert('✅ Todos los precios actualizados');
 }
-
