@@ -1004,7 +1004,7 @@ async function compartirWhatsapp() {
     const canvas = await html2canvas(clon, { scale: 2, backgroundColor: '#ffffff' });
     canvas.toBlob(blob => {
       const file = new File([blob], 'ticket-aleze.png', { type: 'image/png' });
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+     if (_waEsMobile() && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         navigator.share({ title: 'Ticket ' + (DB.config.nombre||'Tienda Aleze'), files: [file] })
           .catch(() => fallbackWA());
       } else {
