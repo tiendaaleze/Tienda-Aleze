@@ -269,7 +269,7 @@ function _promoProdBuscar(n) {
   if (!matches.length) {
     sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
   } else {
-    sug.innerHTML = matches.map(p => `<div onclick="_promoProdSeleccionar(${n}, ${p.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+       sug.innerHTML = matches.map(p => `<div onmousedown="event.preventDefault(); _promoProdSeleccionar(${n}, ${p.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
         ${p.nombre} <span style="color:var(--gray-400);font-size:.75rem">(${sol(p.precio)})</span>
        </div>`).join('');
   }
