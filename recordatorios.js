@@ -33,7 +33,7 @@ function _recClienteBuscar() {
   if (!matches.length) {
     sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
   } else {
-    sug.innerHTML = matches.map(c => `<div onclick="_recClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+    sug.innerHTML = matches.map(c => `<div onmousedown="event.preventDefault(); _recClienteSeleccionar(${c.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
         ${escapeHtml(c.alias || c.nombre)}
        </div>`).join('');
   }
