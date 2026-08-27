@@ -81,7 +81,7 @@ function renderInvTable(prods) {
     const margenSol = sol(p.precio - p.costo);
     return `<tr>
       <td style="font-family:monospace;font-size:0.75rem">${p.codigo}</td>
-      <td><strong>${p.nombre}</strong></td>
+      <td><strong>${p.oculto ? '🙈 ' : ''}${p.nombre}</strong></td>
       <td>${getCategoriaNombre(p.cat)}</td>
       <td><span class="badge badge-${p.tipo==='granel'?'blue':'gray'}">${p.tipo==='granel'?'Granel':'Unidad'}</span></td>
      <td>
@@ -221,6 +221,7 @@ function abrirModalProducto() {
   // Resetear seccion de detalle
   document.getElementById('prod-tiene-detalle').checked = false;
   document.getElementById('prod-es-impulso').checked = false;
+  document.getElementById('prod-oculto').checked = false;
   document.getElementById('prod-detalle-wrap').style.display = 'none';
   document.getElementById('prod-desc-extendida').value = '';
   document.getElementById('prod-tiene-mayor').checked = false;
@@ -298,6 +299,7 @@ function editarProducto(id) {
   // Detalle: se lee de su colección propia solo si el producto la usa — no en cada carga del catálogo.
   document.getElementById('prod-tiene-detalle').checked = !!p.tieneDetalle;
   document.getElementById('prod-es-impulso').checked = !!p.esImpulso;
+  document.getElementById('prod-oculto').checked = !!p.oculto;
   document.getElementById('prod-detalle-wrap').style.display = p.tieneDetalle ? 'block' : 'none';
   document.getElementById('prod-desc-extendida').value = '';
   document.getElementById('prod-tiene-mayor').checked = false;
@@ -732,6 +734,7 @@ function guardarProducto() {
     nombre, cat,
     marca: document.getElementById('prod-marca').value.trim() || null,
     esImpulso: document.getElementById('prod-es-impulso')?.checked || false,
+    oculto: document.getElementById('prod-oculto')?.checked || false,
     tipo: document.getElementById('prod-tipo').value,
     unidad: document.getElementById('prod-unidad').value,
     costo, precio,
