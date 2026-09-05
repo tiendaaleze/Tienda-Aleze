@@ -206,9 +206,13 @@ function renderFiados() {
     else fiados = fiados.filter(f => f.fecha >= _hace30diasStr || fiadoPendiente(f));
     const totalCli = Math.round(fiados.reduce((s, f) => s + f.total, 0) * 100) / 100;
     const pagadoCli = Math.round(fiados.reduce((s, f) => s + f.pagado, 0) * 100) / 100;
-    const pendienteCli = Math.round((totalCli - pagadoCli) * 100) / 100;
+ const pendienteCli = Math.round((totalCli - pagadoCli) * 100) / 100;
     const detalleId = 'fiado-detalle-' + cid;
-    const detalle = [...fiados].sort((a,b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.id - a.id).map(f => {
+    // Vista por defecto = solo pendientes, sin límite de cantidad ni de fecha (mismo criterio
+    // que el filtro principal) — separado a propósito de "fiados" de arriba, que sigue
+    // alimentando totalCli/pagadoCli/pendienteCli sin ningún cambio.
+    const fiadosDetalle = fiados.filter(f => fiadoPendiente(f));
+    const detalle = [...fiadosDetalle].sort((a,b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : b.id - a.id).map(f => {
       const pend = fiadoMontoPendiente(f);
       return `<div style="border-left:3px solid var(--warning);padding:.5rem .75rem;margin-bottom:.5rem;background:white;border-radius:0 6px 6px 0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
