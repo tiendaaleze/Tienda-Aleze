@@ -245,8 +245,8 @@ function renderFiados() {
       <div id="${detalleId}" style="display:none;margin-top:.75rem">
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.75rem;padding:.5rem;background:var(--gray-50);border-radius:8px">
           <select class="form-control" id="fi-tipo-${cid}" style="width:150px;font-size:.78rem" onchange="renderDetalleFiado(${cid})">
-            <option value="todo">Todo</option>
-            <option value="pendiente">Solo pendientes</option>
+           <option value="todo">Todo</option>
+            <option value="pendiente" selected>Solo pendientes</option>
             <option value="pagado">Solo pagados</option>
           </select>
           <input type="date" class="form-control" id="fi-int-desde-${cid}" value="${_hace30diasStr}" style="width:140px;font-size:.78rem" onchange="renderDetalleFiado(${cid})"/>
