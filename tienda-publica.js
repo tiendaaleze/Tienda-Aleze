@@ -332,6 +332,14 @@ function initTienda() {
         }).catch(() => {});
       });
     }).then(() => {
+      // Promociones — coleccion propia, nunca cargada antes para el visitante publico (solo
+      // el staff logueado la traia, via el flujo de sesion admin). Sin cache de version como
+      // productos a proposito: es una coleccion chica y sensible al tiempo (una promo vencida
+      // o desactivada no debe seguir viendose por datos viejos en cache).
+      return getDocsM(collectionM(dbModular, 'promociones')).then(promosSnap => {
+        DB.promociones = promosSnap.docs.map(d => d.data());
+      }).catch(() => { if (!DB.promociones) DB.promociones = []; });
+    }).then(() => {
       _initTiendaConDatos();
     }).catch(() => _initTiendaConDatos());
   } else {
