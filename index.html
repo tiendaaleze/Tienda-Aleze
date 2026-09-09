@@ -1504,7 +1504,14 @@ window.addEventListener('error', function(e) {
       <h3>Registrar Merma</h3>
       <button type="button" class="modal-close" onclick="cerrarModal('modal-merma')">✕</button>
     </div>
-    <div class="form-group"><label>Producto *</label><select class="form-control" id="merma-prod"></select></div>
+    <div class="form-group" style="position:relative">
+      <label>Producto *</label>
+      <input type="text" id="merma-prod-buscar" class="form-control" placeholder="🔍 Buscar producto..." autocomplete="off"
+        oninput="_mermaProdBuscar()" onfocus="_mermaProdBuscar()"
+        onblur="setTimeout(()=>{const s=document.getElementById('merma-prod-sugerencias');if(s)s.style.display='none';},150)" />
+      <select id="merma-prod" style="display:none"></select>
+      <div id="merma-prod-sugerencias" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:#fff;border:1px solid var(--gray-200);border-radius:6px;max-height:200px;overflow-y:auto;font-size:.85rem;box-shadow:0 4px 10px rgba(0,0,0,.1)"></div>
+    </div>
     <div class="form-group"><label>Cantidad *</label><input type="number" class="form-control" id="merma-cant" step="0.01" /></div>
     <div class="form-group"><label>Motivo *</label>
       <select class="form-control" id="merma-motivo-sel">
