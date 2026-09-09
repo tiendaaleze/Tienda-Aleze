@@ -61,10 +61,42 @@ function renderMermas() {
   }).join('') || '<tr><td colspan="7" style="text-align:center;padding:1rem;color:var(--gray-400)">Sin mermas registradas</td></tr>';
 }
 
+// Buscador con sugerencias para el select de producto en Registrar/Editar Merma — mismo
+// patron ya usado en Promociones (onmousedown+preventDefault para que la seleccion funcione
+// bien con touchpad de laptop, no solo con mouse externo). El select oculto "merma-prod"
+// (mismo id de siempre, sigue poblado igual que antes) es la fuente real que lee
+// guardarMerma() sin ningun cambio — esto solo agrega una forma mas facil de establecer su
+// valor sin recorrer una lista de 400+ productos. No filtra combos ni productos ocultos de
+// tienda publica — mismo universo de productos que ya mostraba el select original.
+function _mermaProdBuscar() {
+  const q = (document.getElementById('merma-prod-buscar')?.value || '').trim();
+  const sug = document.getElementById('merma-prod-sugerencias');
+  if (!sug) return;
+  const matches = (q ? DB.productos.filter(p => _norm(p.nombre).includes(_norm(q))) : DB.productos).slice(0, 8);
+  if (!matches.length) {
+    sug.innerHTML = `<div style="padding:.5rem;color:var(--gray-400)">Sin resultados</div>`;
+  } else {
+    sug.innerHTML = matches.map(p => `<div onmousedown="event.preventDefault(); _mermaProdSeleccionar(${p.id})" style="padding:.4rem .6rem;cursor:pointer;border-bottom:1px solid var(--gray-100)" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+      ${p.nombre} <span style="color:var(--gray-400);font-size:.75rem">(Stock: ${stockEnSede(p)} ${p.unidad})</span>
+     </div>`).join('');
+  }
+  sug.style.display = 'block';
+}
+function _mermaProdSeleccionar(id) {
+  const p = DB.productos.find(x => x.id === id);
+  const sel = document.getElementById('merma-prod');
+  const buscar = document.getElementById('merma-prod-buscar');
+  if (sel) sel.value = id;
+  if (buscar) buscar.value = p ? p.nombre : '';
+  const sug = document.getElementById('merma-prod-sugerencias'); if (sug) sug.style.display = 'none';
+}
+
 function abrirModalMerma() {
   editingMermaId = null;
   const sel = document.getElementById('merma-prod');
   sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
+  sel.value = '';
+  document.getElementById('merma-prod-buscar').value = '';
   document.getElementById('merma-cant').value = '';
   document.getElementById('merma-obs').value = '';
   abrirModal('modal-merma');
@@ -77,6 +109,7 @@ function editarMerma(id) {
   const sel = document.getElementById('merma-prod');
   sel.innerHTML = DB.productos.map(p => `<option value="${p.id}">${p.nombre} (Stock: ${stockEnSede(p)} ${p.unidad})</option>`).join('');
   sel.value = m.prodId;
+  document.getElementById('merma-prod-buscar').value = (DB.productos.find(p => p.id === m.prodId) || {}).nombre || '';
   document.getElementById('merma-cant').value = m.cant;
   document.getElementById('merma-motivo-sel').value = m.motivo;
   document.getElementById('merma-obs').value = m.obs || '';
