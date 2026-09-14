@@ -503,6 +503,14 @@ function _renderTienda() {
 .tnd-rail-card:active { transform:scale(.96); }
 .tnd-cats { margin-bottom:1.25rem; }
 .tnd-cats #tnd-cats-riel::-webkit-scrollbar { display:none; }
+@media (hover:hover) and (pointer:fine) {
+  .tnd-cats .tnd-arrow {
+    flex-shrink:0; width:28px; height:28px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:50%; border:1.5px solid #e5e7eb; background:#fff;
+    box-shadow:0 1px 4px rgba(0,0,0,.12); cursor:pointer; font-size:1.1rem; color:#7C3AED;
+  }
+}
 .tnd-cat-tag {
   padding:.25rem .6rem;border-radius:20px;cursor:pointer;
   border:1.5px solid #e5e7eb;background:white;
