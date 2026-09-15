@@ -687,11 +687,11 @@ function guardarPromocion() {
     const idx = DB.promociones.findIndex(x => x.id === editingPromoId);
     if (idx >= 0) DB.promociones[idx] = { ...DB.promociones[idx], ...data };
     _promoFinal = DB.promociones[idx];
-    _payloadEscritura = data; // sin vendidos — nunca se toca al editar
+    _payloadEscritura = { id: _promoFinal.id, ...data }; // se incluye id — antes faltaba y quedaba undefined al recargar; sin vendidos, nunca se toca al editar
   } else {
     _promoFinal = { id: getId(), ...data, vendidos: 0 };
     DB.promociones.push(_promoFinal);
-    _payloadEscritura = { ...data, vendidos: 0 }; // se inicializa explicitamente al crear
+    _payloadEscritura = { id: _promoFinal.id, ...data, vendidos: 0 }; // se incluye id — antes faltaba; se inicializa explicitamente al crear
   }
   if (dbModular) setDocM(docM(dbModular, 'promociones', String(_promoFinal.id)), _payloadEscritura, { merge: true }).catch(e => console.warn('No se pudo guardar promociones/'+_promoFinal.id, e)); // [SDK modular]
   cerrarModal('modal-promocion');
