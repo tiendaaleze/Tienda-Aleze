@@ -1075,6 +1075,21 @@ function closeMobSidebar() {
 // ===================== SIDEBAR TOGGLE =====================
 let sidebarCollapsed = false;
 
+// Colapsa/expande un grupo del menu lateral (Inventario, Finanzas, Operaciones, Pedidos, etc.)
+// sin recargar ni tocar el resto de la pagina — solo oculta los .nav-item hermanos que siguen
+// a esta etiqueta, hasta encontrar la proxima etiqueta de seccion. navigate() nunca reconstruye
+// este HTML (solo agrega/quita la clase "active"), asi que el estado colapsado se mantiene
+// aunque se navegue a otra pantalla — se resetea solo al recargar la pagina completa.
+function toggleNavSection(labelEl) {
+  labelEl.classList.toggle('collapsed');
+  const colapsado = labelEl.classList.contains('collapsed');
+  let el = labelEl.nextElementSibling;
+  while (el && el.classList.contains('nav-item')) {
+    el.style.display = colapsado ? 'none' : '';
+    el = el.nextElementSibling;
+  }
+}
+
 function toggleSidebar() {
   sidebarCollapsed = !sidebarCollapsed;
   const aside = document.getElementById('sidebar');

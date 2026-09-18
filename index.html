@@ -169,7 +169,7 @@ window.addEventListener('error', function(e) {
       </div>
 
       <div class="nav-section">
-        <div class="nav-section-label">Principal</div>
+        <div class="nav-section-label" onclick="toggleNavSection(this)">Principal <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item active" onclick="navigate('dashboard')" title="Dashboard">
           <span class="icon">📊</span><span class="nav-label">Dashboard</span>
         </div>
@@ -179,7 +179,7 @@ window.addEventListener('error', function(e) {
       </div>
 
       <div class="nav-section" id="admin-nav">
-        <div class="nav-section-label">Inventario</div>
+        <div class="nav-section-label" onclick="toggleNavSection(this)">Inventario <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item" onclick="navigate('inventario')" title="Inventario de productos">
           <span class="icon">📦</span><span class="nav-label">Inventario</span>
         </div>
@@ -189,12 +189,12 @@ window.addEventListener('error', function(e) {
         <div class="nav-item" onclick="navigate('proveedores')" title="Proveedores y boletas">
           <span class="icon">🚚</span><span class="nav-label">Proveedores</span>
         </div>
-      <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
+      <div class="nav-section-label" style="margin-top:0.5rem" onclick="toggleNavSection(this)">Operaciones <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item" onclick="navigate('promociones')" title="Promociones y combos">
           <span class="icon">🎯</span><span class="nav-label">Promociones</span>
         </div>
 
-        <div class="nav-section-label" style="margin-top:0.5rem">Finanzas</div>
+        <div class="nav-section-label" style="margin-top:0.5rem" onclick="toggleNavSection(this)">Finanzas <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item" onclick="navigate('capital')" title="Control de capital e inversión">
           <span class="icon">🏦</span><span class="nav-label">Capital</span>
         </div>
@@ -202,7 +202,7 @@ window.addEventListener('error', function(e) {
           <span class="icon">📈</span><span class="nav-label">Reportes</span>
         </div>
 
-        <div class="nav-section-label" style="margin-top:0.5rem">Sistema</div>
+        <div class="nav-section-label" style="margin-top:0.5rem" onclick="toggleNavSection(this)">Sistema <span class="nav-collapse-arrow">▾</span></div>
       <div class="nav-item" onclick="navigate('configuracion')" title="Configuración del sistema">
           <span class="icon">⚙️</span><span class="nav-label">Configuración</span>
         </div>
@@ -214,14 +214,14 @@ window.addEventListener('error', function(e) {
       es de solo lectura para vendedor — puede ver cuánto debería haber, pero no abrir, cerrar,
       retirar efectivo ni registrar movimientos manuales, eso sigue siendo admin-only. -->
       <div class="nav-section" id="vendedor-nav">
-        <div class="nav-section-label">Clientes</div>
+        <div class="nav-section-label" onclick="toggleNavSection(this)">Clientes <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item" onclick="navigate('clientes')" title="Gestión de clientes">
           <span class="icon">👥</span><span class="nav-label">Clientes</span>
         </div>
         <div class="nav-item" onclick="navigate('frecuentes')" title="Programa de puntos y premios">
           <span class="icon">⭐</span><span class="nav-label">Frecuentes</span>
         </div>
-        <div class="nav-section-label" style="margin-top:0.5rem">Operaciones</div>
+        <div class="nav-section-label" style="margin-top:0.5rem" onclick="toggleNavSection(this)">Operaciones <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item" onclick="navigate('caja')" title="Ver caja actual">
           <span class="icon">💰</span><span class="nav-label">Caja</span>
         </div>
@@ -234,7 +234,7 @@ window.addEventListener('error', function(e) {
         <div class="nav-item" onclick="navigate('gastos')" title="Gastos operativos">
           <span class="icon">💸</span><span class="nav-label">Gastos</span>
         </div>
-        <div class="nav-section-label" style="margin-top:0.5rem">Pedidos</div>
+        <div class="nav-section-label" style="margin-top:0.5rem" onclick="toggleNavSection(this)">Pedidos <span class="nav-collapse-arrow">▾</span></div>
         <div class="nav-item" onclick="navigate('pedidos-online')" title="Pedidos recibidos por la tienda online">
           <span class="icon">🛍️</span>
           <span class="nav-label">Pedidos Online</span>
@@ -248,6 +248,18 @@ window.addEventListener('error', function(e) {
         </div>
       </div>
     </aside>
+    <script>
+      // Estado inicial del menu: todas las secciones colapsadas salvo la primera (Principal),
+      // para no tener que ir cerrando una por una en pantallas chicas (ej. laptop 14"). Se
+      // ejecuta al parsear el HTML, antes de que carguen pos.js/toggleNavSection — por eso
+      // repite la misma logica de ocultar hermanos en vez de llamar a esa funcion directamente.
+      document.querySelectorAll('.nav-section-label').forEach((label, i) => {
+        if (i === 0) return; // Principal queda abierta por defecto
+        label.classList.add('collapsed');
+        let el = label.nextElementSibling;
+        while (el && el.classList.contains('nav-item')) { el.style.display = 'none'; el = el.nextElementSibling; }
+      });
+    </script>
 
     <main id="main-content">
 
