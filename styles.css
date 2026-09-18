@@ -269,7 +269,11 @@ background: linear-gradient(180deg, #FFFFFF 0%, #F5F3FF 100%);
     text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--gray-400); margin-bottom: 0.2rem;
     padding: 0 0.1rem;
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
   }
+  .nav-collapse-arrow { font-size: 1.2rem; transition: transform 0.15s; }
+  .nav-section-label.collapsed .nav-collapse-arrow { transform: rotate(-90deg); }
 
   /* CONTENT */
   main {
