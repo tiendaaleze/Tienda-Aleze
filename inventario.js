@@ -131,7 +131,8 @@ if (s) prods = prods.filter(p => _norm(p.nombre).includes(_norm(s)) || _norm(p.c
   if (prov) prods = prods.filter(p => _provsDeProducto(p).some(id => id == prov));
   if (marca) prods = prods.filter(p => p.marca === marca);
   if (estado === 'bajo') prods = prods.filter(p => stockEnSede(p) <= p.stockMin);
-  if (estado === 'vence') prods = prods.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0);
+ if (estado === 'vence') prods = prods.filter(p => p.venc && diasHasta(p.venc) <= 7 && diasHasta(p.venc) >= 0);
+  if (estado === 'vencido') prods = prods.filter(p => p.venc && diasHasta(p.venc) < 0);
   if (estado === 'ok') prods = prods.filter(p => stockEnSede(p) > p.stockMin && (!p.venc || diasHasta(p.venc) > 7));
   renderInvTable(prods);
 }
